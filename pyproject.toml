@@ -1,0 +1,9 @@
+[project]
+name = "data-foundation"
+version = "0.1.0"
+description = "Trading system Spec #001 -- standard internal data schema, provider adapter, PIT access, data QA"
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+pythonpath = ["src", "tests"]
+testpaths = ["tests"]

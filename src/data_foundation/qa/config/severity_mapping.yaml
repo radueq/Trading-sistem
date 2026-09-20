@@ -1,0 +1,26 @@
+# Data QA severity mapping (Spec #001 SS15) -- reason_code -> severity.
+# Externally configurable so it can change without touching code, per
+# Radu's approval (2026-09-20). This is Data Quality classification, not
+# a Universe Eligibility rule -- it decides whether an observation is
+# trustworthy, not whether the system wants to trade the instrument
+# (Spec #001 SS2, out of scope here).
+#
+# ERROR always implies qa_pass = FALSE (fixed rule); which reason codes
+# map to ERROR vs WARNING vs INFO is what's configurable here. These are
+# reasonable Level 1 defaults, not validated against real-world false
+# positive/negative rates -- revisit once Level 2 QA validation data
+# (Spec #001 SS21) is available.
+
+MISSING_BAR: WARNING
+DUPLICATE_BAR: ERROR
+ZERO_VOLUME: WARNING
+OHLC_INVALID: ERROR
+NEGATIVE_PRICE: ERROR
+SUSPICIOUS_GAP: WARNING
+STALE_PRICE: WARNING
+CORPORATE_ACTION_UNRESOLVED: WARNING
+ADJUSTMENT_MISMATCH: WARNING
+STATUS_CONFLICT: ERROR
+IDENTIFIER_CONFLICT: ERROR
+INSUFFICIENT_HISTORY: INFO
+SOURCE_DISCREPANCY: INFO
