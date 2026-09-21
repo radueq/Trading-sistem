@@ -1,0 +1,43 @@
+# TEST_CONFIG -- Level 1 state-mapping thresholds. Not validated, not
+# claimed to generate alpha (Spec #002 SS16). Bucket "max" is the
+# upper-exclusive bound on a [0,1] percentile; the last bucket catches
+# the remainder up to and including 1.0.
+
+percentile_buckets:
+  - {max: 0.10, label: VERY_LOW}
+  - {max: 0.30, label: LOW}
+  - {max: 0.70, label: NEUTRAL}
+  - {max: 0.90, label: HIGH}
+  - {max: 1.01, label: VERY_HIGH}
+
+compression_buckets:
+  - {max: 0.10, label: EXTREME_COMPRESSION}
+  - {max: 0.30, label: COMPRESSION}
+  - {max: 0.70, label: NORMAL}
+  - {max: 0.90, label: EXPANSION}
+  - {max: 1.01, label: EXTREME_EXPANSION}
+
+# Which single NORMALIZED (percentile) feature drives each lane's
+# StateSignature label -- keys into normalized_feature_vector, not
+# feature_vector. relative_strength's driver is CROSS_SECTIONAL (Spec
+# #002 SS15's own example); all others are TIME_SERIES. trend/momentum
+# drivers (return_63d_percentile / ROC_10_percentile) are a documented
+# Level 1 design choice -- Spec #002 doesn't name one for those two
+# lanes the way it does for volatility/volume/relative_strength.
+lane_drivers:
+  trend: return_63d_percentile
+  relative_strength: rs_percentile_cross_sectional
+  volatility: BB_width_percentile
+  volume: volume_percentile
+  momentum: ROC_10_percentile
+
+# Lanes whose driving feature uses the compression vocabulary instead
+# of VERY_LOW..VERY_HIGH (Spec #002 SS16).
+compression_vocabulary_lanes:
+  - volatility
+
+# Cap on how far back persistence counts consecutive identical
+# lane_states combinations, purely to bound computation (Spec #002
+# doesn't specify a cap; the local PIT history itself is already
+# bounded by percentile_window anyway).
+persistence_lookback_cap: 60

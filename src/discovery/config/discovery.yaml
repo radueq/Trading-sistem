@@ -1,0 +1,36 @@
+# TEST_CONFIG -- Level 1 candidate-reduction parameters. All
+# outcome-blind (Spec #002 SS21/SS22): no field here may be driven by
+# historical profitability, forward returns, or backtest ranking.
+
+candidate_budget:
+  enabled: true
+  max_candidates: 20
+
+transition:
+  delta_n_window: 5
+
+# Floor below which a descriptive statistic (e.g. state_frequency) is
+# reported with support_status=INSUFFICIENT rather than presented as
+# reliable (Spec #002 SS26). Purely about sample size, not an outcome.
+min_sample_support: 20
+
+diversity:
+  enabled: true
+  # Candidates are grouped by this key and selected round-robin across
+  # groups up to the budget, so the budget doesn't collapse into one
+  # repeated phenomenon (Spec #002 SS23). "active_lanes" = the sorted
+  # tuple of active lane names.
+  bucket_key: active_lanes
+
+extremeness:
+  # extremeness = max absolute distance from this midpoint across a
+  # candidate's active lane-driving percentile features, scaled to
+  # [0, 1] (0.5 midpoint -> max possible distance 0.5 -> divided by 0.5).
+  midpoint: 0.5
+
+# Reason-code trigger thresholds (Spec #002 SS28) -- descriptive
+# unusualness thresholds, not trading rules.
+momentum_acceleration_threshold: 0.05
+multi_lane_convergence_min: 3
+state_transition_delta_threshold: 0.30
+persistent_state_min_days: 10

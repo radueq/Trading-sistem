@@ -1,0 +1,30 @@
+# TEST_CONFIG -- Level 1 engineering defaults for feature calculation
+# windows. Not validated trading rules (Spec #002 SS14/SS26). Changing
+# any value here changes config_version (see config/loader.py), so no
+# formula/parameter change can be silent (Spec #002 SS45).
+
+percentile_window: 252
+percentile_min_periods: 252
+
+trend:
+  return_windows: [20, 63, 126]
+  sma_windows: [20, 50, 200]
+  slope_windows: [20, 50]
+  slope_window: 10
+
+relative_strength:
+  return_windows: [20, 63, 126]
+  driving_return_window: 63
+
+volatility:
+  atr_window: 14
+  bb_window: 20
+  bb_num_std: 2.0
+  realized_vol_window: 20
+
+volume:
+  adv_window: 20
+
+momentum:
+  roc_windows: [5, 10, 20]
+  driving_roc_window: 10

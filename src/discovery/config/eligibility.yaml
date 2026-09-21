@@ -1,0 +1,19 @@
+# TEST_CONFIG -- Level 1 Universe Eligibility rules, kept separate from
+# Data QA (Spec #002 SS29, carrying forward Spec #001 SS2's separation).
+# These are minimum floors, never a narrow target range -- Radu's
+# explicit decision that e.g. a market-cap rule must never mean "select
+# companies around $1-2B."
+
+minimum_price: 1.0
+minimum_history_days: 60
+minimum_adv_20: 100000
+
+# null = no exchange filter applied at Level 1.
+allowed_exchanges: null
+
+# No PIT market cap field exists anywhere in the Spec #001 Data
+# Foundation schema (security_master has no such column) -- this is not
+# fabricated. See eligibility/engine.py: MARKET_CAP_FILTER is always
+# reported PENDING_DATA at Level 1, and eligibility proceeds on the
+# other dimensions (Spec #002 SS29).
+market_cap_floor: null
