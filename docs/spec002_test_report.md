@@ -3,9 +3,10 @@
 Run: `python3 -m pytest tests/spec002/ -v` -- Python 3.11.15, pytest 9.1.1,
 pandas 3.0.6, numpy 2.4.6, PyYAML 6.0.1.
 
-Result: **34 passed, 0 failed, 0 pending** (across the 21 required tests --
-several have multiple focused sub-tests). Full repo (Spec #001 + Spec #002):
-**57 passed, 1 skipped (Spec #001 TEST 8, PENDING_LEVEL_2_DATA, unaffected)**.
+Result: **35 passed, 0 failed, 0 pending** (across the 21 required tests plus
+TEST 22, added by GPT Review #002 Round 1/PATCH #002-A -- several have
+multiple focused sub-tests). Full repo (Spec #001 + Spec #002):
+**58 passed, 1 skipped (Spec #001 TEST 8, PENDING_LEVEL_2_DATA, unaffected)**.
 
 | # | Test | File | Result | Notes |
 |---|------|------|--------|-------|
@@ -30,6 +31,7 @@ several have multiple focused sub-tests). Full repo (Spec #001 + Spec #002):
 | 19 | Total-return prohibition | `test_19_total_return_prohibition.py` | **PASS** | AST attribute-access scan of `_price_series_to_df` -> `total_return_adjusted_close` never accessed; `split_adjusted_close` is. |
 | 20 | Benchmark configuration | `test_20_benchmark_configuration.py` | **PASS** (2 sub-tests) | No benchmark ticker string hardcoded in `features/relative_strength.py`; swapping the benchmark security (config/data, no code change) changes RS output, and RS against itself as its own benchmark is exactly 0. |
 | 21 | No LLM runtime imports | `test_21_no_llm_imports.py` | **PASS** | AST import scan -> no `anthropic`/`openai`/`google.generativeai`/`cohere`/`langchain` import anywhere under `src/discovery/`. Not numbered in SS38's list; required by SS41's hard rule. |
+| 22 | Cross-sectional RS eligibility isolation | `test_22_cross_sectional_eligibility_isolation.py` | **PASS** | Added by GPT Review #002 Round 1 (mandatory finding), PATCH #002-A. An ineligible penny-stock security (fails `minimum_price`) with an extreme `relative_return_63d` is added to the universe -> `rs_percentile_cross_sectional` for every shared eligible security is unchanged between the two runs. Fails against the pre-patch ordering (cross-sectional pass before eligibility filtering), passes against the fix. |
 
 ## How to reproduce
 

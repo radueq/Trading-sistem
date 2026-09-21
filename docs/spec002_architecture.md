@@ -9,14 +9,24 @@ Depends on Spec #001 Accepted Baseline, commit `918f3f7`.
 Spec #001 PIT layer (pit.access.get_price_series_as_of)
   -> Feature Engine (5 lanes, computed from one local in-memory series)
   -> TIME_SERIES normalization (rolling percentile, per security)
-  -> [cross-sectional pass across the whole batch: CROSS_SECTIONAL RS percentile]
+  -> Eligibility (Universe Eligibility, separate from Data QA) -> eligible_ids
+  -> [cross-sectional pass, ELIGIBLE SECURITIES ONLY: CROSS_SECTIONAL RS percentile]
   -> State mapping (percentile -> label, per lane)
   -> Transitions (X, delta X, delta^2 X on each lane's driving percentile)
-  -> Eligibility (Universe Eligibility, separate from Data QA)
   -> Convergence (active_lanes, descriptive_metrics, reason_codes -- no Alpha Score)
-  -> Candidate Budget + diversity selection
+  -> Candidate Budget + diversity selection (a descriptive deterministic ranking)
   -> DiscoveryCandidate[]
 ```
+
+**Ordering is load-bearing** (GPT Review #002 Round 1, PATCH #002-A, mandatory fix):
+eligibility must run *before* the cross-sectional pass, not after. The first cut of
+`run_discovery()` computed `rs_percentile_cross_sectional` over every security in
+`security_ids` and only filtered to `eligible_ids` afterward -- so a security that
+would never become a candidate (e.g. failing `minimum_price`) could still enter the
+cross-sectional distribution and skew the RS percentile of securities that ARE
+eligible. At real-data scale (thousands of ineligible penny/illiquid names), that
+would have silently distorted which eligible securities look "notable." Fixed;
+TEST 22 proves it (fails against the pre-patch ordering, passes against the fix).
 
 `discovery.engine.run_discovery(conn, security_ids, as_of, benchmark_security_id, config)`
 is the single entry point. Zero LLM calls anywhere in this path (Spec
@@ -128,18 +138,29 @@ do properly, which is out of scope for Level 1 (see Known Limitations).
 
 `candidate/convergence.py` produces `active_lanes` (lanes whose label isn't
 NEUTRAL/NORMAL) + `descriptive_metrics` (`extremeness`, `persistence`,
-`state_frequency`, `sample_count`, `support_status`) + `reason_codes` -- **never** a
-single combined score (Spec #002 SS20/SS24, enforced structurally by TEST 13/17).
-`state_frequency` is the CROSS_SECTIONAL rarity of a candidate's exact full
-`lane_states` combination among *eligible* securities on that `as_of` (a documented
-choice, distinct from the TIME_SERIES `persistence` metric).
+`state_frequency`, `sample_count`, `support_status`) + `reason_codes` -- **never an
+Alpha Score, and never anything calibrated against outcomes** (Spec #002 SS20/SS24,
+enforced structurally by TEST 13/17). `extremeness` is the *max absolute distance
+from the 0.5 midpoint* across a candidate's active lane-driving percentiles (not a
+weighted sum across lanes), so it never lets one lane's magnitude compensate for
+another's the way a blended score would. `state_frequency` is the CROSS_SECTIONAL
+rarity of a candidate's exact full `lane_states` combination among *eligible*
+securities on that `as_of` (a documented choice, distinct from the TIME_SERIES
+`persistence` metric).
 
-`candidate/selector.py`'s budget selection is fully deterministic: ranked by
-`(extremeness desc, active-lane-count desc, persistence desc, security_id asc)`,
-with `security_id` as the explicit tie-breaker Spec #002 SS22 requires. Diversity
-(SS23) is a round-robin over buckets keyed by each candidate's sorted `active_lanes`
-tuple, iterated in a fixed lexicographic bucket order -- documented, not a hidden
-heuristic.
+**`candidate/selector.py`'s budget selection IS a ranking** -- a **descriptive
+deterministic ranking for candidate-budget allocation**, precisely because turning
+an unbounded universe into a bounded, LLM-consumable candidate set requires some
+ordering mechanism (Spec #002 SS21/SS22). It is not, and must never become, an
+Alpha Score: the sort key `(extremeness desc, active-lane-count desc, persistence
+desc, security_id asc)` uses only descriptive/statistical properties available at
+`as_of`, `security_id` is the explicit tie-breaker Spec #002 SS22 requires, and
+nothing in this ranking is or may ever be calibrated against forward
+returns/profitability -- doing so would silently end Discovery's outcome-blindness
+even though no single field would be named "alpha_score" (GPT Review #002 Round 1).
+Diversity (SS23) is a round-robin over buckets keyed by each candidate's sorted
+`active_lanes` tuple, iterated in a fixed lexicographic bucket order -- documented,
+not a hidden heuristic.
 
 ## PIT enforcement
 
@@ -150,6 +171,16 @@ TEST 18, an AST scan mirroring Spec #001's TEST 10. `run_discovery()` makes exac
 one PIT call per security (plus one for the benchmark), retrieving the full local
 history in a single shot; every feature family is then computed from that same
 in-memory series (Spec #002 SS37 -- never one query per feature per ticker per day).
+
+The `as_of` bound itself is enforced entirely by `pit.access.get_price_series_as_of()`
+(Spec #001) -- Feature Engine deliberately does **not** re-filter by date; duplicating
+that rule here would create two sources of truth for the same guarantee, and
+`pit.access` is the single authority (TEST 2 already exercises this end-to-end: bars
+dated after an earlier `as_of` don't change that `as_of`'s output). `engine._assert_no_future_leakage()`
+is a cheap fail-fast invariant on top -- `assert bars[-1].date <= as_of` -- added per
+GPT Review #002 Round 1 (recommended, not a filtering mechanism): it exists only to
+raise loudly if the PIT gateway's contract is ever violated, not to enforce
+PIT-safety itself.
 
 ## Configuration and versioning
 

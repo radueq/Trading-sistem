@@ -12,6 +12,6 @@ Universe: synthetic Level 1 test fixtures (32 named + filler securities), as_of=
 
 ## Timing (informational, Level 1 synthetic scale -- not an acceptance blocker per Spec #002 SS37)
 
-- Ingestion (33 securities x ~320 daily bars): 0.375s
-- Discovery (32 securities, 252-day percentile window): 0.869s
-- Per-security average: 27.2ms
+- Ingestion (33 securities x ~320 daily bars): 0.346s
+- Discovery (32 securities, 252-day percentile window): 0.774s
+- Per-security average: 24.2ms

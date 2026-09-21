@@ -52,15 +52,25 @@ forbids that.
 
 ## Feature computation
 
-- **Volume is not split-adjusted.** `data_foundation.pit.access.PITPriceBar`
-  exposes only `raw_volume` -- there is no split-adjusted volume field
-  in Spec #001's PIT output. A security that underwent a split will show
-  a level shift in raw volume around the split date (share count
-  changes), which can produce a spurious `RVOL_20`/`volume_percentile`
-  reading near that boundary. Not fabricated/adjusted here; flagged as
-  a Level 1 gap. A proper fix belongs in Spec #001 (a split-adjusted
-  volume field on `PITPriceBar`), not invented unilaterally in this
-  module.
+- **Volume is not split-adjusted -- BLOCKER before any real-data
+  backtesting, not a cosmetic gap** (elevated per GPT Review #002 Round
+  1). `data_foundation.pit.access.PITPriceBar` exposes only `raw_volume`
+  -- there is no split-adjusted volume field in Spec #001's PIT output.
+  A security that underwent a split will show a mechanical level shift
+  in raw volume around the split date (share count changes, nothing to
+  do with actual trading interest), which can produce a spurious
+  `RVOL_20`/`volume_percentile` reading and a false `VOLUME_ANOMALY`
+  reason code near that boundary. This matters more than most Level 1
+  gaps specifically *because* unusual volume is one of the core signals
+  Discovery is meant to surface -- on real historical data, Discovery
+  could "discover" a volume anomaly that is purely an artifact of a
+  split, not a real behavioral signal, and nothing downstream would be
+  able to tell the difference. Not fabricated/adjusted here at Level 1
+  (synthetic fixtures don't exercise splits at all, so this doesn't
+  affect Spec #002's own test suite); must be fixed in Spec #001 (a
+  split-adjusted volume field on `PITPriceBar`) before Discovery is run
+  against real historical data that includes splits -- not invented
+  unilaterally in this module.
 - **`relative_strength`'s historical persistence/transition is not
   computed.** `states/mapper.compute_persistence()` and the
   `TransitionVector` cover only the four TIME_SERIES-driven lanes
@@ -115,6 +125,46 @@ forbids that.
   fully synthetic fixtures (`tests/spec002/fixtures/synthetic_universe.py`),
   explicitly labeled TEST_CONFIG, not claimed to resemble real market
   behavior.
+
+## GPT Review #002 Round 1 (PATCH #002-A, 2026-09-2x)
+
+- **Fixed -- cross-sectional RS was computed before eligibility
+  filtering.** The first cut of `run_discovery()` computed
+  `rs_percentile_cross_sectional` over every security passed in, then
+  filtered to `eligible_ids` afterward -- so an ineligible security
+  (e.g. failing `minimum_price`) with an extreme `relative_return_63d`
+  could still skew the RS percentile of securities that ARE eligible.
+  Reordered: eligibility now runs before the cross-sectional pass, which
+  is scoped to `eligible_ids` only. TEST 22 proves it (fails against the
+  pre-patch ordering, passes against the fix) -- see
+  `docs/spec002_architecture.md`'s Data flow section for the corrected
+  pipeline order.
+- **Frozen convention, not changed -- rolling percentile includes the
+  current observation in its own reference window.** GPT's review noted
+  a conceptually cleaner alternative (compare today's value only against
+  the *prior* 252 observations, excluding itself) and confirmed the
+  current convention is not look-ahead leakage (today's value is known
+  at `as_of` either way) and the numerical difference at window=252 is
+  small. Per GPT's explicit recommendation, **not changed** without an
+  empirical reason -- documented here as a deliberately frozen
+  convention ahead of any backtesting work, so a future change (if ever
+  made) is a conscious, reviewed decision, not a silent drift.
+- **Documentation-only fixes**: `docs/spec002_architecture.md`'s
+  Convergence section no longer claims the candidate selector produces
+  "never a single combined score" -- it IS a ranking (a **descriptive
+  deterministic ranking for candidate-budget allocation**), just never
+  an Alpha Score and never calibrated against outcomes; a standing rule
+  against ever optimizing selector weights/ordering against forward
+  returns is now stated explicitly. `docs/spec002_examples.md`'s intro
+  now states plainly that the market data is synthetic (only the
+  pipeline computation is "real"), removing the earlier ambiguous
+  wording. The unadjusted-volume-around-splits gap (Feature computation,
+  above) is elevated from a passive note to an explicit blocker before
+  real-data backtesting.
+- **Added, non-blocker**: `engine._assert_no_future_leakage()`, a
+  fail-fast invariant (`assert bars[-1].date <= as_of`) on every PIT
+  call -- not a filtering mechanism (that stays entirely `pit.access`'s
+  job), just a loud failure if that contract is ever violated.
 
 ## Test coverage
 

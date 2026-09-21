@@ -141,9 +141,13 @@ def main():
 
     examples_md = "\n".join([
         "# Spec #002 -- Example Discovery Output (Deliverable D)\n",
-        "Three controlled examples drawn from an actual `run_discovery()` run",
-        "against the Level 1 synthetic universe (`tests/spec002/fixtures/synthetic_universe.py`).",
-        "All figures below are as literally computed -- not hand-edited to match a hoped-for story.\n",
+        "**Actual pipeline outputs generated from deterministic synthetic market data.",
+        "No live-market data used anywhere in this document or in Spec #002's test suite**",
+        "(GPT Review #002 Round 1: the earlier wording -- \"drawn from an actual run_discovery() run\"",
+        "-- was ambiguous about whether the *market data* was real; it was not. Only the *pipeline",
+        "computation* is real: every figure below is exactly what `run_discovery()` computed against",
+        "`tests/spec002/fixtures/synthetic_universe.py` (numpy-generated, seeded, fully synthetic),",
+        "not hand-edited afterward to match a hoped-for story.\n",
         format_example(chosen[0]),
         format_example(chosen[1]),
         format_example(chosen[2]),

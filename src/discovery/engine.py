@@ -96,6 +96,23 @@ def _last_or_none(series: pd.Series) -> Optional[float]:
     return float(series.iloc[-1])
 
 
+def _assert_no_future_leakage(security_id: str, bars, as_of: str) -> None:
+    """Fail-fast invariant, NOT a filtering mechanism (GPT Review #002
+    Round 1, recommended, non-blocker): pit.access.get_price_series_as_of()
+    is solely responsible for the as_of bound (Spec #001), and Feature
+    Engine deliberately does not re-filter -- duplicating that rule here
+    would create two sources of truth for the same guarantee. This
+    assertion exists only to fail loudly if the PIT gateway's contract
+    is ever violated, not to enforce PIT-safety itself. Bars are already
+    ordered ascending by date (repository.get_price_history), so
+    checking the last one suffices."""
+    if bars and bars[-1].date > as_of:
+        raise AssertionError(
+            f"PIT gateway contract violation: {security_id} returned a bar dated "
+            f"{bars[-1].date} after as_of={as_of}"
+        )
+
+
 def _compute_security_local(bars, benchmark_df: pd.DataFrame, config: DiscoveryConfig) -> dict:
     df = _price_series_to_df(bars)
 
@@ -150,6 +167,7 @@ def run_discovery(
     states_config = config.states
 
     benchmark_bars = pit.get_price_series_as_of(conn, benchmark_security_id, as_of)
+    _assert_no_future_leakage(benchmark_security_id, benchmark_bars, as_of)
     benchmark_df = _price_series_to_df(benchmark_bars)
 
     locals_by_security: dict[str, dict] = {}
@@ -157,17 +175,42 @@ def run_discovery(
         bars = pit.get_price_series_as_of(conn, security_id, as_of)
         if not bars:
             continue
+        _assert_no_future_leakage(security_id, bars, as_of)
         locals_by_security[security_id] = _compute_security_local(bars, benchmark_df, config)
 
-    # Cross-sectional pass: relative_return_63d -> rs_percentile_cross_sectional
-    relative_return_63d_by_security = {
-        sid: _last_or_none(r["raw_features"]["relative_return_63d"])
+    # Eligibility (Spec #002 SS29) FIRST -- establishes the reference
+    # population for any cross-sectional computation. GPT Review #002
+    # Round 1 (mandatory finding): computing rs_percentile_cross_sectional
+    # before filtering to eligible_ids lets a security that will never
+    # become a candidate (e.g. failing minimum_price) still skew the RS
+    # percentile of securities that ARE eligible -- see TEST 22. Kept
+    # separate from Data QA and from Discovery's own descriptive metrics.
+    # primary_exchange is passed as None: the PIT gateway (Spec #001)
+    # doesn't expose security_master.primary_exchange, so
+    # EXCHANGE_ELIGIBILITY can't be evaluated at Level 1 -- disabled by
+    # default (allowed_exchanges: null in eligibility.yaml), documented
+    # in Known Limitations rather than reading repository directly.
+    eligibility_by_security: dict[str, EligibilityResult] = {
+        sid: evaluate_eligibility(
+            security_id=sid, as_of=as_of, latest_close=r["latest_close"],
+            history_days=r["history_days"], latest_adv_20=r["latest_adv_20"],
+            primary_exchange=None, config=config.eligibility,
+        )
         for sid, r in locals_by_security.items()
+    }
+    eligible_ids = [sid for sid, e in eligibility_by_security.items() if e.eligible]
+
+    # Cross-sectional pass: relative_return_63d -> rs_percentile_cross_sectional,
+    # computed ONLY over eligible_ids (see note above).
+    relative_return_63d_by_security = {
+        sid: _last_or_none(locals_by_security[sid]["raw_features"]["relative_return_63d"])
+        for sid in eligible_ids
     }
     rs_percentiles = cross_sectional_percentile(relative_return_63d_by_security)
 
     state_signatures: dict[str, StateSignature] = {}
-    for sid, r in locals_by_security.items():
+    for sid in eligible_ids:
+        r = locals_by_security[sid]
         normalized_at_as_of = {name: series[-1].value for name, series in r["normalized_series"].items()}
         normalized_at_as_of["rs_percentile_cross_sectional"] = rs_percentiles[sid].value
 
@@ -179,23 +222,6 @@ def run_discovery(
             lane_states=lane_states, feature_vector=raw_at_as_of,
             normalized_feature_vector=normalized_at_as_of, persistence=r["persistence"],
         )
-
-    # Eligibility (Spec #002 SS29) -- kept separate from Data QA and
-    # from Discovery's own descriptive metrics. primary_exchange is
-    # passed as None: the PIT gateway (Spec #001) doesn't expose
-    # security_master.primary_exchange, so EXCHANGE_ELIGIBILITY can't be
-    # evaluated at Level 1 -- disabled by default (allowed_exchanges:
-    # null in eligibility.yaml), documented in Known Limitations rather
-    # than reading repository directly to fetch it.
-    eligibility_by_security: dict[str, EligibilityResult] = {
-        sid: evaluate_eligibility(
-            security_id=sid, as_of=as_of, latest_close=r["latest_close"],
-            history_days=r["history_days"], latest_adv_20=r["latest_adv_20"],
-            primary_exchange=None, config=config.eligibility,
-        )
-        for sid, r in locals_by_security.items()
-    }
-    eligible_ids = [sid for sid, e in eligibility_by_security.items() if e.eligible]
 
     # state_frequency (Spec #002 SS25): cross-sectional rarity among
     # ELIGIBLE securities sharing the exact same full lane_states
