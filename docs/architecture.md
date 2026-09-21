@@ -133,6 +133,48 @@ docs/
   yet" logic -- see `docs/known_limitations.md` for that specific,
   explicitly out-of-scope gap.
 
+- **GPT Final Review #001 (2026-09-21) -- persistence lifecycle**: PATCH
+  A and PATCH B were correct at the PIT/query layer but the review
+  surfaced a more important bug underneath: `corporate_actions` and
+  `listing_status_history` writes used `INSERT OR IGNORE`, keyed on
+  `action_id` / `(security_id, effective_from)`. In the real pipeline,
+  the same action is typically ingested more than once as new
+  information arrives (e.g. pending -> later reported `CANCELLED`) --
+  under `INSERT OR IGNORE`, that second, more-informative row would be
+  silently and permanently dropped, since the key already existed. PATCH
+  A's `CANCELLED` gate would then never actually fire in practice,
+  because the stored row would never learn about the cancellation.
+  Fixed with an **enrichment upsert** (`repository.upsert_corporate_action`,
+  `repository.upsert_listing_status`): on conflict, only the genuinely
+  revisable fields are updated (`announcement_date` / `source_status` /
+  `source_status_date` / `available_at` for corporate actions;
+  `effective_to` / `delisting_reason` / `available_at` for listing
+  status), and only when the new value is non-`NULL` (`COALESCE(new,
+  old)`), so a later fetch that happens to omit a field can never regress
+  an already-known value. `ingestion_timestamp` is preserved as
+  "first seen"; a new `last_updated_timestamp` field records the most
+  recent revision. Deliberately NOT a blind `INSERT OR REPLACE`, which
+  would have destroyed that first-seen provenance. TEST 14c exercises
+  this through the real `ingestion -> repository -> PIT` path (not a
+  directly-constructed row) and would fail against the old `INSERT OR
+  IGNORE` behavior; a matching enrichment test exists for listing status
+  in TEST 15. Known gaps, both explicitly out of scope for this minimal
+  patch (see `docs/known_limitations.md`): a genuine provider correction
+  to `action_type`/`effective_date`/`value` changes `action_id` itself
+  (a new logical action, not a revision of the existing one), and
+  `COALESCE` can enrich a `NULL` into a value but can't express
+  "clear a previously-set fact back to unknown."
+
+- **Schema versioning**: `storage/schema.sql` carries a `SCHEMA_VERSION`
+  comment (currently 3). `CREATE TABLE IF NOT EXISTS` does **not**
+  migrate an existing on-disk database to a new column set -- Level 1
+  has no `ALTER TABLE` migration path. Accepted explicitly (Radu,
+  2026-09-21): no persisted database exists yet anywhere in this
+  repository (every test uses `:memory:`), so a schema change currently
+  just means deleting and recreating the SQLite file. Revisit with real
+  migration infrastructure before any Level 1 database is expected to
+  persist across a schema change.
+
 - **Total-return methodology status**: `AdjustmentFactor.total_return_status`
   and `PITPriceBar.total_return_status` are always
   `EXPERIMENTAL_NOT_APPROVED_FOR_RESEARCH` (Radu's correction,

@@ -5,6 +5,17 @@ auditability + modularity before sophistication), we don't build DB
 infrastructure this module doesn't need yet. Migrating to Postgres later
 only requires replacing this module, since nothing upstream should depend
 on sqlite specifics.
+
+NO MIGRATION PATH at Level 1 (accepted explicitly, GPT Final Review #001,
+2026-09-21 -- see schema.sql's SCHEMA_VERSION note): init_schema() runs
+`CREATE TABLE IF NOT EXISTS`, which does nothing to a table that already
+exists under an older shape -- it will NOT add a newly-introduced column
+to an existing on-disk database file. A schema change requires deleting
+and recreating the SQLite file, not migrating one in place. There is
+currently no persisted database file anywhere in this repository worth
+migrating (every test uses `:memory:`), so this is a real but currently
+inert gap -- revisit with a proper migration mechanism before any Level 1
+database is expected to persist across a schema change.
 """
 from __future__ import annotations
 

@@ -28,15 +28,17 @@ def test_delisting_pit_no_hindsight_leakage(conn, now):
 
     active_from = DELISTING["bars"][0]["date"]
     delisted_from = DELISTING["delisted_effective"]
-    repo.insert_listing_status(conn, ListingStatusEntry(
+    repo.upsert_listing_status(conn, ListingStatusEntry(
         security_id=sid, status=ListingStatus.ACTIVE.value,
         effective_from=active_from, effective_to=delisted_from,
         source_provider="manual", delisting_reason=None, available_at=None,
+        last_updated_timestamp=now,
     ))
-    repo.insert_listing_status(conn, ListingStatusEntry(
+    repo.upsert_listing_status(conn, ListingStatusEntry(
         security_id=sid, status=ListingStatus.DELISTED.value,
         effective_from=delisted_from, effective_to=None,
         source_provider="manual", delisting_reason=DELISTING["delisting_reason"], available_at=None,
+        last_updated_timestamp=now,
     ))
 
     before = pit.get_data(conn, sid, as_of="2019-01-10")

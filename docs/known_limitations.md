@@ -45,6 +45,22 @@ free provider and no live network access, can actually claim.
   infers from provider data. A Level 2/3 provider with a real
   cross-listing identifier would let this become automatic.
 
+## Persistence & schema versioning
+
+- **No migration path at Level 1** (GPT Final Review #001, 2026-09-21).
+  `storage/schema.sql` carries a `SCHEMA_VERSION` comment (currently 3),
+  but `CREATE TABLE IF NOT EXISTS` does **not** add new columns to an
+  existing on-disk database -- it silently does nothing if the table
+  already exists under an older shape. A schema change (like the
+  `available_at` / `last_updated_timestamp` columns added in this patch
+  round) requires deleting and recreating the SQLite file, not migrating
+  one in place. Accepted explicitly for now: no persisted database file
+  exists anywhere in this repository (every test uses `:memory:`), so
+  there is currently nothing to actually migrate. Revisit with real
+  migration infrastructure (e.g. `ALTER TABLE`-based versioned
+  migrations) before any Level 1 database is expected to persist across
+  a schema change.
+
 ## Adjustment methodology
 
 - **`total_return_adjusted_close` is `EXPERIMENTAL_NOT_APPROVED_FOR_RESEARCH`**
@@ -107,6 +123,31 @@ announcement-date-or-effective-date fallback with an explicit, nullable
   now carries the same nullable `available_at` field as
   `corporate_actions` (see below) -- the knowledge-time axis is no
   longer corporate-actions-only.
+- **Update 2026-09-21 (GPT Final Review #001 -- persistence lifecycle,
+  more important than PATCH A/B themselves):** PATCH A/B were correct at
+  the PIT/query layer, but `corporate_actions` and `listing_status_history`
+  writes used `INSERT OR IGNORE`. In the real pipeline the same action is
+  typically ingested more than once as new information arrives (pending
+  -> `CANCELLED`); under `INSERT OR IGNORE` that second, more-informative
+  row is silently and permanently dropped, so PATCH A's `CANCELLED` gate
+  would never actually fire against real re-ingested data. Fixed with an
+  enrichment upsert (`repository.upsert_corporate_action`,
+  `repository.upsert_listing_status`, see `docs/architecture.md` for the
+  exact field-by-field policy) rather than a blind `INSERT OR REPLACE`,
+  which would have destroyed the first-seen `ingestion_timestamp`.
+  TEST 14c exercises this through the real `ingestion -> repository ->
+  PIT` path.
+- **Two narrower gaps accepted as out of scope for this patch** (GPT
+  Final Review #001, 2026-09-21): (1) `action_id` is derived from
+  `action_type`/`effective_date`/`value` (see `ingestion.generate_action_id`),
+  so a genuine provider correction to any of those produces a *new*
+  `action_id` rather than revising the existing row -- the enrichment
+  upsert only helps when the identity-defining fields are unchanged
+  (e.g. a status update). A stable identity independent of these mutable
+  facts is a Level 2/3 concern. (2) The enrichment upsert uses
+  `COALESCE(new, old)`, which can turn a `NULL` into a value but cannot
+  express "clear a previously-set fact back to unknown" -- not needed by
+  any Level 1 scenario, not built here.
 
 ## Listing status
 

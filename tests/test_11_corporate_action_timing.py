@@ -34,8 +34,9 @@ def test_corporate_action_timing_status_derivation(conn, now):
         announcement_date=ANNOUNCEMENT_DATE, effective_date=EFFECTIVE_DATE,
         value=2.0, source_provider="manual", source_status=None,
         source_status_date=None, available_at=ANNOUNCEMENT_DATE, ingestion_timestamp=now,
+        last_updated_timestamp=now,
     )
-    repo.insert_corporate_actions(conn, [action])
+    repo.upsert_corporate_actions(conn, [action])
 
     assert pit.derive_corporate_action_pit_status(action, "2024-05-20") == ("NOT_KNOWN", "KNOWN")
     assert pit.derive_corporate_action_pit_status(action, "2024-05-25") == ("ANNOUNCED", "KNOWN")

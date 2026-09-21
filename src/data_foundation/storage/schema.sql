@@ -1,6 +1,18 @@
 -- Spec #001 -- Standard Internal Data Schema
 -- Raw / factual tables only. No derived or as-of-today status is stored here --
 -- derivation for a simulated moment happens exclusively in pit/access.py.
+--
+-- SCHEMA_VERSION: 3 (2026-09-21, GPT Final Review #001 -- persistence
+-- lifecycle patch). Level 1 has NO ALTER TABLE migration path: a schema
+-- change (like this one, which adds columns) requires deleting and
+-- recreating the SQLite file, not migrating an existing one in place.
+-- CREATE TABLE IF NOT EXISTS silently does nothing to a table that
+-- already exists under the old shape -- it will NOT add new columns to
+-- an old on-disk database. Accepted explicitly for Level 1 (Radu,
+-- 2026-09-21): no persisted database exists yet worth migrating, and
+-- building migration infrastructure now would be exactly the kind of
+-- premature complexity SS26 warns against. Revisit before any Level 1
+-- database is expected to persist across a schema change.
 
 CREATE TABLE IF NOT EXISTS security_master (
     security_id         TEXT PRIMARY KEY,
@@ -80,18 +92,32 @@ CREATE TABLE IF NOT EXISTS adjustment_factors (
 -- Level 1 corporate actions from yfinance (no announcement_date
 -- available) always have available_at = NULL (Radu's correction,
 -- 2026-09-21).
+--
+-- Persistence lifecycle (GPT Final Review #001, 2026-09-21): action_id
+-- identity is stable, but our KNOWLEDGE of an action can be revised as
+-- new information arrives (e.g. pending -> CANCELLED). Writes go
+-- through repository.upsert_corporate_action(s), an ENRICHMENT upsert:
+-- on conflict (same action_id), only announcement_date/source_status/
+-- source_status_date/available_at are updated, and only when the new
+-- value is non-NULL (a later fetch that happens to omit a field can
+-- never regress an already-known value to unknown). ingestion_timestamp
+-- is preserved as "first seen"; last_updated_timestamp records the most
+-- recent revision. A plain INSERT OR IGNORE would have silently dropped
+-- a real re-ingested cancellation forever (TEST 14c); a blind INSERT OR
+-- REPLACE would have destroyed the first-seen ingestion_timestamp.
 CREATE TABLE IF NOT EXISTS corporate_actions (
-    action_id          TEXT PRIMARY KEY,
-    security_id         TEXT NOT NULL REFERENCES security_master(security_id),
-    action_type         TEXT NOT NULL,
-    announcement_date      TEXT,
-    effective_date        TEXT NOT NULL,
-    value             REAL,
-    source_provider       TEXT NOT NULL,
-    source_status        TEXT,
-    source_status_date     TEXT,
-    available_at         TEXT,
-    ingestion_timestamp     TEXT NOT NULL
+    action_id            TEXT PRIMARY KEY,
+    security_id           TEXT NOT NULL REFERENCES security_master(security_id),
+    action_type           TEXT NOT NULL,
+    announcement_date        TEXT,
+    effective_date          TEXT NOT NULL,
+    value               REAL,
+    source_provider         TEXT NOT NULL,
+    source_status          TEXT,
+    source_status_date       TEXT,
+    available_at           TEXT,
+    ingestion_timestamp       TEXT NOT NULL,
+    last_updated_timestamp     TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_corporate_actions_security ON corporate_actions(security_id);
 
@@ -102,14 +128,21 @@ CREATE INDEX IF NOT EXISTS idx_corporate_actions_security ON corporate_actions(s
 -- UNKNOWN. Deliberately minimal: no announcement/status lifecycle, just
 -- the one nullable field, mirroring corporate_actions rather than
 -- building a second PIT model in the same foundation.
+--
+-- Same enrichment-upsert persistence policy as corporate_actions (GPT
+-- Final Review #001, 2026-09-21), keyed on (security_id, effective_from):
+-- repository.upsert_listing_status COALESCE-merges effective_to/
+-- delisting_reason/available_at (new wins only if non-NULL);
+-- last_updated_timestamp records the most recent revision.
 CREATE TABLE IF NOT EXISTS listing_status_history (
-    security_id      TEXT NOT NULL REFERENCES security_master(security_id),
-    status         TEXT NOT NULL,
-    effective_from     TEXT NOT NULL,
-    effective_to      TEXT,
-    source_provider    TEXT NOT NULL,
-    delisting_reason   TEXT,
-    available_at      TEXT,
+    security_id          TEXT NOT NULL REFERENCES security_master(security_id),
+    status             TEXT NOT NULL,
+    effective_from         TEXT NOT NULL,
+    effective_to          TEXT,
+    source_provider        TEXT NOT NULL,
+    delisting_reason       TEXT,
+    available_at          TEXT,
+    last_updated_timestamp     TEXT NOT NULL,
     PRIMARY KEY (security_id, effective_from)
 );
 

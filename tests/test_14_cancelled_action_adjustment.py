@@ -1,5 +1,6 @@
 """TEST 14 -- Cancelled corporate action must never adjust prices after
-cancellation is known (GPT Review #001, commit 8492ade -- PATCH A).
+cancellation is known (GPT Review #001, commit 8492ade -- PATCH A; 14c
+added in GPT Final Review #001, 2026-09-21 -- persistence lifecycle).
 
 Bug found in review: `_is_action_known_for_adjustment()` checked
 `effective_date` and `available_at` but not CANCELLED status, so an
@@ -9,7 +10,22 @@ series -- metadata says CANCELLED, but the price series pretends the
 split/dividend happened anyway. Reproduces GPT's exact example:
 available_at=2024-03-01, effective_date=2024-03-20,
 source_status_date(CANCELLED)=2024-03-15, as_of=2024-03-25.
+
+14a/14b construct the CorporateAction row directly (legitimate test
+setup, per SS10-11's storage-test carve-out) to isolate the PIT/query
+logic. 14c goes further and proves the fix survives the REAL pipeline
+(ingestion -> repository -> PIT): a second follow-up finding was that
+`insert_corporate_action`'s old `INSERT OR IGNORE` semantics would have
+silently dropped a real re-ingested cancellation forever, making PATCH
+A's fix unreachable in practice even though it's correct at the query
+layer. See repository.upsert_corporate_action.
 """
+from data_foundation.adapters.base import (
+    ProviderAdapter,
+    RawCorporateActionEvent,
+    RawPriceBar,
+    RawSecurityInfo,
+)
 from data_foundation.model import ingestion as ing, repository as repo
 from data_foundation.model.entities import ActionType, CorporateAction, PriceBar, SecurityMaster
 from data_foundation.pit import access as pit
@@ -40,9 +56,9 @@ def test_cancelled_split_does_not_adjust_prices_once_cancellation_is_known(conn,
         action_id="ca_cancelled_split", security_id=sid, action_type=ActionType.SPLIT.value,
         announcement_date="2024-03-01", effective_date="2024-03-20", value=2.0,
         source_provider="manual", source_status="CANCELLED", source_status_date="2024-03-15",
-        available_at="2024-03-01", ingestion_timestamp=now,
+        available_at="2024-03-01", ingestion_timestamp=now, last_updated_timestamp=now,
     )
-    repo.insert_corporate_actions(conn, [action])
+    repo.upsert_corporate_actions(conn, [action])
 
     as_of = "2024-03-25"  # after available_at, effective_date, AND the cancellation
 
@@ -82,9 +98,9 @@ def test_pending_action_still_adjusts_before_its_cancellation_is_knowable(conn, 
         action_id="ca_reversed_split", security_id=sid, action_type=ActionType.SPLIT.value,
         announcement_date="2024-01-01", effective_date="2024-01-10", value=2.0,
         source_provider="manual", source_status="CANCELLED", source_status_date="2024-01-20",
-        available_at="2024-01-01", ingestion_timestamp=now,
+        available_at="2024-01-01", ingestion_timestamp=now, last_updated_timestamp=now,
     )
-    repo.insert_corporate_actions(conn, [action])
+    repo.upsert_corporate_actions(conn, [action])
 
     as_of = "2024-01-15"  # after effective_date, but before the cancellation is knowable
     status, _ = pit.derive_corporate_action_pit_status(action, as_of)
@@ -95,3 +111,95 @@ def test_pending_action_still_adjusts_before_its_cancellation_is_knowable(conn, 
     assert pre_split_bar.split_adjusted_close < pre_split_bar.raw_close * 0.6, (
         "before the cancellation is knowable, the split should still be reflected"
     )
+
+
+class _ConfigurableAdapter(ProviderAdapter):
+    """Minimal fake adapter for exercising the real ingestion pipeline
+    with provider data that changes between two calls (yfinance itself
+    never reports source_status, so it can't be used for this case --
+    see docs/known_limitations.md)."""
+    provider_name = "test14c_provider"
+
+    def __init__(self, info: RawSecurityInfo, bars: list[RawPriceBar], actions: list[RawCorporateActionEvent]):
+        self._info = info
+        self._bars = bars
+        self._actions = actions
+
+    def fetch_security_info(self, ticker: str) -> RawSecurityInfo:
+        return self._info
+
+    def fetch_price_history(self, ticker: str, start: str, end: str) -> list[RawPriceBar]:
+        return [b for b in self._bars if start <= b.date <= end]
+
+    def fetch_corporate_actions(self, ticker: str, start: str, end: str) -> list[RawCorporateActionEvent]:
+        return [a for a in self._actions if start <= a.effective_date <= end]
+
+
+def test_reingested_cancellation_reaches_pit_through_real_pipeline(conn, now):
+    """14c -- the scenario GPT's follow-up review flagged as the more
+    important bug: the SAME action_id is ingested twice through the real
+    ingestion.ingest_corporate_actions() -> repository -> PIT path, first
+    pending, then CANCELLED. Before the persistence fix, the second
+    ingestion would have been silently dropped by INSERT OR IGNORE,
+    leaving the row (and therefore PIT) permanently unaware of the
+    cancellation."""
+    ticker = "T14C"
+    start, end = "2024-02-20", "2024-03-25"
+    info = RawSecurityInfo(source_security_id=ticker, security_type="EQUITY",
+                            primary_exchange=None, currency="USD")
+    bars = [
+        RawPriceBar(source_security_id=ticker, date=b["date"], raw_open=b["open"],
+                     raw_high=b["high"], raw_low=b["low"], raw_close=b["close"],
+                     raw_volume=b["volume"], provider_adjusted_close=b["close"])
+        for b in make_bars(start, end, base_price=200.0, daily_drift=0.1)
+    ]
+
+    pending_event = RawCorporateActionEvent(
+        source_security_id=ticker, action_type=ActionType.SPLIT.value,
+        announcement_date="2024-03-01", effective_date="2024-03-20", value=2.0,
+        source_status=None, source_status_date=None,
+    )
+    adapter_t0 = _ConfigurableAdapter(info, bars, [pending_event])
+
+    sid = ing.new_security_id(f"test14c:{ticker}")
+    ing.ensure_security(conn, sid, adapter_t0, ticker, now)
+    ing.ingest_prices(conn, adapter_t0, sid, ticker, start, end, now)
+    ing.ingest_corporate_actions(conn, adapter_t0, sid, ticker, start, end, now)
+
+    after_t0 = repo.get_corporate_actions(conn, sid)
+    assert len(after_t0) == 1
+    action_id = after_t0[0].action_id
+    assert after_t0[0].source_status is None
+
+    # T1: same underlying action (same action_type/effective_date/value
+    # -> same action_id), the provider now reports it CANCELLED
+    cancelled_event = RawCorporateActionEvent(
+        source_security_id=ticker, action_type=ActionType.SPLIT.value,
+        announcement_date="2024-03-01", effective_date="2024-03-20", value=2.0,
+        source_status="CANCELLED", source_status_date="2024-03-15",
+    )
+    adapter_t1 = _ConfigurableAdapter(info, bars, [cancelled_event])
+    t1 = "2024-03-15T12:00:00+00:00"
+    ing.ingest_corporate_actions(conn, adapter_t1, sid, ticker, start, end, t1)
+
+    after_t1 = repo.get_corporate_actions(conn, sid)
+    assert len(after_t1) == 1, "re-ingesting the same action_id must UPDATE the row, not duplicate it"
+    updated = after_t1[0]
+    assert updated.action_id == action_id
+    assert updated.source_status == "CANCELLED"
+    assert updated.source_status_date == "2024-03-15"
+    assert updated.ingestion_timestamp == now, "ingestion_timestamp must be preserved as first-seen"
+    assert updated.last_updated_timestamp == t1, "last_updated_timestamp must reflect the revision"
+
+    # the critical assertion: PIT, queried through the real pipeline,
+    # now correctly withholds the adjustment once cancellation is known
+    as_of = "2024-03-25"
+    status, _ = pit.derive_corporate_action_pit_status(updated, as_of)
+    assert status == "CANCELLED"
+
+    series = pit.get_price_series_as_of(conn, sid, as_of)
+    assert len(series) > 0
+    for bar in series:
+        assert bar.split_adjusted_close == bar.raw_close, (
+            f"re-ingested cancellation did not reach the adjusted series on {bar.date}"
+        )

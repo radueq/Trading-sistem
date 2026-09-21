@@ -1,10 +1,20 @@
 """Repository functions: typed reads/writes against the 7 schema tables.
 
 Write semantics by table kind:
-- Raw / factual tables (security_master, symbol_history, price_history,
-  corporate_actions, listing_status_history): INSERT OR IGNORE, keyed on
-  the table's natural primary key. Re-running ingestion is idempotent;
-  raw facts are never overwritten in place.
+- Purely immutable facts (security_master, symbol_history, price_history):
+  INSERT OR IGNORE, keyed on the table's natural primary key. Re-running
+  ingestion is idempotent; raw facts are never overwritten in place.
+- Facts that can legitimately be REVISED as new information arrives
+  (corporate_actions, listing_status_history -- e.g. a pending action
+  later reported CANCELLED): an ENRICHMENT UPSERT (upsert_corporate_action,
+  upsert_listing_status), not INSERT OR IGNORE. A plain INSERT OR IGNORE
+  would silently and permanently drop a real revision once the row's key
+  already exists (GPT Final Review #001, 2026-09-21 -- this is exactly
+  what made PATCH A's CANCELLED-status fix unreachable via the real
+  ingestion pipeline; see TEST 14c). Only nullable, genuinely-revisable
+  fields are updated, only when the new value is non-NULL (COALESCE), so
+  a later fetch that omits a field can never regress an already-known
+  value -- see each function's docstring for exactly which fields.
 - Derived / recomputable tables (adjustment_factors, qa_results): INSERT
   OR REPLACE. These are reproducible outputs of a documented methodology,
   not source-of-truth facts, so recomputation is expected to supersede
@@ -199,26 +209,82 @@ def _row_to_adjustment_factor(r: sqlite3.Row) -> AdjustmentFactor:
     )
 
 
-def insert_corporate_action(conn: sqlite3.Connection, row: CorporateAction) -> None:
+def get_corporate_action_by_id(conn: sqlite3.Connection, action_id: str) -> Optional[CorporateAction]:
+    cur = conn.execute("SELECT * FROM corporate_actions WHERE action_id = ?", (action_id,))
+    r = cur.fetchone()
+    return _row_to_corporate_action(r) if r else None
+
+
+def upsert_corporate_action(conn: sqlite3.Connection, row: CorporateAction) -> None:
+    """Enrichment upsert, NOT a blind overwrite (GPT Final Review #001,
+    2026-09-21 -- persistence-lifecycle finding): action_id identity is
+    stable, but our KNOWLEDGE of an action can be revised as new
+    information arrives (e.g. pending -> CANCELLED). A plain INSERT OR
+    IGNORE silently drops a real re-ingested revision forever, which
+    would have made PATCH A's CANCELLED gate unreachable in the actual
+    re-ingestion pipeline even though it's correct at the query layer
+    (TEST 14c).
+
+    On conflict, only announcement_date / source_status /
+    source_status_date / available_at are updated, and only when the new
+    value is non-NULL (COALESCE(new, old)) -- a later fetch that happens
+    to omit a field can never regress an already-known value back to
+    unknown. ingestion_timestamp is preserved as "first seen";
+    last_updated_timestamp records the most recent revision.
+
+    This does not require keeping full row history to stay PIT-correct:
+    derive_corporate_action_pit_status() / _is_action_known_for_adjustment()
+    are pure functions of (stored facts, as_of) -- once source_status_date
+    is correctly recorded, ANY as_of query (past or present) reconstructs
+    the right view, because the derivation itself time-travels using that
+    field.
+
+    Known Level 1 gaps (see docs/known_limitations.md): (1) action_id is
+    derived from action_type/effective_date/value, so a genuine provider
+    correction to either of those creates a new logical action rather
+    than revising the existing one -- treating that as a true identity
+    requires a stable id independent of these mutable facts, deferred to
+    Level 2/3. (2) COALESCE can enrich a NULL into a value but can't
+    express "clear a previously-set fact back to unknown" -- a rare case,
+    not needed by any Level 1 scenario, not built here.
+    """
+    existing = get_corporate_action_by_id(conn, row.action_id)
+    if existing is None:
+        conn.execute(
+            """
+            INSERT INTO corporate_actions
+                (action_id, security_id, action_type, announcement_date, effective_date,
+                 value, source_provider, source_status, source_status_date, available_at,
+                 ingestion_timestamp, last_updated_timestamp)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                row.action_id, row.security_id, row.action_type, row.announcement_date,
+                row.effective_date, row.value, row.source_provider, row.source_status,
+                row.source_status_date, row.available_at, row.ingestion_timestamp,
+                row.ingestion_timestamp,
+            ),
+        )
+        return
+
     conn.execute(
         """
-        INSERT OR IGNORE INTO corporate_actions
-            (action_id, security_id, action_type, announcement_date, effective_date,
-             value, source_provider, source_status, source_status_date, available_at,
-             ingestion_timestamp)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        UPDATE corporate_actions SET
+            announcement_date = COALESCE(?, announcement_date),
+            source_status = COALESCE(?, source_status),
+            source_status_date = COALESCE(?, source_status_date),
+            available_at = COALESCE(?, available_at),
+            last_updated_timestamp = ?
+        WHERE action_id = ?
         """,
-        (
-            row.action_id, row.security_id, row.action_type, row.announcement_date,
-            row.effective_date, row.value, row.source_provider, row.source_status,
-            row.source_status_date, row.available_at, row.ingestion_timestamp,
-        ),
+        (row.announcement_date, row.source_status, row.source_status_date,
+         row.available_at, row.last_updated_timestamp, row.action_id),
     )
 
 
-def insert_corporate_actions(conn: sqlite3.Connection, rows: list[CorporateAction]) -> None:
+def upsert_corporate_actions(conn: sqlite3.Connection, rows: list[CorporateAction]) -> None:
     for row in rows:
-        insert_corporate_action(conn, row)
+        upsert_corporate_action(conn, row)
     conn.commit()
 
 
@@ -235,21 +301,56 @@ def _row_to_corporate_action(r: sqlite3.Row) -> CorporateAction:
         announcement_date=r["announcement_date"], effective_date=r["effective_date"],
         value=r["value"], source_provider=r["source_provider"], source_status=r["source_status"],
         source_status_date=r["source_status_date"], available_at=r["available_at"],
-        ingestion_timestamp=r["ingestion_timestamp"],
+        ingestion_timestamp=r["ingestion_timestamp"], last_updated_timestamp=r["last_updated_timestamp"],
     )
 
 
-def insert_listing_status(conn: sqlite3.Connection, row: ListingStatusEntry) -> None:
-    conn.execute(
-        """
-        INSERT OR IGNORE INTO listing_status_history
-            (security_id, status, effective_from, effective_to, source_provider,
-             delisting_reason, available_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-        """,
-        (row.security_id, row.status, row.effective_from, row.effective_to,
-         row.source_provider, row.delisting_reason, row.available_at),
+def get_listing_status_entry(
+    conn: sqlite3.Connection, security_id: str, effective_from: str
+) -> Optional[ListingStatusEntry]:
+    cur = conn.execute(
+        "SELECT * FROM listing_status_history WHERE security_id = ? AND effective_from = ?",
+        (security_id, effective_from),
     )
+    r = cur.fetchone()
+    return _row_to_listing_status(r) if r else None
+
+
+def upsert_listing_status(conn: sqlite3.Connection, row: ListingStatusEntry) -> None:
+    """Same enrichment-upsert policy as upsert_corporate_action (GPT
+    Final Review #001, 2026-09-21), keyed on (security_id, effective_from):
+    on conflict, effective_to / delisting_reason / available_at are
+    COALESCE-merged (new wins only if non-NULL), last_updated_timestamp
+    is bumped. `status` is treated as fixed at first insert for a given
+    (security_id, effective_from) -- a provider revising what the status
+    transition actually was is a different, out-of-scope case (see
+    docs/known_limitations.md), same class of gap as corporate actions'
+    action_id/value limitation above."""
+    existing = get_listing_status_entry(conn, row.security_id, row.effective_from)
+    if existing is None:
+        conn.execute(
+            """
+            INSERT INTO listing_status_history
+                (security_id, status, effective_from, effective_to, source_provider,
+                 delisting_reason, available_at, last_updated_timestamp)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (row.security_id, row.status, row.effective_from, row.effective_to,
+             row.source_provider, row.delisting_reason, row.available_at, row.last_updated_timestamp),
+        )
+    else:
+        conn.execute(
+            """
+            UPDATE listing_status_history SET
+                effective_to = COALESCE(?, effective_to),
+                delisting_reason = COALESCE(?, delisting_reason),
+                available_at = COALESCE(?, available_at),
+                last_updated_timestamp = ?
+            WHERE security_id = ? AND effective_from = ?
+            """,
+            (row.effective_to, row.delisting_reason, row.available_at, row.last_updated_timestamp,
+             row.security_id, row.effective_from),
+        )
     conn.commit()
 
 
@@ -274,6 +375,7 @@ def _row_to_listing_status(r: sqlite3.Row) -> ListingStatusEntry:
         security_id=r["security_id"], status=r["status"], effective_from=r["effective_from"],
         effective_to=r["effective_to"], source_provider=r["source_provider"],
         delisting_reason=r["delisting_reason"], available_at=r["available_at"],
+        last_updated_timestamp=r["last_updated_timestamp"],
     )
 
 

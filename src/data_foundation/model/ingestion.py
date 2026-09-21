@@ -103,8 +103,13 @@ def ingest_corporate_actions(conn, adapter: ProviderAdapter, security_id: str, t
             source_status=e.source_status, source_status_date=e.source_status_date,
             available_at=e.announcement_date,
             ingestion_timestamp=ingestion_timestamp,
+            last_updated_timestamp=ingestion_timestamp,
         )
         for e in raw_events
     ]
-    repo.insert_corporate_actions(conn, actions)
+    # Enrichment upsert, not a plain insert: re-ingesting the same
+    # action_id (e.g. a status later reported CANCELLED) must reach the
+    # stored row, not be silently dropped (GPT Final Review #001,
+    # 2026-09-21 -- see repository.upsert_corporate_action).
+    repo.upsert_corporate_actions(conn, actions)
     return actions

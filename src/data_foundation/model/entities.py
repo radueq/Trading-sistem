@@ -118,6 +118,11 @@ class CorporateAction:
     # 2026-09-21). See pit/access.py for how NULL is handled at query time.
     available_at: Optional[str]
     ingestion_timestamp: str
+    # Pure audit: when this row was first ingested vs when it was last
+    # revised (repository.upsert_corporate_action preserves
+    # ingestion_timestamp across revisions and bumps this field instead --
+    # GPT Final Review #001, 2026-09-21). Never used by PIT derivation.
+    last_updated_timestamp: str
 
 
 @dataclass(frozen=True)
@@ -133,6 +138,9 @@ class ListingStatusEntry:
     # pit/access.py falls back to effective_from/effective_to alone,
     # tagged UNKNOWN.
     available_at: Optional[str]
+    # Same audit pattern as CorporateAction.last_updated_timestamp (GPT
+    # Final Review #001, 2026-09-21).
+    last_updated_timestamp: str
 
 
 @dataclass(frozen=True)

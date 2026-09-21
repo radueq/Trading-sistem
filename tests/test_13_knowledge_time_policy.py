@@ -50,9 +50,9 @@ def test_available_at_after_effective_date_is_respected(conn, now):
         action_id="ca_retro_split", security_id=sid, action_type=ActionType.SPLIT.value,
         announcement_date=None, effective_date="2024-03-01", value=4.0,
         source_provider="manual", source_status=None, source_status_date=None,
-        available_at="2024-03-15", ingestion_timestamp=now,
+        available_at="2024-03-15", ingestion_timestamp=now, last_updated_timestamp=now,
     )
-    repo.insert_corporate_actions(conn, [action])
+    repo.upsert_corporate_actions(conn, [action])
 
     # status derivation waits for available_at, not just effective_date
     assert pit.derive_corporate_action_pit_status(action, "2024-03-10") == ("NOT_KNOWN", "KNOWN")
@@ -112,10 +112,12 @@ def test_ingestion_timestamp_never_used_as_knowledge_time(conn, now):
         available_at=None,
     )
     action_ingested_in_2020 = CorporateAction(
-        action_id="ca_ingested_2020", ingestion_timestamp="2020-09-01T00:00:00+00:00", **common,
+        action_id="ca_ingested_2020", ingestion_timestamp="2020-09-01T00:00:00+00:00",
+        last_updated_timestamp="2020-09-01T00:00:00+00:00", **common,
     )
     action_ingested_today = CorporateAction(
-        action_id="ca_ingested_today", ingestion_timestamp="2026-09-21T00:00:00+00:00", **common,
+        action_id="ca_ingested_today", ingestion_timestamp="2026-09-21T00:00:00+00:00",
+        last_updated_timestamp="2026-09-21T00:00:00+00:00", **common,
     )
 
     for as_of in ["2020-08-25", "2020-08-30", "2020-08-31", "2020-09-05"]:
