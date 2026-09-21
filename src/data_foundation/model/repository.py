@@ -161,13 +161,15 @@ def upsert_adjustment_factor(conn: sqlite3.Connection, row: AdjustmentFactor) ->
         """
         INSERT OR REPLACE INTO adjustment_factors
             (security_id, date, split_adjustment_factor, total_return_adjustment_factor,
-             provider_adjusted_close, methodology_version, source_provider, computed_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+             total_return_status, provider_adjusted_close, methodology_version,
+             source_provider, computed_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             row.security_id, row.date, row.split_adjustment_factor,
-            row.total_return_adjustment_factor, row.provider_adjusted_close,
-            row.methodology_version, row.source_provider, row.computed_at,
+            row.total_return_adjustment_factor, row.total_return_status,
+            row.provider_adjusted_close, row.methodology_version,
+            row.source_provider, row.computed_at,
         ),
     )
 
@@ -190,6 +192,7 @@ def _row_to_adjustment_factor(r: sqlite3.Row) -> AdjustmentFactor:
         security_id=r["security_id"], date=r["date"],
         split_adjustment_factor=r["split_adjustment_factor"],
         total_return_adjustment_factor=r["total_return_adjustment_factor"],
+        total_return_status=r["total_return_status"],
         provider_adjusted_close=r["provider_adjusted_close"],
         methodology_version=r["methodology_version"], source_provider=r["source_provider"],
         computed_at=r["computed_at"],
@@ -201,13 +204,14 @@ def insert_corporate_action(conn: sqlite3.Connection, row: CorporateAction) -> N
         """
         INSERT OR IGNORE INTO corporate_actions
             (action_id, security_id, action_type, announcement_date, effective_date,
-             value, source_provider, source_status, source_status_date, ingestion_timestamp)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             value, source_provider, source_status, source_status_date, available_at,
+             ingestion_timestamp)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             row.action_id, row.security_id, row.action_type, row.announcement_date,
             row.effective_date, row.value, row.source_provider, row.source_status,
-            row.source_status_date, row.ingestion_timestamp,
+            row.source_status_date, row.available_at, row.ingestion_timestamp,
         ),
     )
 
@@ -230,7 +234,8 @@ def _row_to_corporate_action(r: sqlite3.Row) -> CorporateAction:
         action_id=r["action_id"], security_id=r["security_id"], action_type=r["action_type"],
         announcement_date=r["announcement_date"], effective_date=r["effective_date"],
         value=r["value"], source_provider=r["source_provider"], source_status=r["source_status"],
-        source_status_date=r["source_status_date"], ingestion_timestamp=r["ingestion_timestamp"],
+        source_status_date=r["source_status_date"], available_at=r["available_at"],
+        ingestion_timestamp=r["ingestion_timestamp"],
     )
 
 

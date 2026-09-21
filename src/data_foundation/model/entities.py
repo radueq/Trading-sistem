@@ -40,6 +40,17 @@ class PITCorporateActionStatus(str, Enum):
     CANCELLED = "CANCELLED"
 
 
+class KnowledgeTimeStatus(str, Enum):
+    """Whether a PIT status derivation is backed by a validated
+    available_at signal (KNOWN) or by the Level 1 effective_date-only
+    fallback (UNKNOWN) -- Radu's correction, 2026-09-21. UNKNOWN must
+    never be presented as research-grade PIT correctness; before Level 3
+    it should be resolved via provider/date data wherever it could
+    affect PIT research."""
+    KNOWN = "KNOWN"
+    UNKNOWN = "UNKNOWN"
+
+
 @dataclass(frozen=True)
 class SecurityMaster:
     security_id: str
@@ -80,6 +91,7 @@ class AdjustmentFactor:
     date: str
     split_adjustment_factor: float
     total_return_adjustment_factor: float
+    total_return_status: str  # see adjustment_engine.TOTAL_RETURN_STATUS
     provider_adjusted_close: Optional[float]
     methodology_version: str
     source_provider: str
@@ -97,6 +109,14 @@ class CorporateAction:
     source_provider: str
     source_status: Optional[str]
     source_status_date: Optional[str]
+    # Knowledge-time: when this action's effect first became knowable to
+    # our system, distinct from announcement_date (a business fact about
+    # the real-world event) and from ingestion_timestamp (pure audit
+    # metadata, see model/ingestion.py). NULL means we have no validated
+    # signal for it -- never substitute ingestion_timestamp or
+    # announcement_date's absence with a guess (Radu's correction,
+    # 2026-09-21). See pit/access.py for how NULL is handled at query time.
+    available_at: Optional[str]
     ingestion_timestamp: str
 
 

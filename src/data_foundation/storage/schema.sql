@@ -46,11 +46,19 @@ CREATE TABLE IF NOT EXISTS price_history (
 -- Derived (but auditable/reproducible) adjustment factors. Computed by
 -- adjustment_engine.py from corporate_actions + price_history, never
 -- overwriting raw_* values in price_history.
+--
+-- total_return_status marks the total-return series' methodology
+-- maturity (Radu's correction, 2026-09-21): currently always
+-- 'EXPERIMENTAL_NOT_APPROVED_FOR_RESEARCH' -- the dividend-reinvestment
+-- math (adjustment_engine.py) has not been validated against real
+-- provider/reference data. split_adjustment_factor carries no such
+-- caveat and remains available as-is.
 CREATE TABLE IF NOT EXISTS adjustment_factors (
     security_id                   TEXT NOT NULL REFERENCES security_master(security_id),
     date                        TEXT NOT NULL,
     split_adjustment_factor            REAL NOT NULL,
     total_return_adjustment_factor        REAL NOT NULL,
+    total_return_status              TEXT NOT NULL,
     provider_adjusted_close             REAL,
     methodology_version              TEXT NOT NULL,
     source_provider                 TEXT NOT NULL,
@@ -63,6 +71,15 @@ CREATE TABLE IF NOT EXISTS adjustment_factors (
 -- here -- it is derived at query time by the PIT access layer against a
 -- caller-supplied as_of, so the same row never changes meaning based on
 -- the wall-clock day ingestion happened to run.
+--
+-- available_at is the knowledge-time axis, kept deliberately separate
+-- from effective_date (event time) and ingestion_timestamp (pure audit
+-- metadata -- see pit/access.py's module docstring for why
+-- ingestion_timestamp must never be used as a knowledge-time proxy).
+-- NULL means no validated knowledge-time signal exists for this row;
+-- Level 1 corporate actions from yfinance (no announcement_date
+-- available) always have available_at = NULL (Radu's correction,
+-- 2026-09-21).
 CREATE TABLE IF NOT EXISTS corporate_actions (
     action_id          TEXT PRIMARY KEY,
     security_id         TEXT NOT NULL REFERENCES security_master(security_id),
@@ -73,6 +90,7 @@ CREATE TABLE IF NOT EXISTS corporate_actions (
     source_provider       TEXT NOT NULL,
     source_status        TEXT,
     source_status_date     TEXT,
+    available_at         TEXT,
     ingestion_timestamp     TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_corporate_actions_security ON corporate_actions(security_id);

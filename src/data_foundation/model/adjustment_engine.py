@@ -30,6 +30,13 @@ SS6 "metodologia exactă ... va fi explicită"):
 provider_adjusted_close is carried through unmodified from whatever the
 provider reported (if anything) -- kept for audit/comparison only, never
 used as an input to the two factors above (Spec #001 SS6).
+
+TOTAL_RETURN_STATUS (Radu's correction, 2026-09-21): the dividend-
+reinvestment math above has not been validated against real provider or
+reference total-return data -- every computed row is explicitly marked
+EXPERIMENTAL_NOT_APPROVED_FOR_RESEARCH so it can never be silently
+mistaken for a validated series. split_adjustment_factor carries no such
+caveat; it remains available as-is (TEST 2 validates it directly).
 """
 from __future__ import annotations
 
@@ -37,6 +44,7 @@ from data_foundation.model import repository as repo
 from data_foundation.model.entities import ActionType, AdjustmentFactor
 
 METHODOLOGY_VERSION = "v1_backward_multiplicative"
+TOTAL_RETURN_STATUS = "EXPERIMENTAL_NOT_APPROVED_FOR_RESEARCH"
 
 
 def _previous_trading_date(sorted_dates: list[str], date: str) -> str | None:
@@ -109,6 +117,7 @@ def compute_adjustment_factors(
             security_id=security_id, date=d,
             split_adjustment_factor=split_factor,
             total_return_adjustment_factor=total_return_factor,
+            total_return_status=TOTAL_RETURN_STATUS,
             provider_adjusted_close=provider_adjusted_close_by_date.get(d),
             methodology_version=METHODOLOGY_VERSION,
             source_provider=bars[0].source_provider if bars else "unknown",

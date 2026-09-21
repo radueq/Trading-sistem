@@ -85,6 +85,13 @@ def ingest_prices(conn, adapter: ProviderAdapter, security_id: str, ticker: str,
 
 def ingest_corporate_actions(conn, adapter: ProviderAdapter, security_id: str, ticker: str,
                               start: str, end: str, ingestion_timestamp: str) -> list[CorporateAction]:
+    """Level 1 knowledge-time policy (Radu's correction, 2026-09-21):
+    available_at is set to the adapter's announcement_date when the
+    adapter supplies one (we trust that as our knowledge-time signal),
+    and left NULL otherwise -- never guessed, never backfilled from
+    ingestion_timestamp. yfinance never supplies announcement_date today,
+    so every yfinance-sourced action currently gets available_at=NULL,
+    which pit/access.py handles via its explicit Level 1 fallback."""
     raw_events = adapter.fetch_corporate_actions(ticker, start, end)
     actions = [
         CorporateAction(
@@ -94,6 +101,7 @@ def ingest_corporate_actions(conn, adapter: ProviderAdapter, security_id: str, t
             announcement_date=e.announcement_date, effective_date=e.effective_date,
             value=e.value, source_provider=adapter.provider_name,
             source_status=e.source_status, source_status_date=e.source_status_date,
+            available_at=e.announcement_date,
             ingestion_timestamp=ingestion_timestamp,
         )
         for e in raw_events

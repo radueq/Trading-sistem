@@ -26,6 +26,7 @@ src/data_foundation/
 tests/
   fixtures/                  TEST_CONFIG data (market_data.py, fake_yfinance.py)
   test_01..12_*.py            the 12 mandatory tests (Spec #001 SS23)
+  test_13_knowledge_time_policy.py  knowledge-time patch coverage (2026-09-21)
 docs/
   architecture.md             this file
   known_limitations.md
@@ -65,11 +66,45 @@ docs/
 
 - **Corporate action status**: never stored. `corporate_actions` rows
   hold only `announcement_date`, `effective_date`, `source_status`,
-  `source_status_date` -- persisted facts. `pit.access.derive_corporate_action_pit_status()`
-  computes `NOT_KNOWN` / `ANNOUNCED` / `EFFECTIVE` / `CANCELLED` fresh
-  for a given `as_of` every call, per Radu's 2026-09-20 correction to
-  SS8/28 -- this keeps the same stored row from ever changing meaning
-  based on which wall-clock day ingestion happened to run.
+  `source_status_date`, `available_at` -- persisted facts.
+  `pit.access.derive_corporate_action_pit_status()` computes
+  `NOT_KNOWN` / `ANNOUNCED` / `EFFECTIVE` / `CANCELLED` fresh for a given
+  `as_of` every call, per Radu's 2026-09-20 correction to SS8/28 -- this
+  keeps the same stored row from ever changing meaning based on which
+  wall-clock day ingestion happened to run.
+
+- **Knowledge-time (`available_at`)**: added 2026-09-21 per Radu's
+  correction. Three time axes are kept strictly separate on every
+  corporate action: `effective_date` (event time), `available_at`
+  (knowledge time, nullable), and `ingestion_timestamp` (pure audit
+  metadata). `derive_corporate_action_pit_status()` now returns
+  `(pit_status, knowledge_time_status)`: when `available_at` is known,
+  it gates exposure directly; when it's `NULL` (every yfinance-sourced
+  action today -- yfinance supplies no announcement date), the function
+  falls back to gating on `effective_date` alone (no `ANNOUNCED` phase,
+  since there's no evidence one was ever observable) and tags the result
+  `knowledge_time_status = UNKNOWN`. `ingestion_timestamp` is never
+  substituted as a knowledge-time proxy anywhere in this codebase --
+  doing so would make a 2020 split downloaded today appear "unknown" in
+  2020, which is simply wrong (TEST 13-C). `pit.get_price_series_as_of`'s
+  as_of-scoped adjustment-factor recomputation respects the same rule:
+  a corporate action only affects the adjusted price series once it has
+  both happened (`effective_date <= as_of`) and, where a validated signal
+  exists, been knowable (`available_at <= as_of`) -- see
+  `_is_action_known_for_adjustment()` and TEST 13-A (a retroactively-
+  disclosed action, `available_at > effective_date`).
+  `model/ingestion.py`'s Level 1 policy: `available_at` is set to the
+  adapter's `announcement_date` when supplied, else left `NULL` --
+  never guessed.
+
+- **Total-return methodology status**: `AdjustmentFactor.total_return_status`
+  and `PITPriceBar.total_return_status` are always
+  `EXPERIMENTAL_NOT_APPROVED_FOR_RESEARCH` (Radu's correction,
+  2026-09-21, `adjustment_engine.TOTAL_RETURN_STATUS`) -- the dividend-
+  reinvestment math has not been validated against real provider or
+  reference data. `split_adjustment_factor` / `split_adjusted_close`
+  carry no such caveat and remain available as-is (TEST 2 validates
+  them directly).
 
 ## Who may call what
 

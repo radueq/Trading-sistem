@@ -47,6 +47,13 @@ free provider and no live network access, can actually claim.
 
 ## Adjustment methodology
 
+- **`total_return_adjusted_close` is `EXPERIMENTAL_NOT_APPROVED_FOR_RESEARCH`**
+  (Radu's correction, 2026-09-21; `adjustment_engine.TOTAL_RETURN_STATUS`,
+  carried on every `AdjustmentFactor` row and every `PITPriceBar` so the
+  marking travels with the data itself, not just this document). The
+  dividend-reinvestment math has not been validated against real
+  provider or reference total-return data. `split_adjustment_factor` /
+  `split_adjusted_close` carry no such caveat and remain available as-is.
 - `total_return_adjustment_factor` (see `model/adjustment_engine.py`
   docstring for the full formula) uses the **raw** close on the trading
   day before a dividend's ex-date as the ratio denominator, not a
@@ -54,7 +61,8 @@ free provider and no live network access, can actually claim.
   for the same security this slightly misstates the combined factor.
   None of the Level 1 fixtures exercise that overlap, so it isn't
   caught by the mandatory test suite. Flagged as a `v2` methodology
-  improvement if it ever matters.
+  improvement if it ever matters -- moot anyway while the series is
+  EXPERIMENTAL.
 - Only `NOT_KNOWN` / `ANNOUNCED` / `EFFECTIVE` / `CANCELLED` are
   derived by the PIT layer. The original candidate status list (SS8)
   also included `CONFIRMED`; it isn't implemented because yfinance
@@ -62,6 +70,37 @@ free provider and no live network access, can actually claim.
   `source_status` / `source_status_date` are stored so a future,
   richer provider can drive `CANCELLED` (and could drive `CONFIRMED`)
   through the same mechanism without a schema change.
+
+## Knowledge-time (`available_at`)
+
+Added 2026-09-21 per Radu's correction, replacing the earlier implicit
+announcement-date-or-effective-date fallback with an explicit, nullable
+`available_at` field and an explicit `knowledge_time_status` (`KNOWN` /
+`UNKNOWN`) carried on every `PITCorporateAction` result.
+
+- **`available_at` is `NULL` for every yfinance-sourced corporate action
+  today.** yfinance's free tier supplies no announcement date, so
+  `model/ingestion.py` never has a trustworthy signal to populate it
+  with. `pit.access.derive_corporate_action_pit_status()` falls back to
+  gating exposure on `effective_date` alone (no `ANNOUNCED` phase) and
+  tags every such result `knowledge_time_status = UNKNOWN`. This is a
+  Level 1 shortcut, not validated PIT correctness -- **before Level 3,
+  any `UNKNOWN` case that could actually affect PIT research must be
+  resolved with real provider/announcement data**, not left as a
+  permanent substitute.
+- `ingestion_timestamp` is never used as a knowledge-time proxy anywhere
+  in this codebase (enforced by TEST 13-C: two rows for the same
+  historical event, differing only in `ingestion_timestamp`, produce
+  identical PIT results at every `as_of`). Using it would have made a
+  2020 split downloaded today appear "unknown" in 2020 -- obviously
+  wrong, since it really was public knowledge in 2020 regardless of when
+  our system got around to ingesting it.
+- The knowledge-time axis is currently wired only for `corporate_actions`.
+  `listing_status_history` has the analogous gap described below and has
+  **not** been patched -- it still conflates event time and availability
+  time via `effective_from` alone. Extending `available_at` there is a
+  natural follow-up, not done here to keep this patch targeted (no
+  redesign, per Spec #001 SS28).
 
 ## Listing status
 
@@ -112,3 +151,7 @@ free provider and no live network access, can actually claim.
 - **TEST 8 (provider consistency) is `PENDING_LEVEL_2_DATA`**, approved
   by Radu (2026-09-20): Level 1 runs a single provider, so there is
   nothing to cross-compare. Not a false PASS.
+- **TEST 13 (knowledge-time policy)** is additional coverage mandated by
+  the 2026-09-21 patch instructions, not part of the original Spec #001
+  SS23 numbered list -- see `docs/test_report.md` and
+  `tests/test_13_knowledge_time_policy.py`.
