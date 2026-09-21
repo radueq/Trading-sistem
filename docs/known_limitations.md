@@ -149,6 +149,22 @@ announcement-date-or-effective-date fallback with an explicit, nullable
   express "clear a previously-set fact back to unknown" -- not needed by
   any Level 1 scenario, not built here.
 
+## Volume adjustment
+
+- **`split_adjusted_volume` added (PATCH #001-C, Radu's correction,
+  2026-09-21).** Previously `PITPriceBar` exposed only `raw_volume`
+  (unadjusted) alongside `split_adjusted_close` (adjusted) -- a real gap
+  surfaced by Spec #002's Discovery Engine (not fixed there, per Radu's
+  own standing rule that a Data Foundation defect found downstream gets
+  fixed in Data Foundation, not silently patched around in the consumer).
+  Fixed: `split_adjusted_volume = raw_volume / split_factor`, derived
+  on-the-fly in `pit/access.py` from the same `split_factor` already
+  used for price, in the opposite direction (price is multiplied,
+  volume is divided, since a split changes price and share count
+  inversely). Purely additive -- no schema change, `raw_volume`
+  untouched. See `docs/architecture.md` for the full note and TEST 16
+  for the formula/continuity/round-trip verification.
+
 ## Listing status
 
 - `available_at` (added 2026-09-21, GPT Review #001 PATCH B) gates
@@ -243,3 +259,5 @@ announcement-date-or-effective-date fallback with an explicit, nullable
   `tests/test_13_knowledge_time_policy.py` /
   `tests/test_14_cancelled_action_adjustment.py` /
   `tests/test_15_listing_status_knowledge_time.py`.
+- **TEST 16 (split-adjusted volume)** is additional coverage from
+  PATCH #001-C (2026-09-21) -- see `tests/test_16_split_adjusted_volume.py`.

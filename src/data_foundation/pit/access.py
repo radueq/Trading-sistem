@@ -158,6 +158,7 @@ class PITPriceBar:
     raw_close: Optional[float]
     raw_volume: Optional[int]
     split_adjusted_close: Optional[float]
+    split_adjusted_volume: Optional[float]
     total_return_adjusted_close: Optional[float]
     total_return_status: str
 
@@ -257,10 +258,20 @@ def get_price_series_as_of(conn, security_id: str, as_of: str) -> list[PITPriceB
     result = []
     for b in bars:
         split_factor, total_return_factor = factors[b.date]
+        # split_adjusted_volume (PATCH #001-C, Radu's correction,
+        # 2026-09-21): the INVERSE of the price direction, using the
+        # same PIT-safe split_factor as split_adjusted_close. A 4-for-1
+        # forward split scales historical price down by split_factor=0.25
+        # (post-split shares are worth ~1/4); the same split scales
+        # historical volume UP by dividing by that factor (raw_volume/0.25
+        # = 4x), since post-split there are 4x as many shares for the same
+        # dollar turnover. Derived on-the-fly here, exactly like
+        # split_adjusted_close -- no schema change, raw_volume untouched.
         result.append(PITPriceBar(
             date=b.date, raw_open=b.raw_open, raw_high=b.raw_high, raw_low=b.raw_low,
             raw_close=b.raw_close, raw_volume=b.raw_volume,
             split_adjusted_close=b.raw_close * split_factor if b.raw_close is not None else None,
+            split_adjusted_volume=b.raw_volume / split_factor if b.raw_volume is not None else None,
             total_return_adjusted_close=b.raw_close * total_return_factor if b.raw_close is not None else None,
             total_return_status=TOTAL_RETURN_STATUS,
         ))

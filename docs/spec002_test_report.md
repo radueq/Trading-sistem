@@ -3,10 +3,11 @@
 Run: `python3 -m pytest tests/spec002/ -v` -- Python 3.11.15, pytest 9.1.1,
 pandas 3.0.6, numpy 2.4.6, PyYAML 6.0.1.
 
-Result: **35 passed, 0 failed, 0 pending** (across the 21 required tests plus
-TEST 22, added by GPT Review #002 Round 1/PATCH #002-A -- several have
-multiple focused sub-tests). Full repo (Spec #001 + Spec #002):
-**58 passed, 1 skipped (Spec #001 TEST 8, PENDING_LEVEL_2_DATA, unaffected)**.
+Result: **37 passed, 0 failed, 0 pending** (across the 21 required tests plus
+TEST 22, added by GPT Review #002 Round 1/PATCH #002-A, and TEST 23,
+added by PATCH #001-C -- several have multiple focused sub-tests). Full
+repo (Spec #001 + Spec #002): **64 passed, 1 skipped (Spec #001 TEST 8,
+PENDING_LEVEL_2_DATA, unaffected)**.
 
 | # | Test | File | Result | Notes |
 |---|------|------|--------|-------|
@@ -32,6 +33,7 @@ multiple focused sub-tests). Full repo (Spec #001 + Spec #002):
 | 20 | Benchmark configuration | `test_20_benchmark_configuration.py` | **PASS** (2 sub-tests) | No benchmark ticker string hardcoded in `features/relative_strength.py`; swapping the benchmark security (config/data, no code change) changes RS output, and RS against itself as its own benchmark is exactly 0. |
 | 21 | No LLM runtime imports | `test_21_no_llm_imports.py` | **PASS** | AST import scan -> no `anthropic`/`openai`/`google.generativeai`/`cohere`/`langchain` import anywhere under `src/discovery/`. Not numbered in SS38's list; required by SS41's hard rule. |
 | 22 | Cross-sectional RS eligibility isolation | `test_22_cross_sectional_eligibility_isolation.py` | **PASS** | Added by GPT Review #002 Round 1 (mandatory finding), PATCH #002-A. An ineligible penny-stock security (fails `minimum_price`) with an extreme `relative_return_63d` is added to the universe -> `rs_percentile_cross_sectional` for every shared eligible security is unchanged between the two runs. Fails against the pre-patch ordering (cross-sectional pass before eligibility filtering), passes against the fix. |
+| 23 | Split alone does not create a false VOLUME_ANOMALY | `test_23_split_does_not_create_false_volume_anomaly.py` | **PASS** (2 sub-cases: forward 4-for-1, reverse 1-for-5) | Added by PATCH #001-C. `raw_volume` constructed to already be split-ratio-proportional (100->400 forward, 500->100 reverse); `volume_percentile` a few days after the split stays at the NEUTRAL midpoint (~0.5) for both directions, no `VOLUME_ANOMALY` reason code. Fails against pre-patch `raw_volume` (0.85 forward / 0.15 reverse), passes against `split_adjusted_volume`. |
 
 ## How to reproduce
 

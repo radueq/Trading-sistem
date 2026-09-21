@@ -29,6 +29,7 @@ tests/
   test_13_knowledge_time_policy.py            knowledge-time patch coverage (2026-09-21)
   test_14_cancelled_action_adjustment.py       GPT Review #001 PATCH A coverage (2026-09-21)
   test_15_listing_status_knowledge_time.py     GPT Review #001 PATCH B coverage (2026-09-21)
+  test_16_split_adjusted_volume.py             PATCH #001-C coverage (2026-09-21)
 docs/
   architecture.md             this file
   known_limitations.md
@@ -183,6 +184,31 @@ docs/
   reference data. `split_adjustment_factor` / `split_adjusted_close`
   carry no such caveat and remain available as-is (TEST 2 validates
   them directly).
+
+- **`split_adjusted_volume`** (PATCH #001-C, Radu's correction,
+  2026-09-21 -- found via Spec #002's Discovery Engine, not built there:
+  fix belongs in Data Foundation per Radu's own standing rule not to
+  silently patch a Spec #001 gap from inside a downstream module).
+  `PITPriceBar` now carries `split_adjusted_volume` alongside
+  `split_adjusted_close`, derived on-the-fly in `pit/access.py` from the
+  same PIT-safe `split_factor` used for price -- but in the OPPOSITE
+  direction: `split_adjusted_volume = raw_volume / split_factor` (price
+  is multiplied by `split_factor`, volume is divided by it, since a
+  split changes price and share count inversely: a 4-for-1 forward
+  split scales historical price down by 0.25 and historical volume up
+  by the same 0.25, i.e. x4, so both series end up on the same post-
+  split share basis). Purely additive: no schema change (computed on
+  the fly exactly like `split_adjusted_close`), `raw_volume` untouched.
+  TEST 16 validates the formula two ways -- continuity across a forward
+  (4-for-1) and reverse (1-for-5) split boundary when raw volume already
+  reflects a genuine post-split share-count change, and a round-trip
+  invariant (`split_adjusted_close * split_adjusted_volume == raw_close
+  * raw_volume` for every bar) that fails immediately if the direction
+  is ever accidentally inverted. Motivating problem: Spec #002's
+  Discovery Engine paired `split_adjusted_close` with `raw_volume`
+  (unadjusted), so a split produced a mechanical level-shift in volume
+  that could look like a real volume spike -- see
+  `docs/spec002_known_limitations.md`.
 
 ## Who may call what
 

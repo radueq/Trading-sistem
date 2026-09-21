@@ -52,25 +52,21 @@ forbids that.
 
 ## Feature computation
 
-- **Volume is not split-adjusted -- BLOCKER before any real-data
-  backtesting, not a cosmetic gap** (elevated per GPT Review #002 Round
-  1). `data_foundation.pit.access.PITPriceBar` exposes only `raw_volume`
-  -- there is no split-adjusted volume field in Spec #001's PIT output.
-  A security that underwent a split will show a mechanical level shift
-  in raw volume around the split date (share count changes, nothing to
-  do with actual trading interest), which can produce a spurious
-  `RVOL_20`/`volume_percentile` reading and a false `VOLUME_ANOMALY`
-  reason code near that boundary. This matters more than most Level 1
-  gaps specifically *because* unusual volume is one of the core signals
-  Discovery is meant to surface -- on real historical data, Discovery
-  could "discover" a volume anomaly that is purely an artifact of a
-  split, not a real behavioral signal, and nothing downstream would be
-  able to tell the difference. Not fabricated/adjusted here at Level 1
-  (synthetic fixtures don't exercise splits at all, so this doesn't
-  affect Spec #002's own test suite); must be fixed in Spec #001 (a
-  split-adjusted volume field on `PITPriceBar`) before Discovery is run
-  against real historical data that includes splits -- not invented
-  unilaterally in this module.
+- **Volume is now split-adjusted -- CLOSED (PATCH #001-C, Radu's
+  correction, 2026-09-21).** Previously a BLOCKER before any real-data
+  backtesting (elevated per GPT Review #002 Round 1): `raw_volume`
+  (unadjusted) was paired with `split_adjusted_close` (adjusted), so a
+  split produced a mechanical level shift in volume that could look
+  like a real spike -- a spurious `RVOL_20`/`volume_percentile` reading
+  and a false `VOLUME_ANOMALY` reason code near that boundary. Fixed in
+  Spec #001, not here: `data_foundation.pit.access.PITPriceBar` now
+  exposes `split_adjusted_volume = raw_volume / split_factor` (the
+  same PIT-safe `split_factor` as price, opposite direction), and
+  `discovery.engine._price_series_to_df()` consumes it instead of
+  `raw_volume`. See `docs/architecture.md` and TEST 16 (Spec #001,
+  formula/continuity/round-trip) and TEST 23 (Spec #002, proves a split
+  alone no longer produces a false `VOLUME_ANOMALY`, both split
+  directions). No lane formulas or thresholds changed.
 - **`relative_strength`'s historical persistence/transition is not
   computed.** `states/mapper.compute_persistence()` and the
   `TransitionVector` cover only the four TIME_SERIES-driven lanes
@@ -166,9 +162,19 @@ forbids that.
   call -- not a filtering mechanism (that stays entirely `pit.access`'s
   job), just a loud failure if that contract is ever violated.
 
+## PATCH #001-C (Radu's correction, 2026-09-21)
+
+- **Volume/split mismatch closed.** See "Volume is now split-adjusted"
+  above (Feature computation) -- fixed in Spec #001's `pit/access.py`,
+  consumed by a one-line change in `discovery.engine._price_series_to_df()`.
+  No changes to the 5 lanes, Candidate Budget, extremeness formula, or
+  general architecture -- scope was strictly the volume field plus its
+  one consumer. TEST 23 added.
+
 ## Test coverage
 
-- All 21 required tests (the 20 named in Spec #002 SS38 plus a
-  structural no-LLM-imports check, SS41) pass -- see
+- All 23 required tests (the 20 named in Spec #002 SS38 plus a
+  structural no-LLM-imports check, SS41, plus TEST 22 and TEST 23 from
+  GPT Review #002 Round 1 / PATCH #001-C) pass -- see
   `docs/spec002_test_report.md`. None are `PENDING`; Level 1's
   synthetic universe is sufficient to exercise every required property.

@@ -68,6 +68,8 @@ src/discovery/
 tests/spec002/
   fixtures/synthetic_universe.py  TEST_CONFIG synthetic securities + benchmark
   test_01..21_*.py                 the 21 required tests (20 from SS38 + no-LLM)
+  test_22_*.py                       PATCH #002-A: cross-sectional RS eligibility isolation
+  test_23_*.py                       PATCH #001-C: split alone doesn't create false VOLUME_ANOMALY
   generate_report_artifacts.py       produces docs/spec002_examples.md + volume report
 ```
 
@@ -91,7 +93,10 @@ tests/spec002/
   `RVOL_20` and `volume_ratio_20` are the **same** ratio (`volume / ADV_20`) under two
   names -- Spec #002 SS12 lists both without distinguishing them; inventing an
   arbitrary difference the spec doesn't specify would be worse than being explicit
-  they're aliases.
+  they're aliases. `volume` here is `PITPriceBar.split_adjusted_volume` (PATCH
+  #001-C, Spec #001), not `raw_volume` -- on the same post-split share basis as
+  `close` (`split_adjusted_close`), so a split alone can't look like a volume
+  spike (TEST 23).
 - **Momentum**: `ROC_n = close[t]/close[t-n] - 1`; `momentum_delta`/`momentum_acceleration`
   are the first/second difference of the config-selected driving ROC window
   (default `ROC_10`) -- X(t), Delta X(t), Delta^2 X(t) per Spec #002 SS4/SS13.

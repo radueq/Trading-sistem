@@ -2,9 +2,17 @@
 
 Run: `python3 -m pytest tests/ -v` -- Python 3.11.15, pytest 9.1.1, yfinance 1.7.0, pandas 3.0.6, PyYAML 6.0.1.
 
-Result: **23 passed, 1 skipped (PENDING_LEVEL_2_DATA)**, 0 failed.
+Result: **27 passed, 1 skipped (PENDING_LEVEL_2_DATA)**, 0 failed.
 
-Updated 2026-09-21, third round -- GPT Final Review #001 on commit
+Updated 2026-09-21, fourth round -- PATCH #001-C: `split_adjusted_volume`
+added to `PITPriceBar` (Radu's correction, prompted by a real gap Spec
+#002's Discovery Engine surfaced -- raw, unadjusted volume paired with
+split-adjusted close produced a mechanical level-shift around a split).
+Fixed in Data Foundation, not in the downstream Discovery module, per
+Radu's own standing rule. TEST 16 added (formula/continuity/round-trip
+invariant). TESTs 1-15 unchanged and still passing.
+
+Prior round (third) -- GPT Final Review #001 on commit
 `bc4c914` confirmed PATCH A/B were correct at the PIT/query layer, but
 found a more important bug underneath: `corporate_actions` and
 `listing_status_history` writes used `INSERT OR IGNORE`, which would
@@ -39,6 +47,8 @@ unchanged and still passing.
 | 15b | Listing status `available_at=NULL` tagged UNKNOWN | `tests/test_15_listing_status_knowledge_time.py::test_listing_status_available_at_null_is_tagged_unknown` | **PASS** | No knowledge-time signal -> falls back to `effective_from`/`effective_to`-only behavior, explicitly tagged `knowledge_time_status="UNKNOWN"`, never silently treated as `KNOWN`. |
 | 14c | Re-ingested cancellation reaches PIT through the real pipeline | `tests/test_14_cancelled_action_adjustment.py::test_reingested_cancellation_reaches_pit_through_real_pipeline` | **PASS** | The persistence-lifecycle bug GPT's follow-up review flagged: same `action_id` ingested twice via the real `ingestion.ingest_corporate_actions()` path (T0 pending, T1 `CANCELLED`). Confirms a single row is updated (not duplicated), `ingestion_timestamp` preserved as first-seen, `last_updated_timestamp` reflects the revision, and the adjusted price series correctly stops reflecting the split once queried `as_of` >= `source_status_date`. Would have failed against the pre-fix `INSERT OR IGNORE` behavior. |
 | 15c | Listing status `available_at` enrichment via re-ingestion | `tests/test_15_listing_status_knowledge_time.py::test_listing_status_available_at_enrichment_updates_existing_row` | **PASS** | Same persistence-lifecycle class of fix for listing status: re-upserting the same `(security_id, effective_from)` with a newly-supplied `available_at` updates the existing row rather than being dropped, and a date visible under the old NULL/UNKNOWN policy correctly becomes hidden again once the real `available_at` shows it wasn't actually knowable yet. |
+| 16a | Split-adjusted volume round-trip invariant | `tests/test_16_split_adjusted_volume.py::test_split_adjusted_volume_round_trip_invariant` | **PASS** (2 sub-cases: forward AAPL 4-for-1, reverse RVSQ 1-for-5) | `split_adjusted_close * split_adjusted_volume == raw_close * raw_volume` for every bar; `raw_volume` confirmed unmodified. Verified to fail if the volume formula's direction is inverted (`raw_volume * split_factor` instead of `/`). |
+| 16b | Split-adjusted volume continuity across the split boundary | `tests/test_16_split_adjusted_volume.py::test_split_adjusted_volume_continuous_across_split_boundary` | **PASS** (2 sub-cases: 4-for-1 forward, 1-for-5 reverse) | Dedicated fixture where `raw_volume` already reflects a genuine post-split share-count change proportional to the ratio (100->400 forward, 500->100 reverse) -- `split_adjusted_volume` stays constant across the boundary for both directions, same formula, no special-casing. |
 
 ## GPT Review #001 (commit `8492ade`) findings and resolution
 
@@ -55,6 +65,12 @@ unchanged and still passing.
 | `corporate_actions`/`listing_status_history` writes used `INSERT OR IGNORE`, keyed on `action_id` / `(security_id, effective_from)` -- a real re-ingested revision (e.g. status -> `CANCELLED`) would be silently dropped forever, making PATCH A's fix unreachable in the actual pipeline. | Bug (persistence lifecycle) -- flagged as more important than PATCH A/B themselves | Fixed: enrichment upsert (`repository.upsert_corporate_action`, `repository.upsert_listing_status`) -- only genuinely-revisable fields updated, only when the new value is non-NULL, `ingestion_timestamp` preserved, new `last_updated_timestamp` added. TEST 14c, TEST 15c. |
 | Schema change doesn't migrate an existing on-disk database (`CREATE TABLE IF NOT EXISTS` doesn't add new columns). | Documentation-only, accepted for Level 1 | Not fixed (no migration infrastructure built). `SCHEMA_VERSION` comment added to `schema.sql`; policy documented in `storage/db.py` and `docs/known_limitations.md`: delete and recreate the SQLite file on a schema change. No persisted `.db` file exists anywhere in this repo currently, so this is presently inert. |
 | Two narrower gaps in the enrichment-upsert design itself. | Documentation-only, accepted for Level 1 | `action_id` changes if `action_type`/`effective_date`/`value` are corrected (treated as a new action, not a revision); `COALESCE` can't clear a previously-set fact back to unknown. Both logged in `docs/known_limitations.md`, neither needed by any Level 1 scenario. |
+
+## PATCH #001-C (Radu's correction, 2026-09-21) finding and resolution
+
+| Finding | Severity | Resolution |
+|---|---|---|
+| `PITPriceBar` exposed only `raw_volume` (unadjusted); Spec #002's Discovery Engine paired it with `split_adjusted_close` (adjusted), so a split produced a mechanical level-shift in volume that could look like a real spike -- a real Data Foundation gap surfaced by a downstream consumer, not a Spec #002 defect. | Bug (missing interface, pre-real-data-backtesting blocker per `docs/spec002_known_limitations.md`) | Fixed in Data Foundation, not in Discovery, per Radu's own standing rule: `split_adjusted_volume` added to `PITPriceBar`, derived on-the-fly as `raw_volume / split_factor` (opposite direction from price) using the same PIT-safe `split_factor`. No schema change. TEST 16. Discovery's `_price_series_to_df()` updated to consume it (Spec #002 PATCH, no lane/formula changes -- see `docs/spec002_known_limitations.md` and TEST 23). |
 
 ## How to reproduce
 

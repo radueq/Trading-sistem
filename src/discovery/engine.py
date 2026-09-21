@@ -82,7 +82,13 @@ def _price_series_to_df(bars) -> pd.DataFrame:
         # representation (Spec #002 SS31) -- total_return_adjusted_close
         # is EXPERIMENTAL_NOT_APPROVED_FOR_RESEARCH and never used here.
         "close": [b.split_adjusted_close for b in bars],
-        "volume": [b.raw_volume for b in bars],
+        # split_adjusted_volume (PATCH #001-C): raw_volume mixed with a
+        # split-adjusted close produced a mechanical level-shift around
+        # split dates, previously a documented BLOCKER before real-data
+        # backtesting (see docs/spec002_known_limitations.md). Both
+        # close and volume are now on the same post-adjustment share
+        # basis.
+        "volume": [b.split_adjusted_volume for b in bars],
     })
 
 
