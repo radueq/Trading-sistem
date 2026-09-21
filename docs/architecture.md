@@ -26,7 +26,9 @@ src/data_foundation/
 tests/
   fixtures/                  TEST_CONFIG data (market_data.py, fake_yfinance.py)
   test_01..12_*.py            the 12 mandatory tests (Spec #001 SS23)
-  test_13_knowledge_time_policy.py  knowledge-time patch coverage (2026-09-21)
+  test_13_knowledge_time_policy.py            knowledge-time patch coverage (2026-09-21)
+  test_14_cancelled_action_adjustment.py       GPT Review #001 PATCH A coverage (2026-09-21)
+  test_15_listing_status_knowledge_time.py     GPT Review #001 PATCH B coverage (2026-09-21)
 docs/
   architecture.md             this file
   known_limitations.md
@@ -63,6 +65,13 @@ docs/
   (e.g. detecting a missing bar requires scanning the whole date range).
   Severity classification (`reason_code -> severity`) is loaded from
   `qa/config/severity_mapping.yaml`, editable without a code change.
+  **Not yet knowledge-time safe** (flagged in GPT Review #001,
+  2026-09-21, documentation-only): `qa_results.computed_at` exists but
+  `pit.get_data()` doesn't check it against `as_of`, only `date <=
+  as_of`, so a QA recompute using later-arrived data can change a
+  historical date's `qa_pass` retroactively. See
+  `docs/known_limitations.md` -- must be closed before Discovery
+  consumes `qa_pass` for research-grade use.
 
 - **Corporate action status**: never stored. `corporate_actions` rows
   hold only `announcement_date`, `effective_date`, `source_status`,
@@ -96,6 +105,33 @@ docs/
   `model/ingestion.py`'s Level 1 policy: `available_at` is set to the
   adapter's `announcement_date` when supplied, else left `NULL` --
   never guessed.
+
+- **GPT Review #001 PATCH A (2026-09-21) -- CANCELLED actions could leak
+  into the adjusted series**: the first cut of `_is_action_known_for_adjustment()`
+  checked `effective_date` and `available_at` but not cancellation, so a
+  split/dividend that `derive_corporate_action_pit_status()` correctly
+  reported as `CANCELLED` could still enter `compute_factors()` and
+  alter `get_price_series_as_of()`'s output -- metadata said cancelled,
+  price series pretended it happened. Fixed: the function now also
+  excludes an action once its cancellation is knowable
+  (`source_status == "CANCELLED"` and `as_of >= source_status_date`),
+  symmetric with the status-derivation function. TEST 14 reproduces the
+  exact scenario GPT's review flagged and also checks the symmetric
+  case (a pending action still adjusts normally before its own
+  cancellation becomes knowable).
+
+- **GPT Review #001 PATCH B (2026-09-21) -- listing_status knowledge-time**:
+  `listing_status_history` now carries the same nullable `available_at`
+  field as `corporate_actions`. `get_listing_status_as_of()` returns a
+  `PITListingStatus(entry, knowledge_time_status)` -- `NULL` falls back
+  to the pre-patch `effective_from`/`effective_to`-only behavior, tagged
+  `UNKNOWN`; when set, a status isn't visible before `available_at` even
+  if `effective_from` has already passed (TEST 15). Deliberately
+  minimal, matching corporate actions' pattern rather than building a
+  second PIT model: no `ANNOUNCED`-equivalent intermediate phase, and no
+  "carry the previous status forward while the next one isn't knowable
+  yet" logic -- see `docs/known_limitations.md` for that specific,
+  explicitly out-of-scope gap.
 
 - **Total-return methodology status**: `AdjustmentFactor.total_return_status`
   and `PITPriceBar.total_return_status` are always

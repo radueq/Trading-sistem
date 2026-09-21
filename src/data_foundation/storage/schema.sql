@@ -95,6 +95,13 @@ CREATE TABLE IF NOT EXISTS corporate_actions (
 );
 CREATE INDEX IF NOT EXISTS idx_corporate_actions_security ON corporate_actions(security_id);
 
+-- available_at: same knowledge-time pattern as corporate_actions (GPT
+-- Review #001 PATCH B, 2026-09-21). NULL means no validated
+-- knowledge-time signal -- pit/access.py then falls back to
+-- effective_from/effective_to alone (the pre-patch behavior), tagged
+-- UNKNOWN. Deliberately minimal: no announcement/status lifecycle, just
+-- the one nullable field, mirroring corporate_actions rather than
+-- building a second PIT model in the same foundation.
 CREATE TABLE IF NOT EXISTS listing_status_history (
     security_id      TEXT NOT NULL REFERENCES security_master(security_id),
     status         TEXT NOT NULL,
@@ -102,6 +109,7 @@ CREATE TABLE IF NOT EXISTS listing_status_history (
     effective_to      TEXT,
     source_provider    TEXT NOT NULL,
     delisting_reason   TEXT,
+    available_at      TEXT,
     PRIMARY KEY (security_id, effective_from)
 );
 

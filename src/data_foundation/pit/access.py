@@ -56,6 +56,21 @@ when present, not just effective_date: a corporate action that only
 became knowable after its own effective_date (a retroactively-disclosed
 case) must not be reflected in the adjusted price series before it was
 actually knowable either.
+
+It also excludes an action once its CANCELLED status is knowable
+(source_status_date <= as_of) -- see _is_action_known_for_adjustment().
+GPT Review #001 (2026-09-21, commit 8492ade) found this gate missing:
+derive_corporate_action_pit_status() correctly reported CANCELLED, but
+the adjustment recomputation ignored cancellation entirely, so a
+cancelled split/dividend could still alter the adjusted price series
+even though the metadata said it never executed (TEST 14, PATCH A).
+
+listing_status_history gets the same available_at knowledge-time field
+as corporate_actions (GPT Review #001 PATCH B, 2026-09-21) -- see
+get_listing_status_as_of() and PITListingStatus. Deliberately minimal:
+no ANNOUNCED-style intermediate phase, just KNOWN/UNKNOWN gating on the
+one nullable field, to avoid building two different PIT models in the
+same foundation (TEST 15).
 """
 from __future__ import annotations
 
@@ -106,10 +121,23 @@ def _is_action_known_for_adjustment(action: CorporateAction, as_of: str) -> bool
     once it has both actually happened (effective_date <= as_of) AND, if
     a validated knowledge-time signal exists, been knowable
     (available_at <= as_of). Without a validated signal, Level 1 falls
-    back to effective_date alone (see derive_corporate_action_pit_status)."""
+    back to effective_date alone (see derive_corporate_action_pit_status).
+
+    Also excludes an action once its cancellation is knowable
+    (source_status == CANCELLED and as_of >= source_status_date), mirroring
+    derive_corporate_action_pit_status's own CANCELLED branch (GPT Review
+    #001 PATCH A, 2026-09-21 -- previously this function ignored
+    cancellation entirely, so an action correctly reported CANCELLED by
+    the status-derivation function could still leak into compute_factors()
+    and alter the adjusted price series; see TEST 14). Symmetric with
+    status derivation: for an as_of BEFORE the cancellation is knowable, a
+    still-pending action is treated normally (a PIT-simulated researcher
+    at that earlier as_of wouldn't yet know it would later be cancelled)."""
     if action.effective_date > as_of:
         return False
     if action.available_at is not None and action.available_at > as_of:
+        return False
+    if action.source_status == "CANCELLED" and action.source_status_date and as_of >= action.source_status_date:
         return False
     return True
 
@@ -140,6 +168,7 @@ class PITSnapshot:
     as_of: str
     ticker: Optional[str]
     listing_status: Optional[str]
+    listing_knowledge_time_status: Optional[str]
     delisting_reason: Optional[str]
     prices: list[PITPriceBar]
     corporate_actions: list[PITCorporateAction]
@@ -164,12 +193,39 @@ def get_security_id_for_ticker_as_of(conn, ticker: str, as_of: str) -> Optional[
     return None
 
 
-def get_listing_status_as_of(conn, security_id: str, as_of: str) -> Optional[ListingStatusEntry]:
+@dataclass(frozen=True)
+class PITListingStatus:
+    entry: ListingStatusEntry
+    knowledge_time_status: str
+
+
+def get_listing_status_as_of(conn, security_id: str, as_of: str) -> Optional[PITListingStatus]:
+    """Same available_at-first, effective_from-fallback policy as
+    derive_corporate_action_pit_status (GPT Review #001 PATCH B,
+    2026-09-21). Deliberately minimal -- no announcement/status
+    lifecycle, no ANNOUNCED-style intermediate phase: an entry is either
+    knowable (its effective window applies AND, if available_at is set,
+    as_of has reached it) or it isn't considered at all.
+
+    Known minimal-scope gap (see docs/known_limitations.md): if a status
+    transition's available_at hasn't been reached yet, this may return
+    None (no applicable status) rather than carrying the previous status
+    forward, even though the previous entry's own effective_to has
+    technically already passed. Extending that is a deliberately
+    out-of-scope lifecycle feature, not built here."""
     applicable = None
     for entry in repo.get_listing_status_history(conn, security_id):
+        if entry.available_at is not None and entry.available_at > as_of:
+            continue  # not yet knowable, even if its effective window would otherwise match
         if entry.effective_from <= as_of and (entry.effective_to is None or as_of < entry.effective_to):
             applicable = entry
-    return applicable
+    if applicable is None:
+        return None
+    knowledge_time_status = (
+        KnowledgeTimeStatus.KNOWN.value if applicable.available_at is not None
+        else KnowledgeTimeStatus.UNKNOWN.value
+    )
+    return PITListingStatus(entry=applicable, knowledge_time_status=knowledge_time_status)
 
 
 def get_corporate_actions_as_of(conn, security_id: str, as_of: str) -> list[PITCorporateAction]:
@@ -219,8 +275,9 @@ def get_data(conn, security_id: str, as_of: str) -> PITSnapshot:
         security_id=security_id,
         as_of=as_of,
         ticker=get_ticker_as_of(conn, security_id, as_of),
-        listing_status=listing.status if listing else None,
-        delisting_reason=listing.delisting_reason if listing else None,
+        listing_status=listing.entry.status if listing else None,
+        listing_knowledge_time_status=listing.knowledge_time_status if listing else None,
+        delisting_reason=listing.entry.delisting_reason if listing else None,
         prices=get_price_series_as_of(conn, security_id, as_of),
         corporate_actions=get_corporate_actions_as_of(conn, security_id, as_of),
         qa_pass_by_date={r.date: r.qa_pass for r in qa_rows},

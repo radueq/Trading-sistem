@@ -95,21 +95,45 @@ announcement-date-or-effective-date fallback with an explicit, nullable
   2020 split downloaded today appear "unknown" in 2020 -- obviously
   wrong, since it really was public knowledge in 2020 regardless of when
   our system got around to ingesting it.
-- The knowledge-time axis is currently wired only for `corporate_actions`.
-  `listing_status_history` has the analogous gap described below and has
-  **not** been patched -- it still conflates event time and availability
-  time via `effective_from` alone. Extending `available_at` there is a
-  natural follow-up, not done here to keep this patch targeted (no
-  redesign, per Spec #001 SS28).
+- **Update 2026-09-21 (GPT Review #001 PATCH A):** the first cut of the
+  as_of-scoped adjustment recomputation (`_is_action_known_for_adjustment`)
+  checked `effective_date` and `available_at` but not cancellation --
+  `derive_corporate_action_pit_status()` correctly reported CANCELLED,
+  but a cancelled split/dividend could still alter the adjusted price
+  series regardless. Fixed: the same function now also excludes an
+  action once its cancellation is knowable (`source_status_date <=
+  as_of`), symmetric with the status-derivation function. See TEST 14.
+- **Update 2026-09-21 (GPT Review #001 PATCH B):** `listing_status_history`
+  now carries the same nullable `available_at` field as
+  `corporate_actions` (see below) -- the knowledge-time axis is no
+  longer corporate-actions-only.
 
 ## Listing status
 
-- `listing_status_history` has no separate announcement/effective
-  distinction the way `corporate_actions` does. PIT filtering uses
-  `effective_from` as both the event date and the information
-  availability date. A delisting that was publicly telegraphed earlier
-  (e.g. a trading halt pending delisting) isn't modeled at Level 1 --
-  deferred to Level 2/3 if that granularity turns out to matter.
+- `available_at` (added 2026-09-21, GPT Review #001 PATCH B) gates
+  `get_listing_status_as_of()` the same way it gates corporate actions:
+  `NULL` falls back to the pre-patch `effective_from`/`effective_to`-only
+  behavior, tagged `knowledge_time_status=UNKNOWN`; when set, a status
+  isn't visible before `available_at` even if its `effective_from` has
+  already passed (TEST 15). Deliberately minimal -- no
+  announcement/status lifecycle, no `ANNOUNCED`-equivalent intermediate
+  phase, just the one field, to avoid building two different PIT models
+  in the same foundation.
+- **Known minimal-scope gap**: if a status transition's `available_at`
+  hasn't been reached yet, `get_listing_status_as_of()` can return `None`
+  (no applicable status) rather than carrying the previous status
+  forward, even though the previous entry's own `effective_to` has by
+  then technically already passed. Building "carry forward the last
+  known status until the next one becomes knowable" is a real lifecycle
+  feature, deliberately not built in this targeted patch -- flagged here
+  rather than silently picked, per Radu's explicit instruction not to
+  turn this into an open-ended redesign.
+- A delisting that was publicly telegraphed earlier (e.g. a trading halt
+  pending delisting, announced before the delisting itself is
+  `effective`) isn't modeled as a distinct phase the way corporate
+  actions' `ANNOUNCED` is -- `available_at` only answers "knowable or
+  not," not "what intermediate state." Deferred to Level 2/3 if that
+  granularity turns out to matter.
 - At Level 1, no adapter sources listing status automatically (yfinance
   doesn't reliably expose it for free); it's populated directly via
   `repository.insert_listing_status` in test/seed code. Automated
@@ -145,13 +169,36 @@ announcement-date-or-effective-date fallback with an explicit, nullable
   Universe Eligibility thresholds (Spec #001 SS2) -- they only affect
   whether an observation looks trustworthy, never whether the system
   wants to trade the instrument.
+- **`qa_results.qa_pass` is not yet knowledge-time immutable** (flagged
+  in GPT Review #001, 2026-09-21, documentation-only -- no code change
+  made). `qa_results` has a `computed_at` column, but
+  `pit.access.get_data()` only filters QA rows by `date <= as_of`; it
+  does not check `computed_at` against `as_of` at all. QA
+  (`qa.engine.run_qa_checks`) is described in `docs/architecture.md` as
+  working over the security's full observed history, so re-running it
+  after new data arrives can change `qa_pass` for an already-historical
+  date (e.g. a later-arriving bar changes what looks like a
+  `SUSPICIOUS_GAP` around an earlier date). A PIT-simulated
+  `get_data(as_of=T)` query run before and after such a QA recompute
+  could therefore see a different `qa_pass` for the same historical date
+  -- the same class of look-ahead risk TEST 9 exists to catch, just not
+  yet closed for the QA field specifically. Classified `PENDING`, not a
+  Level 1 blocker (no mandatory test currently exercises this path), but
+  it **must be resolved before Discovery Engine or any other downstream
+  research module is approved to consume `qa_pass` for research-grade
+  use** -- the same `available_at`/`knowledge_time_status` pattern used
+  for corporate actions and listing status is the natural fix, not
+  designed or built here.
 
 ## Test coverage
 
 - **TEST 8 (provider consistency) is `PENDING_LEVEL_2_DATA`**, approved
   by Radu (2026-09-20): Level 1 runs a single provider, so there is
   nothing to cross-compare. Not a false PASS.
-- **TEST 13 (knowledge-time policy)** is additional coverage mandated by
-  the 2026-09-21 patch instructions, not part of the original Spec #001
-  SS23 numbered list -- see `docs/test_report.md` and
-  `tests/test_13_knowledge_time_policy.py`.
+- **TESTs 13-15 (knowledge-time policy, cancelled-action adjustment,
+  listing-status knowledge-time)** are additional coverage from the
+  2026-09-21 GPT Review #001 patch round, not part of the original
+  Spec #001 SS23 numbered list -- see `docs/test_report.md` and
+  `tests/test_13_knowledge_time_policy.py` /
+  `tests/test_14_cancelled_action_adjustment.py` /
+  `tests/test_15_listing_status_knowledge_time.py`.

@@ -3,6 +3,12 @@
 Before the delisting event, get_data() must reflect the information
 available at that simulated moment (ACTIVE, no delisting reason). After
 delisting, status must reflect the event. No hindsight leakage.
+
+Uses available_at=None throughout (the pre-patch style), so this also
+doubles as the "NULL preserves prior effective_from/effective_to-only
+behavior" case for listing_status_history's knowledge-time field --
+mirroring TEST 13-B for corporate actions. See TEST 15 for the
+available_at-aware case.
 """
 from data_foundation.adapters.yfinance_adapter import YFinanceAdapter
 from data_foundation.model import ingestion as ing, repository as repo
@@ -25,12 +31,12 @@ def test_delisting_pit_no_hindsight_leakage(conn, now):
     repo.insert_listing_status(conn, ListingStatusEntry(
         security_id=sid, status=ListingStatus.ACTIVE.value,
         effective_from=active_from, effective_to=delisted_from,
-        source_provider="manual", delisting_reason=None,
+        source_provider="manual", delisting_reason=None, available_at=None,
     ))
     repo.insert_listing_status(conn, ListingStatusEntry(
         security_id=sid, status=ListingStatus.DELISTED.value,
         effective_from=delisted_from, effective_to=None,
-        source_provider="manual", delisting_reason=DELISTING["delisting_reason"],
+        source_provider="manual", delisting_reason=DELISTING["delisting_reason"], available_at=None,
     ))
 
     before = pit.get_data(conn, sid, as_of="2019-01-10")

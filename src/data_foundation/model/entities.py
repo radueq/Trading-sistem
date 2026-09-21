@@ -128,6 +128,11 @@ class ListingStatusEntry:
     effective_to: Optional[str]
     source_provider: str
     delisting_reason: Optional[str]
+    # Same knowledge-time pattern as CorporateAction.available_at (GPT
+    # Review #001 PATCH B, 2026-09-21): NULL means no validated signal,
+    # pit/access.py falls back to effective_from/effective_to alone,
+    # tagged UNKNOWN.
+    available_at: Optional[str]
 
 
 @dataclass(frozen=True)

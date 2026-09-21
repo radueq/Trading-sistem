@@ -243,11 +243,12 @@ def insert_listing_status(conn: sqlite3.Connection, row: ListingStatusEntry) -> 
     conn.execute(
         """
         INSERT OR IGNORE INTO listing_status_history
-            (security_id, status, effective_from, effective_to, source_provider, delisting_reason)
-        VALUES (?, ?, ?, ?, ?, ?)
+            (security_id, status, effective_from, effective_to, source_provider,
+             delisting_reason, available_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
         """,
         (row.security_id, row.status, row.effective_from, row.effective_to,
-         row.source_provider, row.delisting_reason),
+         row.source_provider, row.delisting_reason, row.available_at),
     )
     conn.commit()
 
@@ -272,7 +273,7 @@ def _row_to_listing_status(r: sqlite3.Row) -> ListingStatusEntry:
     return ListingStatusEntry(
         security_id=r["security_id"], status=r["status"], effective_from=r["effective_from"],
         effective_to=r["effective_to"], source_provider=r["source_provider"],
-        delisting_reason=r["delisting_reason"],
+        delisting_reason=r["delisting_reason"], available_at=r["available_at"],
     )
 
 
