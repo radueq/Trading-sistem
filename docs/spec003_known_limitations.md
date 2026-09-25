@@ -59,6 +59,29 @@ silently fixed.
   to manufacture more "significant" results faster; more opportunities
   must come from a larger universe / shorter holding horizon / real
   signal density, not weaker statistical standards.
+- **Terminology: the bootstrap is a FIXED/non-overlapping block bootstrap
+  with resampling, not a "moving block bootstrap."** `time_block_bootstrap_
+  replicates()` partitions the real session calendar into contiguous,
+  non-overlapping blocks of `block_length_bars` sessions and resamples
+  WHICH blocks are drawn (with replacement); it does not slide a
+  fixed-width window across the calendar (that would be the strict
+  "moving block bootstrap" of Kunsch 1989). Flagged by GPT Review #003
+  Final as a documentation-only correction -- no code or behavior change,
+  recorded here so the method is never mis-cited in future research
+  writeups.
+- **Signature and baseline bootstrap replicates are drawn separately,
+  then paired via `zip()` for `diff_replicates`** (`evaluation/engine.py`,
+  `_evaluate_signature_horizon()`) -- each is resampled from its own
+  TIME_BLOCK draw independently, not through the SAME drawn blocks. This
+  is acceptable for Level 1 (synthetic data, no real-money claims), but
+  before these CIs are used to support a research-grade/real-money
+  decision, GPT Review #003 Final asked for this to be revisited as a
+  **joint/paired time-block resampling**: draw one set of blocks per
+  bootstrap iteration and apply it to both the signature's and the
+  baseline's dated values, so `diff_replicates` preserves their common
+  market/regime covariance instead of pairing two independently-resampled
+  series. Not built now -- deferred until a Level 2/3 data provider is
+  available and real-money-grade claims are actually being made.
 
 ## Performance (informational, not an acceptance blocker -- mirrors Spec #002 SS37)
 
@@ -174,6 +197,15 @@ guard GPT flagged during provenance verification -- both fixed:
 No changes to the other 5 PATCH #003-A findings, the 5 feature lanes,
 Candidate Budget, the robust standardized-effect formula, or the
 general architecture.
+
+## GPT Review #003 -- Final verdict
+
+**SPEC #003 v1.1 -- ACCEPTED at commit `d889049`.** No PATCH #003-C was
+requested. Two items were explicitly kept here as registry notes rather
+than acted on: the bootstrap terminology correction and the joint/paired
+time-block resampling revisit, both documented above under "Statistical
+method scope." Spec #001 (`aa56bb5`) + Spec #002 (`4f36708` + patches) +
+Spec #003 (`d889049`) now form the project's accepted baseline.
 
 ## Test coverage
 
