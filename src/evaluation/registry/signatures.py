@@ -14,9 +14,24 @@ from evaluation.models.entities import EvaluationSignatureDefinition, SignatureS
 
 
 def _fingerprint(sig: EvaluationSignatureDefinition) -> str:
+    """Includes EVERY field that changes what the signature legally
+    means, not just its matching conditions (GPT Review #003 Round 1,
+    mandatory finding #3): `creation_mode` and
+    `created_before_outcome_evaluation` must be part of the fingerprint,
+    or the exact same matching definition could quietly flip from
+    EXPLORATORY_POST_HOC to PRE_REGISTERED without `signature_set_id`
+    changing -- silently defeating one of Spec #003's central
+    protections (SS26-29). `discovery_engine_version`/
+    `discovery_config_version` are included too: the same lane/reason-
+    code conditions can mean a genuinely different rule if Discovery's
+    own formulas or thresholds changed underneath it."""
     lane_part = "&".join(sorted(f"{c.lane}={c.label}" for c in sig.lane_conditions))
     reason_part = "&".join(sorted(c.reason_code for c in sig.reason_code_conditions))
-    return f"{sig.signature_id}::{lane_part}::{reason_part}::{sig.timeframe}"
+    return (
+        f"{sig.signature_id}::{lane_part}::{reason_part}::{sig.timeframe}::"
+        f"{sig.creation_mode}::{sig.created_before_outcome_evaluation}::"
+        f"{sig.discovery_engine_version}::{sig.discovery_config_version}"
+    )
 
 
 def freeze_signature_set(signatures: list[EvaluationSignatureDefinition]) -> SignatureSet:

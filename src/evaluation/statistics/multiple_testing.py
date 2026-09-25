@@ -24,13 +24,25 @@ def family_id(record: PValueRecord) -> str:
     return f"{record.timeframe}|{record.horizon_bars}bars|{record.outcome_type}|{record.evaluation_run_id}"
 
 
-def benjamini_hochberg(records: list[PValueRecord]) -> dict[str, tuple[float, str]]:
-    """Returns {signature_id: (adjusted_p, family_id)}. Standard BH
-    step-up procedure applied WITHIN each family independently: sort
-    ascending by raw_p, adjusted_p[i] = min(1, min over j>=i of
-    raw_p[j] * m / rank[j]) -- enforced monotone non-increasing as rank
-    decreases, computed from the largest rank down, capped at 1.0."""
-    result: dict[str, tuple[float, str]] = {}
+def record_key(record: PValueRecord) -> tuple[str, str, int, str, str]:
+    """Uniquely identifies ONE tested hypothesis -- a `signature_id`
+    alone is NOT unique (GPT Review #003 Round 1, mandatory finding #1):
+    the same signature is tested at every horizon_bars, and a plain
+    {signature_id: ...} result dict would have later horizons silently
+    overwrite earlier ones' adjusted_p/family_id."""
+    return (record.signature_id, record.timeframe, record.horizon_bars, record.outcome_type, record.evaluation_run_id)
+
+
+def benjamini_hochberg(records: list[PValueRecord]) -> dict[tuple[str, str, int, str, str], tuple[float, str]]:
+    """Returns {record_key(record): (adjusted_p, family_id)} -- keyed by
+    the FULL identifying tuple (signature_id, timeframe, horizon_bars,
+    outcome_type, evaluation_run_id), never by signature_id alone (see
+    record_key's docstring). Standard BH step-up procedure applied
+    WITHIN each family independently: sort ascending by raw_p,
+    adjusted_p[i] = min(1, min over j>=i of raw_p[j] * m / rank[j]) --
+    enforced monotone non-increasing as rank decreases, computed from
+    the largest rank down, capped at 1.0."""
+    result: dict[tuple[str, str, int, str, str], tuple[float, str]] = {}
     families: dict[str, list[PValueRecord]] = {}
     for r in records:
         families.setdefault(family_id(r), []).append(r)
@@ -44,5 +56,5 @@ def benjamini_hochberg(records: list[PValueRecord]) -> dict[str, tuple[float, st
             candidate = min(1.0, ranked[i].raw_p * m / (i + 1))
             adjusted[i] = min(adjusted[i + 1], candidate)
         for rec, adj_p in zip(ranked, adjusted):
-            result[rec.signature_id] = (adj_p, fam_id)
+            result[record_key(rec)] = (adj_p, fam_id)
     return result

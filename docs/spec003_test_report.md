@@ -3,10 +3,22 @@
 Run: `PYTHONPATH=src:tests python3 -m pytest tests/spec003/ -v` -- Python
 3.11.15, pytest 9.1.1, pandas 3.0.6, numpy 2.4.6, PyYAML 6.0.1.
 
-Result: **47 passed, 0 failed, 0 pending** (across the 35 required tests
--- several have multiple focused sub-tests). Full repo (Spec #001 +
-Spec #002 + Spec #003): **112 passed, 1 skipped (Spec #001 TEST 8,
+Result: **52 passed, 0 failed, 0 pending** (across the 35 required tests
+plus TEST 36-38, added by PATCH #003-A/GPT Review #003 Round 1 -- several
+have multiple focused sub-tests). Full repo (Spec #001 + Spec #002 +
+Spec #003): **117 passed, 1 skipped (Spec #001 TEST 8,
 PENDING_LEVEL_2_DATA, unaffected)**.
+
+Updated 2026-09-2x -- PATCH #003-A (GPT Review #003 Round 1 on commit
+`8182e52`) fixed 6 findings: BH-FDR key collision across horizons,
+row-count-based (not real session-date) TIME_BLOCK bootstrap blocks,
+missing FORMAL_DEVELOPMENT enforcement of frozen/pre-registered
+signatures, a permutation test comparing against an unstratified
+baseline while the point estimate used the stratified one, support
+gated on raw episode count instead of valid outcomes, and an
+at-or-before (not exact) entry-bar lookup. TESTs 21/22/29 updated for
+the new BH-FDR key shape; TEST 36-38 added. See
+`docs/spec003_known_limitations.md`'s PATCH #003-A section for detail.
 
 | # | Test | File | Result | Notes |
 |---|------|------|--------|-------|
@@ -45,6 +57,9 @@ PENDING_LEVEL_2_DATA, unaffected)**.
 | 33 | Candidate Budget isolation | `test_33_candidate_budget_isolation.py` | **PASS** | Changing `max_candidates` produces byte-identical `EvidenceProfile` output -- re-proves IMPLEMENTATION BLOCKER SS74A's resolution from Evaluation's own consuming side. |
 | 34 | Holding-decay curve | `test_34_holding_decay_curve.py` | **PASS** | `decay_curve()` returns the full per-horizon profile, sorted, with no "winner" field anywhere. |
 | 35 | Zero LLM imports | `test_35_zero_llm_imports.py` | **PASS** | AST import scan -> no `anthropic`/`openai`/`google.generativeai`/`cohere`/`langchain` import anywhere under `src/evaluation/`. |
+| 36 | BH-FDR multi-horizon routing | `test_36_bh_multi_horizon_routing.py` | **PASS** | Added by PATCH #003-A (finding #1). Real pipeline run, one signature across 5 horizons: each `EvidenceProfile.baseline_comparison.family_id` matches ITS OWN `horizon_bars`, and (singleton family) `adjusted_p == raw_p`. Fails against the pre-patch signature_id-only key (verified: reverting the lookup key produces `adjusted_p=None` on 4/5 profiles). |
+| 37 | FORMAL_DEVELOPMENT rejects post-hoc signatures | `test_37_formal_development_rejects_post_hoc.py` | **PASS** (2 sub-tests) | Added by PATCH #003-A (finding #3). `run_evaluation()` raises `ValueError` for a signature with `creation_mode=EXPLORATORY_POST_HOC`, and separately for one claiming `PRE_REGISTERED` but with `created_before_outcome_evaluation=False`. |
+| 38 | Exact entry-bar required | `test_38_exact_entry_bar_required.py` | **PASS** (2 sub-tests) | Added by PATCH #003-A (finding #6). No bar dated exactly `observation_as_of` (a halt/gap) -> `INVALID_INPUT`, never a silently-shifted at-or-before entry; an exact match is used normally. |
 
 ## How to reproduce
 

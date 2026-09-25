@@ -205,8 +205,19 @@ class MissingnessReport:
 
 @dataclass(frozen=True)
 class SupportInfo:
+    """`episode_n` is the TOTAL episode count (every outcome status);
+    `valid_episode_n` is the subset with a usable VALID relative_return
+    outcome -- the population the formal comparison/effect-size/p-value
+    actually run on. `support_status` gates on `valid_episode_n` and
+    `unique_security_count` (also computed over that same valid
+    population), never on the raw total (GPT Review #003 Round 1,
+    finding #5): a signature with 35 total episodes but only 12 VALID
+    relative outcomes must not silently read as SUFFICIENT_SUPPORT
+    against a threshold of 30. `episode_n` stays available for
+    reconciliation against `missingness.episodes`."""
     raw_n: int
     episode_n: int
+    valid_episode_n: int
     unique_security_count: int
     support_status: str  # SupportStatus
 

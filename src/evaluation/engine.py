@@ -45,7 +45,7 @@ from evaluation.config.loader import EvaluationConfig
 from evaluation.models.entities import (
     BaselineComparison, ConcentrationStats, ConfidenceInterval, DescriptiveStats,
     EvaluationRunRegistry, EvidenceProfile, MissingnessReport, OutcomeStatus,
-    SignatureSet, SupportInfo, SupportStatus,
+    SignatureCreationMode, SignatureSet, SupportInfo, SupportStatus,
 )
 from evaluation.observations.episodes import build_episodes
 from evaluation.observations.signatures import match_observations
@@ -56,10 +56,10 @@ from evaluation.statistics.bootstrap import (
     bootstrap_ci_for_series, percentile_ci, stratified_baseline_bootstrap_replicates,
     time_block_bootstrap_replicates,
 )
-from evaluation.statistics.comparison import permutation_p_value
+from evaluation.statistics.comparison import stratified_permutation_p_value
 from evaluation.statistics.concentration import compute_concentration
 from evaluation.statistics.descriptive import describe
-from evaluation.statistics.multiple_testing import PValueRecord, benjamini_hochberg
+from evaluation.statistics.multiple_testing import PValueRecord, benjamini_hochberg, record_key
 from evaluation.statistics.opportunity import compute_opportunity_density
 from evaluation.statistics.stability import stability_by_bin
 
@@ -209,13 +209,23 @@ def _evaluate_signature_horizon(
     baseline_iqr = robust_iqr([v for _, v in baseline_dated])
     standardized_effect, standardized_effect_status = _standardized_effect(median_difference, baseline_iqr)
 
+    # Stratified permutation test (GPT Review #003 Round 1, finding #4):
+    # must compare against the SAME per-bin baseline pools and weights as
+    # the point estimate/CI above -- never the raw unstratified pool.
+    signature_values_by_bin: dict[str, list[float]] = {b.label: [] for b in bins}
+    for ep, o in relative_valid:
+        label = assign_bin(ep.representative_as_of, bins)
+        if label is not None:
+            signature_values_by_bin[label].append(o.relative_return)
+    baseline_values_by_bin = {label: [v for _, v in dated] for label, dated in baseline_by_bin.items()}
+
     comparison_cfg = ev_config.data["comparison"]
-    observed_diff, raw_p = permutation_p_value(
-        relative_values, [v for _, v in baseline_dated], comparison_cfg["iterations"], comparison_cfg["seed"],
+    observed_diff, raw_p = stratified_permutation_p_value(
+        signature_values_by_bin, baseline_values_by_bin, weights, comparison_cfg["iterations"], comparison_cfg["seed"],
     )
 
-    mt_cfg = ev_config.data["multiple_testing"]
     family_id = f"{timeframe}|{horizon_bars}bars|{OUTCOME_TYPE}|{run_id}" if raw_p is not None else None
+    mt_cfg = ev_config.data["multiple_testing"]
 
     baseline_comparison = BaselineComparison(
         baseline_mean=baseline_mean, baseline_median=baseline_median,
@@ -226,7 +236,13 @@ def _evaluate_signature_horizon(
         multiple_testing_method=mt_cfg["method"] if mode == "FORMAL_DEVELOPMENT" else None,
     )
 
-    concentration = compute_concentration([ep.security_id for ep, _ in valid])
+    # Concentration and support are both computed over relative_valid --
+    # the population the formal comparison/effect-size/p-value actually
+    # runs on (GPT Review #003 Round 1, finding #5) -- not the broader
+    # `valid` (absolute-only) or raw total episode count. A signature
+    # with many total episodes but few usable relative outcomes must not
+    # look better-supported than it actually is.
+    concentration = compute_concentration([ep.security_id for ep, _ in relative_valid])
 
     stability_records = [
         {"as_of": ep.representative_as_of, "security_id": ep.security_id,
@@ -242,14 +258,16 @@ def _evaluate_signature_horizon(
     missingness = _missingness_from_outcomes(raw_n, [o for _, o in episode_outcomes])
 
     support_cfg = ev_config.data["support"]
+    valid_episode_n = len(relative_valid)
     unique_securities = concentration.unique_security_count
     support_status = (
         SupportStatus.SUFFICIENT.value
-        if len(episodes) >= support_cfg["minimum_episode_count"] and unique_securities >= support_cfg["minimum_unique_securities"]
+        if valid_episode_n >= support_cfg["minimum_episode_count"] and unique_securities >= support_cfg["minimum_unique_securities"]
         else SupportStatus.INSUFFICIENT.value
     )
     support = SupportInfo(
-        raw_n=raw_n, episode_n=len(episodes), unique_security_count=unique_securities, support_status=support_status,
+        raw_n=raw_n, episode_n=len(episodes), valid_episode_n=valid_episode_n,
+        unique_security_count=unique_securities, support_status=support_status,
     )
 
     return EvidenceProfile(
@@ -281,6 +299,20 @@ def run_evaluation(
     horizons = list(ev_data["horizons"]["values"])
     if ev_data["horizons"]["unit"] != "BARS":
         raise ValueError("Spec #003 SS3-4: horizons.unit must be BARS")
+
+    if mode == "FORMAL_DEVELOPMENT":
+        # GPT Review #003 Round 1, mandatory finding #3: a frozen
+        # Signature Set (SS26) is meaningless if a post-hoc signature can
+        # still be run through a FORMAL_DEVELOPMENT evaluation -- this
+        # must be a hard error, fast, before any PIT/Discovery work.
+        for sig in signature_set.signatures:
+            if sig.creation_mode != SignatureCreationMode.PRE_REGISTERED.value or not sig.created_before_outcome_evaluation:
+                raise ValueError(
+                    "FORMAL_DEVELOPMENT requires every signature to be PRE_REGISTERED "
+                    "with created_before_outcome_evaluation=True (Spec #003 SS26/SS28) -- "
+                    f"signature {sig.signature_id!r} has creation_mode={sig.creation_mode!r}, "
+                    f"created_before_outcome_evaluation={sig.created_before_outcome_evaluation!r}"
+                )
 
     data_as_of = data_as_of or development_end
     if data_as_of is None:
@@ -336,8 +368,14 @@ def run_evaluation(
         adjusted = benjamini_hochberg(records)
         new_profiles = []
         for p in profiles:
-            if p.signature_id in adjusted:
-                adj_p, fam_id = adjusted[p.signature_id]
+            # Keyed by the FULL (signature_id, timeframe, horizon_bars,
+            # outcome_type, run_id) tuple -- a plain signature_id lookup
+            # would silently apply one horizon's adjusted_p/family_id to
+            # every other horizon of the same signature (GPT Review #003
+            # Round 1, mandatory finding #1).
+            key = record_key(PValueRecord(p.signature_id, p.timeframe, p.horizon_bars, OUTCOME_TYPE, run_id, 0.0))
+            if key in adjusted:
+                adj_p, fam_id = adjusted[key]
                 p = replace(p, baseline_comparison=replace(p.baseline_comparison, adjusted_p=adj_p, family_id=fam_id))
             new_profiles.append(p)
         profiles = new_profiles

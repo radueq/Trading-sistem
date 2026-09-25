@@ -36,24 +36,43 @@ def time_block_bootstrap_replicates(
     seed: int,
     statistic: Callable[[list[float]], float] = _mean,
 ) -> list[float]:
-    """`dated_values` sorted by date, split into contiguous blocks of
-    `block_length_bars` positions (bar-based, not calendar-day-based --
-    the input is already a sequence of observed bars, gaps and all).
-    Each replicate resamples whole blocks with replacement until the
-    original length is reconstructed (last block truncated to fit), then
-    applies `statistic`."""
+    """A block is a run of `block_length_bars` CONSECUTIVE SESSION DATES
+    (a real market-time interval), not a run of `block_length_bars`
+    (date, value) ROWS (GPT Review #003 Round 1, mandatory finding #2:
+    the earlier version sorted then chunked by row count, so same-day
+    cross-security observations -- e.g. NVDA/AMD/AVGO/MRVL/CRDO all
+    showing an episode the same week the market jumps -- could be split
+    across different blocks, destroying the exact common-shock structure
+    TIME_BLOCK clustering exists to preserve).
+
+    All values sharing a date are grouped together first; blocks are
+    then built over the resulting SESSION DATES, each carrying every
+    value observed on its dates. Each replicate draws as many blocks
+    (with replacement) as there are blocks in the original partition,
+    concatenating ALL of each drawn block's values -- the replicate's
+    total count is not forced to match the original count exactly (a
+    session can carry zero, one, or several values), which is the
+    standard behavior of a moving block bootstrap over unevenly-spaced
+    panel data."""
     if not dated_values or block_length_bars <= 0 or iterations <= 0:
         return []
-    ordered = [v for _, v in sorted(dated_values, key=lambda dv: dv[0])]
-    n = len(ordered)
-    blocks = [ordered[i:i + block_length_bars] for i in range(0, n, block_length_bars)]
+    values_by_date: dict[str, list[float]] = {}
+    for d, v in dated_values:
+        values_by_date.setdefault(d, []).append(v)
+    session_dates = sorted(values_by_date)
+    n_sessions = len(session_dates)
+    date_blocks = [session_dates[i:i + block_length_bars] for i in range(0, n_sessions, block_length_bars)]
+    n_blocks = len(date_blocks)
+
     rng = random.Random(seed)
     replicates: list[float] = []
     for _ in range(iterations):
         resampled: list[float] = []
-        while len(resampled) < n:
-            resampled.extend(blocks[rng.randrange(len(blocks))])
-        replicates.append(statistic(resampled[:n]))
+        for _ in range(n_blocks):
+            for d in date_blocks[rng.randrange(n_blocks)]:
+                resampled.extend(values_by_date[d])
+        if resampled:
+            replicates.append(statistic(resampled))
     return replicates
 
 

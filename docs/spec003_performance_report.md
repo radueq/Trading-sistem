@@ -15,9 +15,9 @@ Universe: `tests/spec003/fixtures/tiny_universe.py` (3 securities + benchmark), 
 
 ## Timing (informational, Level 1 tiny-universe scale -- not an acceptance blocker, mirrors Spec #002 SS37)
 
-- Ingestion (4 securities): 0.017s
-- Full run_evaluation() (26 sessions x 3 securities, 1 signature x 5 horizon evaluations): 1.050s
-- Per-session average: 40.4ms
+- Ingestion (4 securities): 0.016s
+- Full run_evaluation() (26 sessions x 3 securities, 1 signature x 5 horizon evaluations): 0.938s
+- Per-session average: 36.1ms
 
 **LLM runtime tokens: 0** (Spec #003 SS61 -- zero LLM calls anywhere in this path, TEST 35).
 

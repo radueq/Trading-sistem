@@ -4,7 +4,7 @@ Family = same timeframe + horizon_bars + outcome_type + evaluation_run.
 Signatures tested at a DIFFERENT horizon_bars must never affect each
 other's BH correction.
 """
-from evaluation.statistics.multiple_testing import PValueRecord, benjamini_hochberg
+from evaluation.statistics.multiple_testing import PValueRecord, benjamini_hochberg, record_key
 
 
 def test_different_horizon_families_are_corrected_independently():
@@ -16,6 +16,6 @@ def test_different_horizon_families_are_corrected_independently():
     result_with_b_strong = benjamini_hochberg(family_a + family_b_strong)
 
     for rec in family_a:
-        assert result_with_b_weak[rec.signature_id] == result_with_b_strong[rec.signature_id], (
+        assert result_with_b_weak[record_key(rec)] == result_with_b_strong[record_key(rec)], (
             "family A's adjusted p-values must not depend on family B's p-value distribution"
         )

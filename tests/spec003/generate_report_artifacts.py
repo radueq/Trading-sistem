@@ -30,7 +30,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 from evaluation.statistics.bootstrap import bootstrap_ci_for_series
 from evaluation.statistics.comparison import permutation_p_value
 from evaluation.statistics.descriptive import describe
-from evaluation.statistics.multiple_testing import PValueRecord, benjamini_hochberg
+from evaluation.statistics.multiple_testing import PValueRecord, benjamini_hochberg, record_key
 
 HORIZONS = [1, 2, 3, 5, 10]
 N_EPISODES = 40
@@ -135,12 +135,15 @@ def build_multiple_testing_trap_section() -> str:
         records.append(PValueRecord(f"trap_sig_{i:02d}", "1D", 3, "relative_return", "example_d", p))
 
     adjusted = benjamini_hochberg(records)
+    # keyed by record_key() (signature_id, timeframe, horizon_bars,
+    # outcome_type, evaluation_run_id) -- PATCH #003-A, not signature_id alone.
+    adjusted_by_sid = {rec.signature_id: adjusted[record_key(rec)] for rec in records}
     naive_significant = sum(1 for p in raw_ps.values() if p < 0.05)
-    corrected_significant = sum(1 for adj_p, _ in adjusted.values() if adj_p < 0.05)
+    corrected_significant = sum(1 for adj_p, _ in adjusted_by_sid.values() if adj_p < 0.05)
 
     for sid in sorted(raw_ps, key=lambda s: raw_ps[s]):
         raw_p = raw_ps[sid]
-        adj_p, _ = adjusted[sid]
+        adj_p, _ = adjusted_by_sid[sid]
         lines.append(f"| {sid} | {raw_p:.4f} | {adj_p:.4f} | {'YES' if raw_p < 0.05 else 'no'} | {'YES' if adj_p < 0.05 else 'no'} |")
 
     lines.append("")

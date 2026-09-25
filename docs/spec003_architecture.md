@@ -90,35 +90,105 @@ from their own control pool (`exclude_self`). Documented simplification
 average of PER-BIN medians, not a single pooled weighted quantile -- see
 `docs/spec003_known_limitations.md`.
 
-## Statistics (Radu's Sec.74B/D amendment)
+## Statistics (Radu's Sec.74B/D amendment, PATCH #003-A per GPT Review #003 Round 1)
 
 - **TIME_BLOCK clustered bootstrap** (`statistics/bootstrap.py`) is the
   PRIMARY V1 inference mechanism for confidence intervals -- resamples
-  CONTIGUOUS blocks of `bootstrap.block_length_bars` bars, not
-  individual episodes and not individual securities, so a common
-  market-wide/regime shock hitting many securities' episodes the same
-  week stays together in every resample (the failure mode a security-
-  only or episode-only bootstrap would understate). `block_length_bars`
-  is configurable and must never be tuned against observed results.
-  Security concentration is reported SEPARATELY as a diagnostic
-  (`statistics/concentration.py`), not folded into the bootstrap choice.
-- **Raw significance is a SEPARATE permutation test**
-  (`statistics/comparison.py`) -- classic two-sample label-permutation
-  on the combined pool, NEVER informally derived from whether a
-  bootstrap CI crosses zero (Radu's explicit correction: CI and p-value
-  are related but distinct objects). Two-sided, add-one continuity
-  correction.
+  CONTIGUOUS blocks of `bootstrap.block_length_bars` SESSION DATES (a
+  real market-time interval), not a run of `block_length_bars` (date,
+  value) rows. PATCH #003-A fix (GPT Review #003 Round 1, mandatory
+  finding #2): the original cut sorted `(date, value)` pairs and chunked
+  by ROW COUNT, so same-day observations across different securities
+  (e.g. NVDA/AMD/AVGO/MRVL/CRDO all showing an episode the same week the
+  market jumps) could be split across different blocks -- destroying
+  exactly the common-shock structure TIME_BLOCK clustering exists to
+  preserve. Fixed: values are grouped by date FIRST, blocks are built
+  over the resulting session-date sequence, and each replicate draws
+  whole blocks (with replacement) carrying every value on their dates.
+  `block_length_bars` is configurable and must never be tuned against
+  observed results. Security concentration is reported SEPARATELY as a
+  diagnostic (`statistics/concentration.py`), not folded into the
+  bootstrap choice.
+- **Raw significance is a SEPARATE, STRATIFIED permutation test**
+  (`statistics/comparison.py`'s `stratified_permutation_p_value`) --
+  NEVER informally derived from whether a bootstrap CI crosses zero
+  (Radu's explicit correction: CI and p-value are related but distinct
+  objects). PATCH #003-A fix (GPT Review #003 Round 1, mandatory finding
+  #4): the original cut compared the signature against the RAW,
+  unstratified baseline pool while the point estimate/CI compared
+  against `TEMPORALLY_STRATIFIED_ELIGIBLE_BASELINE` -- two different
+  hypotheses feeding one reported effect. Fixed: permutation now happens
+  WITHIN each temporal bin (never across bins, which would re-introduce
+  the regime-mixing problem stratification exists to avoid), and the
+  per-bin permuted differences are combined using the signature's SAME
+  fixed bin weights as the point estimate/CI, via the identical
+  inclusion rule (a bin counts only when both its signature and baseline
+  pools are non-empty and its weight > 0). The plain, unstratified
+  `permutation_p_value` primitive is kept for contexts with no temporal-
+  bin structure at all (e.g. Example D's flat synthetic demonstration).
 - **BH-FDR** (`statistics/multiple_testing.py`) is mandatory for
   FORMAL_DEVELOPMENT mode, applied within families (same timeframe +
   horizon_bars + outcome_type + evaluation_run, SS45) independently
-  (TEST 22 proves family isolation). The one formally-tested
-  `outcome_type` at Level 1 is `relative_return` (see
+  (TEST 22 proves family isolation). PATCH #003-A fix (GPT Review #003
+  Round 1, mandatory finding #1): `benjamini_hochberg()` used to return
+  `{signature_id: (adjusted_p, family_id)}`, but the SAME signature is
+  tested at every horizon (a different family each time) -- later
+  families silently overwrote earlier ones in that dict, and
+  `run_evaluation()`'s application loop looked results up by
+  `signature_id` alone, so one horizon's adjusted_p/family_id could end
+  up applied to every other horizon of the same signature. Fixed:
+  `benjamini_hochberg()` now returns
+  `{record_key(record): (adjusted_p, family_id)}`, keyed by the FULL
+  `(signature_id, timeframe, horizon_bars, outcome_type,
+  evaluation_run_id)` tuple; `run_evaluation()` looks up that same key
+  per profile. TEST 36 proves each horizon gets its own family_id/
+  adjusted_p (and would fail against the pre-patch key shape). The one
+  formally-tested `outcome_type` at Level 1 is `relative_return` (see
   `docs/spec003_known_limitations.md`).
 - **Robust standardized effect**: `median_difference / (baseline_IQR /
   1.349)` -- IQR/1.349 is the classical normal-consistent robust-sigma
   estimator, chosen over Cohen's d because of return-distribution
   tails/outliers. `standardized_effect_status = "UNDEFINED_ZERO_SCALE"`
   (never a silent division) when `baseline_IQR` is ~0.
+
+## FORMAL_DEVELOPMENT enforcement (PATCH #003-A, GPT Review #003 Round 1, finding #3)
+
+`run_evaluation()` hard-errors, before any PIT/Discovery work, if `mode
+== "FORMAL_DEVELOPMENT"` and any signature in the `SignatureSet` is not
+`creation_mode == PRE_REGISTERED` with `created_before_outcome_evaluation
+== True` (TEST 37). A frozen Signature Set (SS26) is meaningless if a
+post-hoc signature can still run through a formal evaluation. In
+addition, `registry.signatures.freeze_signature_set()`'s fingerprint now
+includes `creation_mode`, `created_before_outcome_evaluation`,
+`discovery_engine_version`, and `discovery_config_version` -- not just
+the matching conditions -- so the exact same lane/reason-code
+definition flipping from `EXPLORATORY_POST_HOC` to `PRE_REGISTERED` (or
+Discovery's own formulas changing underneath it) produces a DIFFERENT
+`signature_set_id`, never a silent identity match (TEST 28 covers the
+general property; TEST 37 covers the FORMAL_DEVELOPMENT rejection
+itself).
+
+## Support gated on the population actually tested (PATCH #003-A, GPT Review #003 Round 1, finding #5)
+
+`SupportInfo.episode_n` is the TOTAL episode count (every outcome
+status); `SupportInfo.valid_episode_n` is the subset with a usable VALID
+relative_return outcome. `support_status` and `concentration`
+(`statistics/concentration.py`) are both computed over that VALID
+population (`relative_valid` in `engine.py`), never the raw total --
+GPT's example: 35 total episodes but only 12 VALID relative outcomes
+must not read as `SUFFICIENT_SUPPORT` against a threshold of 30.
+`missingness` still reports the total for reconciliation (TEST 32).
+
+## Exact entry-bar alignment (PATCH #003-A, GPT Review #003 Round 1, finding #6)
+
+`outcomes/forward_returns.py` now requires a bar dated EXACTLY
+`observation_as_of` -- not "the latest bar at or before" -- else
+`INVALID_INPUT` (TEST 38). The earlier at-or-before lookup could silently
+predate `observation_as_of` (a halt/gap), while
+`outcomes/benchmark.py`'s alignment requires an exact-date benchmark bar
+for that same `as_of`; mixing the two would compare a security return
+measured from one date against a benchmark return measured from
+another.
 
 ## No automatic verdict, no combined score (SS49/SS51)
 
@@ -181,6 +251,8 @@ tests/spec003/
                                  single-as_of queries, not a per-session
                                  Evaluation sweep across a whole window
   test_01..35_*.py                the 35 required tests
+  test_36..38_*.py                  PATCH #003-A regression tests (GPT
+                                     Review #003 Round 1 findings #1/#3/#6)
   generate_report_artifacts.py      produces spec003_examples/
                                      multiple_testing_report/performance_report.md
 ```

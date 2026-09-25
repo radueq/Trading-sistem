@@ -25,13 +25,18 @@ silently fixed.
   relative formally would also double the multiple-testing burden for
   limited benefit at Level 1. `OUTCOME_TYPE = "relative_return"` in
   `evaluation/engine.py` is the single constant this decision lives in.
-- **The permutation test (raw significance) does not fully model
-  temporal/cross-sectional dependence**, unlike the TIME_BLOCK bootstrap
-  used for confidence intervals. A block-permutation variant (preserving
-  contiguous time blocks the way the bootstrap does) is a natural v2
-  refinement if the concentration/stability diagnostics ever show it's
-  needed -- not built speculatively now (Spec #003 SS47's own instruction
-  not to over-engineer ahead of demonstrated need).
+- **The permutation test is stratified by temporal bin (PATCH #003-A),
+  but not by finer-grained dependence within a bin.** It now compares
+  against the SAME `TEMPORALLY_STRATIFIED_ELIGIBLE_BASELINE` pools/weights
+  as the point estimate and CI (fixed in PATCH #003-A -- see
+  `docs/spec003_architecture.md`), which closes the "different baseline
+  for the effect vs the p-value" gap GPT Review #003 Round 1 flagged. It
+  still does not model dependence WITHIN one bin (e.g. two securities in
+  the same bin moving together for reasons unrelated to the signature).
+  A full two-way clustered permutation is a natural v2 refinement if the
+  concentration/stability diagnostics ever show it's needed -- not built
+  speculatively now (Spec #003 SS47's own instruction not to
+  over-engineer ahead of demonstrated need).
 - **TEMPORALLY_STRATIFIED_ELIGIBLE_BASELINE's point estimate is a
   weighted AVERAGE OF PER-BIN statistics**, not a true pooled weighted
   quantile. For the mean this is exact; for the median it is a
@@ -96,9 +101,55 @@ walk-forward, Locked-OOS evaluation itself, 4H/1H data ingestion. All
 deferred to the Backtesting/Risk-Exit specs this one deliberately does
 not reach into.
 
+## PATCH #003-A (GPT Review #003 Round 1, 2026-09-2x)
+
+Six findings against commit `8182e52`, all fixed -- see
+`docs/spec003_architecture.md` for full detail on each:
+
+1. **Fixed -- BH-FDR key collision across horizons.**
+   `benjamini_hochberg()` returned `{signature_id: ...}`; the same
+   signature tested at 5 horizons meant later horizons silently
+   overwrote earlier ones, and `run_evaluation()` applied results by
+   `signature_id` alone. Now keyed by the full `(signature_id, timeframe,
+   horizon_bars, outcome_type, evaluation_run_id)` tuple. TEST 36.
+2. **Fixed -- TIME_BLOCK bootstrap now blocks real session dates, not
+   row counts.** The original chunked sorted `(date, value)` pairs by
+   position, so same-day cross-security observations could split across
+   blocks -- exactly the common-market-shock structure TIME_BLOCK
+   clustering was chosen to preserve. Now groups by date first, blocks
+   over the session-date sequence.
+3. **Fixed -- FORMAL_DEVELOPMENT now hard-rejects a non-frozen
+   signature.** `run_evaluation()` errors before any PIT work if a
+   signature isn't `PRE_REGISTERED` + `created_before_outcome_evaluation
+   =True`; the Signature Set fingerprint now includes those two fields
+   plus Discovery's own engine/config versions, so a definition quietly
+   changing provenance changes `signature_set_id` too. TEST 37.
+4. **Fixed -- permutation test now matches the stratified baseline.**
+   Previously compared the signature against the raw, unstratified
+   baseline pool while the point estimate/CI used
+   `TEMPORALLY_STRATIFIED_ELIGIBLE_BASELINE` -- two different hypotheses
+   behind one reported effect. `stratified_permutation_p_value` now uses
+   the identical per-bin pools and weights.
+5. **Fixed -- support/concentration now gate on the population actually
+   tested.** `SupportInfo.valid_episode_n` (VALID relative outcomes)
+   drives `support_status`, not the raw total episode count
+   (`episode_n`, kept for reconciliation). `concentration` is computed
+   over the same valid population.
+6. **Fixed -- entry bar must match `observation_as_of` exactly.** The
+   prior "latest bar at or before" lookup could silently predate the
+   observation date (a halt/gap), while benchmark alignment requires an
+   exact match -- mixing the two could compare a security return and a
+   benchmark return measured from different dates. Now `INVALID_INPUT`
+   when no bar exists exactly on `observation_as_of`. TEST 38.
+
+No changes to the 5 feature lanes (Spec #002, untouched), Candidate
+Budget, the robust standardized-effect formula, or the general
+architecture -- scope was strictly these 6 items, per Radu's own
+instruction.
+
 ## Test coverage
 
-- All 35 required tests (Spec #003 SS66) pass -- see
-  `docs/spec003_test_report.md`. None are `PENDING`; the tiny synthetic
-  universe plus hand-constructed unit fixtures are sufficient to exercise
-  every required property.
+- All 35 required tests (Spec #003 SS66) plus 3 PATCH #003-A regression
+  tests (TEST 36-38) pass -- see `docs/spec003_test_report.md`. None are
+  `PENDING`; the tiny synthetic universe plus hand-constructed unit
+  fixtures are sufficient to exercise every required property.

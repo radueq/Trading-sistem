@@ -26,12 +26,18 @@ from evaluation.models.entities import ForwardOutcome, OutcomeStatus
 OUTCOME_ENGINE_VERSION = "v1.0.0"
 
 
-def _entry_index_at_or_before(dates: list[str], as_of: str) -> Optional[int]:
-    """The LAST bar with date <= as_of -- matching exactly what Discovery
-    itself treats as 'the latest known bar as of this date' (Spec #001
-    pit.access.get_price_series_as_of), not an exact-date requirement."""
-    i = bisect.bisect_right(dates, as_of) - 1
-    return i if i >= 0 else None
+def _exact_entry_index(dates: list[str], as_of: str) -> Optional[int]:
+    """The bar dated EXACTLY `as_of` -- required, not "the latest bar at
+    or before" (GPT Review #003 Round 1, mandatory finding #6). An
+    at-or-before entry could silently predate `as_of` (e.g. a security
+    with no bar on the observation date, halt or gap), while
+    `outcomes/benchmark.py`'s alignment requires an EXACT-date benchmark
+    bar for that same `as_of` -- mixing the two would compare a security
+    return measured from one date against a benchmark return measured
+    from another. No bar at exactly `as_of` -> INVALID_INPUT, never a
+    silently-shifted entry."""
+    i = bisect.bisect_left(dates, as_of)
+    return i if i < len(dates) and dates[i] == as_of else None
 
 
 def compute_forward_outcome(
@@ -64,7 +70,7 @@ def compute_forward_outcome(
         return _invalid(OutcomeStatus.INVALID_INPUT)
 
     dates = [b.date for b in bars]
-    entry_idx = _entry_index_at_or_before(dates, observation_as_of)
+    entry_idx = _exact_entry_index(dates, observation_as_of)
     if entry_idx is None:
         return _invalid(OutcomeStatus.INVALID_INPUT)
 

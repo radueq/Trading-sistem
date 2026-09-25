@@ -12,7 +12,7 @@ from evaluation.models.entities import (
 
 def _profile(signature_id, horizon_bars, mean_abs, mean_rel):
     empty_missingness = MissingnessReport(0, 0, 0, 0, 0, 0, 0, 0)
-    empty_support = SupportInfo(0, 0, 0, "INSUFFICIENT")
+    empty_support = SupportInfo(0, 0, 0, 0, "INSUFFICIENT")
     empty_density = OpportunityDensity(0, None, None, None)
     empty_comparison = BaselineComparison(None, None, None, None, None, None, "UNDEFINED_ZERO_SCALE", None, None, None, None)
     empty_concentration = ConcentrationStats(0, None)
