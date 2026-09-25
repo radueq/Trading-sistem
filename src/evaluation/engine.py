@@ -157,10 +157,10 @@ def _evaluate_signature_horizon(
 
     bootstrap_cfg = ev_config.data["bootstrap"]
     abs_ci = bootstrap_ci_for_series(
-        dated_absolute, bootstrap_cfg["block_length_bars"], bootstrap_cfg["iterations"], bootstrap_cfg["seed"],
+        dated_absolute, session_dates, bootstrap_cfg["block_length_bars"], bootstrap_cfg["iterations"], bootstrap_cfg["seed"],
     )
     rel_ci = bootstrap_ci_for_series(
-        dated_relative, bootstrap_cfg["block_length_bars"], bootstrap_cfg["iterations"], bootstrap_cfg["seed"] + 1,
+        dated_relative, session_dates, bootstrap_cfg["block_length_bars"], bootstrap_cfg["iterations"], bootstrap_cfg["seed"] + 1,
     )
     absolute_outcome = describe(absolute_values, abs_ci)
     relative_outcome = describe(relative_values, rel_ci)
@@ -186,11 +186,18 @@ def _evaluate_signature_horizon(
         label = assign_bin(d, bins)
         if label is not None:
             baseline_by_bin[label].append((d, v))
+    # Each bin's bootstrap resamples over ITS OWN slice of the real
+    # session calendar (GPT Review #003 Round 2), never over the dates
+    # merely present in that bin's baseline values.
+    session_dates_by_bin: dict[str, list[str]] = {
+        b.label: [d for d in session_dates if b.start_date <= d <= b.end_date] for b in bins
+    }
     baseline_replicates = stratified_baseline_bootstrap_replicates(
-        baseline_by_bin, weights, bootstrap_cfg["block_length_bars"], bootstrap_cfg["iterations"], bootstrap_cfg["seed"] + 2,
+        baseline_by_bin, session_dates_by_bin, weights,
+        bootstrap_cfg["block_length_bars"], bootstrap_cfg["iterations"], bootstrap_cfg["seed"] + 2,
     )
     signature_replicates = time_block_bootstrap_replicates(
-        dated_relative, bootstrap_cfg["block_length_bars"], bootstrap_cfg["iterations"], bootstrap_cfg["seed"] + 3,
+        dated_relative, session_dates, bootstrap_cfg["block_length_bars"], bootstrap_cfg["iterations"], bootstrap_cfg["seed"] + 3,
     )
     diff_replicates = [
         s - b for s, b in zip(signature_replicates, baseline_replicates)
@@ -312,6 +319,31 @@ def run_evaluation(
                     "with created_before_outcome_evaluation=True (Spec #003 SS26/SS28) -- "
                     f"signature {sig.signature_id!r} has creation_mode={sig.creation_mode!r}, "
                     f"created_before_outcome_evaluation={sig.created_before_outcome_evaluation!r}"
+                )
+            # GPT Review #003 Round 2 guard: the fingerprint correctly
+            # makes a provenance mismatch produce a DIFFERENT
+            # signature_set_id, but nothing previously stopped a
+            # signature pre-registered under one Discovery config/version
+            # from actually being RUN against a different one -- the two
+            # entities would be legitimately different, yet the engine
+            # would silently accept the mismatched combination. Hard
+            # error instead.
+            if sig.timeframe != timeframe:
+                raise ValueError(
+                    f"FORMAL_DEVELOPMENT: signature {sig.signature_id!r} was pre-registered for "
+                    f"timeframe={sig.timeframe!r}, but this run's timeframe is {timeframe!r}"
+                )
+            if sig.discovery_engine_version != DISCOVERY_ENGINE_VERSION:
+                raise ValueError(
+                    f"FORMAL_DEVELOPMENT: signature {sig.signature_id!r} was pre-registered against "
+                    f"discovery_engine_version={sig.discovery_engine_version!r}, but the current one is "
+                    f"{DISCOVERY_ENGINE_VERSION!r}"
+                )
+            if sig.discovery_config_version != discovery_config.config_version:
+                raise ValueError(
+                    f"FORMAL_DEVELOPMENT: signature {sig.signature_id!r} was pre-registered against "
+                    f"discovery_config_version={sig.discovery_config_version!r}, but the discovery_config "
+                    f"passed to this run is {discovery_config.config_version!r}"
                 )
 
     data_as_of = data_as_of or development_end

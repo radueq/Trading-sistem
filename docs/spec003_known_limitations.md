@@ -147,9 +147,37 @@ Budget, the robust standardized-effect formula, or the general
 architecture -- scope was strictly these 6 items, per Radu's own
 instruction.
 
+## PATCH #003-B (GPT Review #003 Round 2, 2026-09-2x)
+
+One residual finding on the PATCH #003-A TIME_BLOCK fix, plus one
+guard GPT flagged during provenance verification -- both fixed:
+
+1. **Fixed -- TIME_BLOCK bootstrap now blocks the REAL session
+   calendar, not the dates present in the signature's own values.**
+   PATCH #003-A correctly kept same-day cross-security values together,
+   but still built blocks over whichever dates happened to have a value
+   -- for a rare signature, those dates can be scattered across months
+   with no real adjacency between them. `time_block_bootstrap_replicates()`
+   now takes the run's real `session_dates` (the benchmark's own bar
+   dates within Development) as an explicit parameter; blocks are built
+   over that calendar, and a session with no value contributes nothing
+   when its block is drawn (normal, not an error). TEST 39.
+2. **Fixed -- FORMAL_DEVELOPMENT now rejects a provenance mismatch, not
+   just a fingerprint difference.** The Signature Set fingerprint
+   (PATCH #003-A) already makes a provenance change produce a different
+   `signature_set_id`, but nothing stopped a signature pre-registered
+   under one Discovery config/engine/timeframe from being RUN against a
+   different one. `run_evaluation()` now hard-checks, per signature:
+   `timeframe`, `discovery_engine_version`, and
+   `discovery_config_version` all match the actual run. TEST 40.
+
+No changes to the other 5 PATCH #003-A findings, the 5 feature lanes,
+Candidate Budget, the robust standardized-effect formula, or the
+general architecture.
+
 ## Test coverage
 
-- All 35 required tests (Spec #003 SS66) plus 3 PATCH #003-A regression
-  tests (TEST 36-38) pass -- see `docs/spec003_test_report.md`. None are
-  `PENDING`; the tiny synthetic universe plus hand-constructed unit
+- All 35 required tests (Spec #003 SS66) plus 5 PATCH #003-A/B
+  regression tests (TEST 36-40) pass -- see `docs/spec003_test_report.md`.
+  None are `PENDING`; the tiny synthetic universe plus hand-constructed unit
   fixtures are sufficient to exercise every required property.

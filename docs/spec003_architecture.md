@@ -96,19 +96,31 @@ average of PER-BIN medians, not a single pooled weighted quantile -- see
   PRIMARY V1 inference mechanism for confidence intervals -- resamples
   CONTIGUOUS blocks of `bootstrap.block_length_bars` SESSION DATES (a
   real market-time interval), not a run of `block_length_bars` (date,
-  value) rows. PATCH #003-A fix (GPT Review #003 Round 1, mandatory
-  finding #2): the original cut sorted `(date, value)` pairs and chunked
-  by ROW COUNT, so same-day observations across different securities
-  (e.g. NVDA/AMD/AVGO/MRVL/CRDO all showing an episode the same week the
-  market jumps) could be split across different blocks -- destroying
-  exactly the common-shock structure TIME_BLOCK clustering exists to
-  preserve. Fixed: values are grouped by date FIRST, blocks are built
-  over the resulting session-date sequence, and each replicate draws
-  whole blocks (with replacement) carrying every value on their dates.
-  `block_length_bars` is configurable and must never be tuned against
-  observed results. Security concentration is reported SEPARATELY as a
-  diagnostic (`statistics/concentration.py`), not folded into the
-  bootstrap choice.
+  value) rows, and not a run of the dates merely present in the
+  signature's own values. PATCH #003-A fix (GPT Review #003 Round 1,
+  mandatory finding #2): the original cut sorted `(date, value)` pairs
+  and chunked by ROW COUNT, so same-day observations across different
+  securities (e.g. NVDA/AMD/AVGO/MRVL/CRDO all showing an episode the
+  same week the market jumps) could be split across different blocks --
+  destroying exactly the common-shock structure TIME_BLOCK clustering
+  exists to preserve. Fixed: values are grouped by date FIRST.
+  PATCH #003-B fix (GPT Review #003 Round 2): grouping by date was not
+  enough on its own -- blocks were still built over the dates PRESENT IN
+  THE SIGNATURE'S OWN VALUES, not the real trading calendar. For a rare
+  signature (e.g. 4 matching dates scattered across several months),
+  those event dates are not "4 consecutive sessions"; treating them as
+  such loses the actual local-time-window/regime structure TIME_BLOCK
+  exists to preserve. Fixed: `time_block_bootstrap_replicates()` now
+  takes the run's real `session_dates` calendar (the benchmark's own bar
+  dates within Development) as an explicit parameter, and every caller
+  in `engine.py` passes it -- the global calendar for the signature's own
+  bootstrap, and each bin's own slice of it
+  (`session_dates_by_bin`) for `stratified_baseline_bootstrap_replicates`.
+  A session with no value that day contributes nothing when its block is
+  drawn -- normal, not an error (TEST 39). `block_length_bars` is
+  configurable and must never be tuned against observed results.
+  Security concentration is reported SEPARATELY as a diagnostic
+  (`statistics/concentration.py`), not folded into the bootstrap choice.
 - **Raw significance is a SEPARATE, STRATIFIED permutation test**
   (`statistics/comparison.py`'s `stratified_permutation_p_value`) --
   NEVER informally derived from whether a bootstrap CI crosses zero
@@ -151,7 +163,7 @@ average of PER-BIN medians, not a single pooled weighted quantile -- see
   tails/outliers. `standardized_effect_status = "UNDEFINED_ZERO_SCALE"`
   (never a silent division) when `baseline_IQR` is ~0.
 
-## FORMAL_DEVELOPMENT enforcement (PATCH #003-A, GPT Review #003 Round 1, finding #3)
+## FORMAL_DEVELOPMENT enforcement (PATCH #003-A finding #3, PATCH #003-B provenance guard)
 
 `run_evaluation()` hard-errors, before any PIT/Discovery work, if `mode
 == "FORMAL_DEVELOPMENT"` and any signature in the `SignatureSet` is not
@@ -167,6 +179,19 @@ Discovery's own formulas changing underneath it) produces a DIFFERENT
 `signature_set_id`, never a silent identity match (TEST 28 covers the
 general property; TEST 37 covers the FORMAL_DEVELOPMENT rejection
 itself).
+
+**PATCH #003-B guard (GPT Review #003 Round 2):** the fingerprint alone
+only guarantees a provenance MISMATCH produces a different
+`signature_set_id` -- it does not stop `run_evaluation()` from actually
+being called with a signature pre-registered under a DIFFERENT
+Discovery config/engine/timeframe than the one it's now being run
+against (two legitimately-different entities the engine would otherwise
+silently accept together). `run_evaluation()` now additionally checks,
+per signature, in `FORMAL_DEVELOPMENT` mode: `sig.timeframe == ` the
+run's `timeframe`, `sig.discovery_engine_version ==` the current
+`DISCOVERY_ENGINE_VERSION`, and `sig.discovery_config_version ==` the
+`discovery_config` actually passed in -- any mismatch is a hard error
+(TEST 40).
 
 ## Support gated on the population actually tested (PATCH #003-A, GPT Review #003 Round 1, finding #5)
 
@@ -253,6 +278,9 @@ tests/spec003/
   test_01..35_*.py                the 35 required tests
   test_36..38_*.py                  PATCH #003-A regression tests (GPT
                                      Review #003 Round 1 findings #1/#3/#6)
+  test_39..40_*.py                   PATCH #003-B regression tests (GPT
+                                      Review #003 Round 2: real session
+                                      calendar, provenance guard)
   generate_report_artifacts.py      produces spec003_examples/
                                      multiple_testing_report/performance_report.md
 ```

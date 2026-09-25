@@ -3,13 +3,22 @@
 Run: `PYTHONPATH=src:tests python3 -m pytest tests/spec003/ -v` -- Python
 3.11.15, pytest 9.1.1, pandas 3.0.6, numpy 2.4.6, PyYAML 6.0.1.
 
-Result: **52 passed, 0 failed, 0 pending** (across the 35 required tests
-plus TEST 36-38, added by PATCH #003-A/GPT Review #003 Round 1 -- several
-have multiple focused sub-tests). Full repo (Spec #001 + Spec #002 +
-Spec #003): **117 passed, 1 skipped (Spec #001 TEST 8,
+Result: **60 passed, 0 failed, 0 pending** (across the 35 required tests
+plus TEST 36-40, added by PATCH #003-A/B per GPT Review #003 Rounds 1-2
+-- several have multiple focused sub-tests). Full repo (Spec #001 +
+Spec #002 + Spec #003): **125 passed, 1 skipped (Spec #001 TEST 8,
 PENDING_LEVEL_2_DATA, unaffected)**.
 
-Updated 2026-09-2x -- PATCH #003-A (GPT Review #003 Round 1 on commit
+Updated 2026-09-2x -- PATCH #003-B (GPT Review #003 Round 2) fixed the
+one residual finding from Round 1: TIME_BLOCK bootstrap blocked the
+dates present in the signature's own values (not the real trading
+calendar), which understates block structure for a rare/sparse
+signature. Also added a FORMAL_DEVELOPMENT provenance guard (timeframe/
+discovery_engine_version/discovery_config_version must match the actual
+run, not just differ in the Signature Set fingerprint). TEST 39-40
+added. See `docs/spec003_known_limitations.md`'s PATCH #003-B section.
+
+Prior round -- PATCH #003-A (GPT Review #003 Round 1 on commit
 `8182e52`) fixed 6 findings: BH-FDR key collision across horizons,
 row-count-based (not real session-date) TIME_BLOCK bootstrap blocks,
 missing FORMAL_DEVELOPMENT enforcement of frozen/pre-registered
@@ -60,6 +69,8 @@ the new BH-FDR key shape; TEST 36-38 added. See
 | 36 | BH-FDR multi-horizon routing | `test_36_bh_multi_horizon_routing.py` | **PASS** | Added by PATCH #003-A (finding #1). Real pipeline run, one signature across 5 horizons: each `EvidenceProfile.baseline_comparison.family_id` matches ITS OWN `horizon_bars`, and (singleton family) `adjusted_p == raw_p`. Fails against the pre-patch signature_id-only key (verified: reverting the lookup key produces `adjusted_p=None` on 4/5 profiles). |
 | 37 | FORMAL_DEVELOPMENT rejects post-hoc signatures | `test_37_formal_development_rejects_post_hoc.py` | **PASS** (2 sub-tests) | Added by PATCH #003-A (finding #3). `run_evaluation()` raises `ValueError` for a signature with `creation_mode=EXPLORATORY_POST_HOC`, and separately for one claiming `PRE_REGISTERED` but with `created_before_outcome_evaluation=False`. |
 | 38 | Exact entry-bar required | `test_38_exact_entry_bar_required.py` | **PASS** (2 sub-tests) | Added by PATCH #003-A (finding #6). No bar dated exactly `observation_as_of` (a halt/gap) -> `INVALID_INPUT`, never a silently-shifted at-or-before entry; an exact match is used normally. |
+| 39 | TIME_BLOCK blocks the real session calendar | `test_39_time_block_real_session_calendar.py` | **PASS** (4 sub-tests) | Added by PATCH #003-B. Sparse event dates placed within a real calendar, not treated as consecutive; `block_length_bars` counts market sessions (confirmed via composition statistics, not just the mean); same-day cross-security values always drawn together in equal multiples; a gap session with no value contributes nothing without erroring. Verified to reproduce the pre-patch bug when `session_dates` is derived from the event dates themselves. |
+| 40 | FORMAL_DEVELOPMENT provenance guard | `test_40_formal_development_provenance_guard.py` | **PASS** (4 sub-tests) | Added by PATCH #003-B. `run_evaluation()` rejects a signature whose `discovery_config_version`, `discovery_engine_version`, or `timeframe` doesn't match the actual run; matching provenance is accepted normally. |
 
 ## How to reproduce
 

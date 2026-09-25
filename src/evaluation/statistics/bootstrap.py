@@ -31,38 +31,48 @@ def _mean(values: list[float]) -> float:
 
 def time_block_bootstrap_replicates(
     dated_values: list[tuple[str, float]],
+    session_dates: list[str],
     block_length_bars: int,
     iterations: int,
     seed: int,
     statistic: Callable[[list[float]], float] = _mean,
 ) -> list[float]:
-    """A block is a run of `block_length_bars` CONSECUTIVE SESSION DATES
-    (a real market-time interval), not a run of `block_length_bars`
-    (date, value) ROWS (GPT Review #003 Round 1, mandatory finding #2:
-    the earlier version sorted then chunked by row count, so same-day
-    cross-security observations -- e.g. NVDA/AMD/AVGO/MRVL/CRDO all
-    showing an episode the same week the market jumps -- could be split
-    across different blocks, destroying the exact common-shock structure
-    TIME_BLOCK clustering exists to preserve).
+    """A block is a run of `block_length_bars` CONSECUTIVE MARKET
+    SESSIONS from `session_dates` (the run's REAL trading calendar --
+    e.g. the benchmark's own bar dates within Development), not a run of
+    `block_length_bars` (date, value) ROWS, and not a run of the dates
+    merely PRESENT in `dated_values` (GPT Review #003 Round 2, mandatory
+    finding: for a sparse/rare signature, the dates it happens to have
+    values on can span months with large real-calendar gaps between
+    them -- treating THOSE as "consecutive" would mean `block_length_bars
+    =20` groups 20 scattered event dates instead of ~20 trading sessions,
+    losing the actual local-time-window/regime structure TIME_BLOCK
+    clustering exists to preserve). A session with zero values
+    contributes nothing when its block is drawn -- expected and normal,
+    not an error.
 
-    All values sharing a date are grouped together first; blocks are
-    then built over the resulting SESSION DATES, each carrying every
-    value observed on its dates. Each replicate draws as many blocks
-    (with replacement) as there are blocks in the original partition,
+    All values sharing a date are grouped together first (GPT Review
+    #003 Round 1, mandatory finding #2: same-day cross-security
+    observations -- e.g. NVDA/AMD/AVGO/MRVL/CRDO all showing an episode
+    the same week the market jumps -- must never be split across
+    different blocks). Each replicate draws as many blocks (with
+    replacement) as there are blocks in the real-calendar partition,
     concatenating ALL of each drawn block's values -- the replicate's
-    total count is not forced to match the original count exactly (a
-    session can carry zero, one, or several values), which is the
-    standard behavior of a moving block bootstrap over unevenly-spaced
-    panel data."""
-    if not dated_values or block_length_bars <= 0 or iterations <= 0:
+    total count is not forced to match the original count exactly, which
+    is the standard behavior of a moving block bootstrap over
+    unevenly-spaced panel data."""
+    if not dated_values or not session_dates or block_length_bars <= 0 or iterations <= 0:
         return []
     values_by_date: dict[str, list[float]] = {}
     for d, v in dated_values:
         values_by_date.setdefault(d, []).append(v)
-    session_dates = sorted(values_by_date)
-    n_sessions = len(session_dates)
-    date_blocks = [session_dates[i:i + block_length_bars] for i in range(0, n_sessions, block_length_bars)]
+
+    ordered_sessions = sorted(set(session_dates))
+    n_sessions = len(ordered_sessions)
+    date_blocks = [ordered_sessions[i:i + block_length_bars] for i in range(0, n_sessions, block_length_bars)]
     n_blocks = len(date_blocks)
+    if n_blocks == 0:
+        return []
 
     rng = random.Random(seed)
     replicates: list[float] = []
@@ -70,7 +80,7 @@ def time_block_bootstrap_replicates(
         resampled: list[float] = []
         for _ in range(n_blocks):
             for d in date_blocks[rng.randrange(n_blocks)]:
-                resampled.extend(values_by_date[d])
+                resampled.extend(values_by_date.get(d, []))
         if resampled:
             replicates.append(statistic(resampled))
     return replicates
@@ -86,10 +96,10 @@ def percentile_ci(replicates: list[float], alpha: float = 0.05) -> ConfidenceInt
 
 
 def bootstrap_ci_for_series(
-    dated_values: list[tuple[str, float]], block_length_bars: int, iterations: int, seed: int,
+    dated_values: list[tuple[str, float]], session_dates: list[str], block_length_bars: int, iterations: int, seed: int,
     statistic: Callable[[list[float]], float] = _mean, alpha: float = 0.05,
 ) -> ConfidenceInterval:
-    replicates = time_block_bootstrap_replicates(dated_values, block_length_bars, iterations, seed, statistic)
+    replicates = time_block_bootstrap_replicates(dated_values, session_dates, block_length_bars, iterations, seed, statistic)
     return percentile_ci(replicates, alpha)
 
 
@@ -103,6 +113,7 @@ def _stable_bin_offset(label: str, sorted_labels: list[str]) -> int:
 
 def stratified_baseline_bootstrap_replicates(
     baseline_dated_values_by_bin: dict[str, list[tuple[str, float]]],
+    session_dates_by_bin: dict[str, list[str]],
     weights_by_bin: dict[str, float],
     block_length_bars: int,
     iterations: int,
@@ -112,16 +123,19 @@ def stratified_baseline_bootstrap_replicates(
     """The CI-producing counterpart of
     baseline.universe.stratified_baseline_point_estimate: one TIME_BLOCK
     bootstrap replicate per bin per iteration (each bin resampled
-    independently, via a stable per-bin seed offset), combined using the
-    signature's FIXED bin weights (never resampled themselves)."""
+    independently over ITS OWN slice of the real session calendar --
+    `session_dates_by_bin[label]`, GPT Review #003 Round 2 -- via a
+    stable per-bin seed offset), combined using the signature's FIXED
+    bin weights (never resampled themselves)."""
     sorted_labels = sorted(baseline_dated_values_by_bin.keys())
     per_bin_replicates: dict[str, list[float]] = {}
     for label in sorted_labels:
         dated_values = baseline_dated_values_by_bin[label]
+        bin_sessions = session_dates_by_bin.get(label, [])
         bin_seed = seed + _stable_bin_offset(label, sorted_labels)
         per_bin_replicates[label] = time_block_bootstrap_replicates(
-            dated_values, block_length_bars, iterations, bin_seed, statistic,
-        ) if dated_values else []
+            dated_values, bin_sessions, block_length_bars, iterations, bin_seed, statistic,
+        ) if dated_values and bin_sessions else []
 
     combined: list[float] = []
     for r in range(iterations):

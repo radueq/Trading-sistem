@@ -53,8 +53,9 @@ def _evaluate_example(name: str, mean_by_horizon: dict[int, float], noise: float
     for h in HORIZONS:
         values = _synthetic_series(mean_by_horizon[h], noise, N_EPISODES, seed + h)
         dated = list(zip(_dates(N_EPISODES), values))
+        session_dates = [d for d, _ in dated]
         d = describe(values)
-        ci = bootstrap_ci_for_series(dated, block_length_bars=5, iterations=1000, seed=seed + h)
+        ci = bootstrap_ci_for_series(dated, session_dates, block_length_bars=5, iterations=1000, seed=seed + h)
         observed, raw_p = permutation_p_value(values, baseline, iterations=1000, seed=seed + h + 1)
         lines.append(
             f"- **{h} bar(s)**: mean={d.mean:.4f}, median={d.median:.4f}, "

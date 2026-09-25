@@ -13,7 +13,8 @@ from evaluation.statistics.bootstrap import time_block_bootstrap_replicates, per
 
 def test_whole_series_as_one_block_collapses_ci_to_a_point():
     dated = [(f"2024-01-{d:02d}", float(d)) for d in range(1, 21)]  # 20 points, mean=10.5
-    replicates = time_block_bootstrap_replicates(dated, block_length_bars=len(dated), iterations=100, seed=1)
+    session_dates = [d for d, _ in dated]
+    replicates = time_block_bootstrap_replicates(dated, session_dates, block_length_bars=len(dated), iterations=100, seed=1)
     assert len(replicates) == 100
     assert all(r == replicates[0] for r in replicates), "a single-block series must reproduce the same statistic every replicate"
     ci = percentile_ci(replicates)
@@ -22,5 +23,6 @@ def test_whole_series_as_one_block_collapses_ci_to_a_point():
 
 def test_small_blocks_produce_variation_multi_block_series():
     dated = [(f"2024-01-{d:02d}", float(d)) for d in range(1, 21)]
-    replicates = time_block_bootstrap_replicates(dated, block_length_bars=2, iterations=200, seed=1)
+    session_dates = [d for d, _ in dated]
+    replicates = time_block_bootstrap_replicates(dated, session_dates, block_length_bars=2, iterations=200, seed=1)
     assert len(set(replicates)) > 1, "with multiple resampleable blocks, replicates should vary"
