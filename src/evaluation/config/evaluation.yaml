@@ -1,0 +1,72 @@
+# TEST_CONFIG -- Level 1 engineering defaults for the Evaluation Engine
+# (Spec #003 v1.1). Not validated trading rules; nothing here is a
+# claim about what produces edge. Changing any value here changes
+# config_version (SHA-256 hash of this file's raw content), so a silent
+# parameter change is structurally impossible to hide (mirrors Spec
+# #002's config/loader.py -- Spec #003 SS45's own convention).
+
+evaluation_mode: FORMAL_DEVELOPMENT  # or EXPLORATORY
+
+timeframe: "1D"
+
+# Horizons are BARS, never calendar days (Spec #003 SS2-4) -- at 1D,
+# 1 bar happens to equal 1 trading day, but the engine never assumes
+# that equivalence anywhere in its logic (see docs/spec003_architecture.md).
+horizons:
+  unit: BARS
+  values: [1, 2, 3, 5, 10]
+
+support:
+  minimum_episode_count: 30
+  minimum_unique_securities: 10
+
+episode:
+  max_gap_bars: 1
+  representative: FIRST
+
+# Radu's amendment to the original spec draft (§74B/D review): bootstrap
+# clustering is TIME_BLOCK, not episode-level or security-level alone --
+# consecutive bars are resampled as whole blocks, preserving common
+# market/regime shocks that hit many securities' episodes at once.
+# block_length_bars must never be tuned against observed results.
+bootstrap:
+  clustering: TIME_BLOCK
+  block_length_bars: 20
+  iterations: 2000
+  seed: 42
+
+# Radu's explicit correction: raw significance is a SEPARATE permutation/
+# randomization test, never informally derived from whether a bootstrap
+# CI crosses zero.
+comparison:
+  method: PERMUTATION
+  iterations: 2000
+  seed: 43
+
+multiple_testing:
+  method: BENJAMINI_HOCHBERG
+  fdr_q: 0.05
+  family:
+    - timeframe
+    - horizon_bars
+    - outcome_type
+    - evaluation_run
+
+# Also used to stratify TEMPORALLY_STRATIFIED_ELIGIBLE_BASELINE (Radu's
+# amendment to §33/§74C) -- the baseline's control pool is matched to a
+# signature's own temporal-bin composition, using this same partition,
+# rather than introducing a second independent binning scheme.
+stability:
+  temporal_bins: 3
+
+# Real calendar boundaries deliberately OPEN (Spec #003 SS13) -- null
+# means no Locked-OOS wall exists yet; every observation is Development.
+# Set explicitly (e.g. in a test's own config override) to exercise the
+# boundary.
+research_period:
+  development_start: null
+  development_end: null
+  locked_oos_start: null
+  locked_oos_end: null
+
+benchmark: TEST_CONFIG
