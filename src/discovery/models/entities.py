@@ -109,7 +109,41 @@ class DescriptiveMetrics:
 
 
 @dataclass(frozen=True)
+class DiscoveryObservation:
+    """The pre-budget layer (PATCH #002-B, Radu's decision, 2026-09-25,
+    approving Spec #003's IMPLEMENTATION BLOCKER §74A): one entry per
+    ELIGIBLE security at `as_of` -- everything Discovery computed for it,
+    before Candidate Budget ever runs. This is the statistical dataset
+    Evaluation (Spec #003) must consume; `max_candidates` must never be
+    able to change what this layer contains (see
+    tests/spec002/test_24_pre_budget_observation_isolation.py and Spec
+    #003 TEST 33). Deliberately a distinct type from `DiscoveryCandidate`
+    (identical fields today) rather than reusing that name, so a
+    statistical dataset can never be confused with an operational,
+    budget-selected candidate list -- see `discovery.engine.run_discovery`'s
+    docstring for how one is built from the other."""
+    security_id: str
+    ticker_as_of: Optional[str]
+    as_of: str
+    timeframe: str
+    feature_vector: dict[str, float]
+    normalized_feature_vector: dict[str, float]
+    state_signature: dict[str, str]
+    transition_vector: dict[str, TransitionEntry]
+    active_lanes: list[str]
+    descriptive_metrics: DescriptiveMetrics
+    reason_codes: list[str]
+    config_version: str
+    feature_engine_version: str
+    discovery_engine_version: str
+
+
+@dataclass(frozen=True)
 class DiscoveryCandidate:
+    """Post-budget, operational output of `run_discovery()` -- the same
+    fields as `DiscoveryObservation`, after `candidate.selector.select_candidates()`
+    has ranked/trimmed/diversified. Never the statistical dataset for
+    Evaluation (Spec #003) -- see `DiscoveryObservation` above."""
     security_id: str
     ticker_as_of: Optional[str]
     as_of: str

@@ -171,10 +171,27 @@ forbids that.
   general architecture -- scope was strictly the volume field plus its
   one consumer. TEST 23 added.
 
+## PATCH #002-B (Radu's decision, 2026-09-25)
+
+- **New pre-budget public entry point.** `discovery.engine.compute_discovery_observations()`
+  added, returning `list[DiscoveryObservation]` -- every ELIGIBLE
+  security at `as_of`, before Candidate Budget/diversity. `run_discovery()`
+  is now a thin wrapper around it (unchanged external behavior -- full
+  pre-existing suite re-run and confirmed identical, 64 passed/1 skipped,
+  before this patch added TEST 24). Motivation: Spec #003's Evaluation
+  Engine (Implementation Specification #003 v1.1, IMPLEMENTATION BLOCKER
+  §74A) needs the full pre-budget population as its statistical dataset --
+  `max_candidates` is a downstream/LLM compute-budget knob (Spec #002
+  SS21), not a statistical sampling decision, and must never be able to
+  change what gets evaluated. `DiscoveryObservation` is a deliberately
+  distinct type from `DiscoveryCandidate` (identical fields today) so a
+  statistical dataset can never be confused with an operational,
+  budget-selected list. See `docs/spec002_architecture.md` and TEST 24.
+
 ## Test coverage
 
-- All 23 required tests (the 20 named in Spec #002 SS38 plus a
-  structural no-LLM-imports check, SS41, plus TEST 22 and TEST 23 from
-  GPT Review #002 Round 1 / PATCH #001-C) pass -- see
+- All 24 tests (the 20 named in Spec #002 SS38 plus a structural
+  no-LLM-imports check, SS41, plus TEST 22/PATCH #002-A, TEST 23/PATCH
+  #001-C, and TEST 24/PATCH #002-B) pass -- see
   `docs/spec002_test_report.md`. None are `PENDING`; Level 1's
   synthetic universe is sufficient to exercise every required property.

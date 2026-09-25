@@ -29,8 +29,32 @@ would have silently distorted which eligible securities look "notable." Fixed;
 TEST 22 proves it (fails against the pre-patch ordering, passes against the fix).
 
 `discovery.engine.run_discovery(conn, security_ids, as_of, benchmark_security_id, config)`
-is the single entry point. Zero LLM calls anywhere in this path (Spec
-#002 SS36/SS41) -- pure Python/pandas numerical computation.
+is the single entry point for operational (post-budget) output. Zero LLM
+calls anywhere in this path (Spec #002 SS36/SS41) -- pure Python/pandas
+numerical computation.
+
+**Two public entry points, one pipeline** (PATCH #002-B, Radu's
+decision, 2026-09-25, approving Spec #003's IMPLEMENTATION BLOCKER
+§74A): `compute_discovery_observations(conn, security_ids, as_of,
+benchmark_security_id, config) -> list[DiscoveryObservation]` runs
+everything through eligibility, cross-sectional RS, state mapping, and
+convergence -- every ELIGIBLE security, BEFORE Candidate Budget/diversity.
+`run_discovery()` is now a thin wrapper: it calls
+`compute_discovery_observations()`, converts each `DiscoveryObservation`
+to a `DiscoveryCandidate` (identical fields, a plain copy -- see
+`models/entities.py`), then applies `select_candidates()`. Motivation:
+Spec #003's Evaluation Engine needs the full pre-budget population as its
+statistical dataset -- `max_candidates` (a downstream/LLM compute-budget
+knob, Spec #002 SS21) must never be able to change what gets
+statistically evaluated. TEST 24 (this module) and Spec #003's own TEST
+33 both prove `compute_discovery_observations()`'s output is unaffected
+by any `candidate_budget` config. `DiscoveryCandidate` is kept as a
+**distinct type** from `DiscoveryObservation` (not reused) on purpose:
+a statistical dataset and an operational, budget-selected list must never
+be structurally interchangeable, even though every field is identical
+today. `run_discovery()`'s own external behavior (signature, output,
+values) is unchanged by this patch -- verified by running the full
+pre-existing suite (64 passed, 1 skipped) before and after.
 
 ## Package structure
 
@@ -70,6 +94,7 @@ tests/spec002/
   test_01..21_*.py                 the 21 required tests (20 from SS38 + no-LLM)
   test_22_*.py                       PATCH #002-A: cross-sectional RS eligibility isolation
   test_23_*.py                       PATCH #001-C: split alone doesn't create false VOLUME_ANOMALY
+  test_24_*.py                       PATCH #002-B: max_candidates cannot change pre-budget observations
   generate_report_artifacts.py       produces docs/spec002_examples.md + volume report
 ```
 

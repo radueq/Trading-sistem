@@ -1,7 +1,16 @@
 """Spec #002 -- Feature Engine + Outcome-Blind Discovery Engine orchestration.
 
-run_discovery() is the sole entry point downstream tooling should call.
-It is PIT-only: this module, and every module under src/discovery/, may
+Two public entry points (PATCH #002-B, Radu's decision, 2026-09-25,
+approving Spec #003's IMPLEMENTATION BLOCKER §74A):
+- run_discovery() -- post-budget, operational DiscoveryCandidate list.
+  What every existing Spec #002 consumer/test uses; unchanged behavior.
+- compute_discovery_observations() -- pre-budget DiscoveryObservation
+  list, every ELIGIBLE security, never trimmed by Candidate Budget. This
+  is what Spec #003's Evaluation Engine (statistical dataset) must
+  consume -- see models/entities.py's DiscoveryObservation docstring.
+run_discovery() is a thin wrapper: compute observations, convert to the
+operational type, then apply select_candidates(). Both are PIT-only:
+this module, and every module under src/discovery/, may
 reach Data Foundation ONLY through data_foundation.pit.access, never
 data_foundation.model.repository or data_foundation.storage.db directly
 (Spec #002 SS7) -- enforced structurally by
@@ -36,7 +45,13 @@ from discovery.candidate.selector import select_candidates
 from discovery.config.loader import DiscoveryConfig, load_config
 from discovery.eligibility.engine import evaluate_eligibility
 from discovery.features import momentum, relative_strength, trend, volatility, volume
-from discovery.models.entities import DiscoveryCandidate, EligibilityResult, StateSignature, TransitionEntry
+from discovery.models.entities import (
+    DiscoveryCandidate,
+    DiscoveryObservation,
+    EligibilityResult,
+    StateSignature,
+    TransitionEntry,
+)
 from discovery.normalization.cross_sectional import cross_sectional_percentile
 from discovery.normalization.rolling_percentile import PercentilePoint, rolling_percentile
 from discovery.states.mapper import compute_lane_states, compute_persistence
@@ -164,11 +179,34 @@ def _compute_security_local(bars, benchmark_df: pd.DataFrame, config: DiscoveryC
     }
 
 
-def run_discovery(
+def _observation_to_candidate(obs: DiscoveryObservation) -> DiscoveryCandidate:
+    """DiscoveryCandidate is DiscoveryObservation after Candidate Budget --
+    identical fields today (PATCH #002-B, Radu's decision, 2026-09-25).
+    A plain field-for-field copy, not a transformation: the distinction
+    between the two types is semantic (statistical dataset vs operational,
+    budget-selected output), not structural."""
+    return DiscoveryCandidate(
+        security_id=obs.security_id, ticker_as_of=obs.ticker_as_of, as_of=obs.as_of, timeframe=obs.timeframe,
+        feature_vector=obs.feature_vector, normalized_feature_vector=obs.normalized_feature_vector,
+        state_signature=obs.state_signature, transition_vector=obs.transition_vector,
+        active_lanes=obs.active_lanes, descriptive_metrics=obs.descriptive_metrics,
+        reason_codes=obs.reason_codes, config_version=obs.config_version,
+        feature_engine_version=obs.feature_engine_version, discovery_engine_version=obs.discovery_engine_version,
+    )
+
+
+def compute_discovery_observations(
     conn, security_ids: list[str], as_of: str, benchmark_security_id: str,
     config: Optional[DiscoveryConfig] = None,
-) -> list[DiscoveryCandidate]:
-    """THE single entry point. PIT-only, outcome-blind, zero LLM calls."""
+) -> list[DiscoveryObservation]:
+    """The pre-budget layer (PATCH #002-B, Radu's decision, 2026-09-25,
+    approving Spec #003's IMPLEMENTATION BLOCKER §74A): every ELIGIBLE
+    security at `as_of`, fully computed, BEFORE Candidate Budget/diversity
+    ever run. This is what Spec #003's Evaluation Engine must consume --
+    never `run_discovery()`'s post-budget output, and never affected by
+    `config.discovery["candidate_budget"]["max_candidates"]` (TEST 33,
+    Spec #003; tests/spec002/test_24_pre_budget_observation_isolation.py).
+    `run_discovery()` is a thin wrapper around this function -- see below."""
     config = config or load_config()
     states_config = config.states
 
@@ -240,7 +278,7 @@ def run_discovery(
     sample_count = len(eligible_ids)
     min_sample_support = config.discovery["min_sample_support"]
 
-    candidates: list[DiscoveryCandidate] = []
+    observations: list[DiscoveryObservation] = []
     for sid in eligible_ids:
         r = locals_by_security[sid]
         sig = state_signatures[sid]
@@ -254,7 +292,7 @@ def run_discovery(
         )
         reason_codes = reason_codes_for(sig, r["transitions"], active_lanes, states_config, config.discovery)
 
-        candidates.append(DiscoveryCandidate(
+        observations.append(DiscoveryObservation(
             security_id=sid,
             ticker_as_of=pit.get_ticker_as_of(conn, sid, as_of),
             as_of=as_of, timeframe=TIMEFRAME,
@@ -270,4 +308,20 @@ def run_discovery(
             discovery_engine_version=DISCOVERY_ENGINE_VERSION,
         ))
 
+    return observations
+
+
+def run_discovery(
+    conn, security_ids: list[str], as_of: str, benchmark_security_id: str,
+    config: Optional[DiscoveryConfig] = None,
+) -> list[DiscoveryCandidate]:
+    """THE single entry point for operational (post-budget) output. PIT-only,
+    outcome-blind, zero LLM calls. A thin wrapper: compute every eligible
+    observation, convert to the operational type, then apply Candidate
+    Budget/diversity -- `config.discovery["candidate_budget"]` affects only
+    this function's return value, never `compute_discovery_observations()`'s
+    (PATCH #002-B, Spec #003 IMPLEMENTATION BLOCKER §74A)."""
+    config = config or load_config()
+    observations = compute_discovery_observations(conn, security_ids, as_of, benchmark_security_id, config)
+    candidates = [_observation_to_candidate(obs) for obs in observations]
     return select_candidates(candidates, config.discovery)
