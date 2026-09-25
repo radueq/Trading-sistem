@@ -1,0 +1,48 @@
+# TEST_CONFIG -- Level 1 Hypothesis Generation guardrails (Spec #004 SS90).
+# None of these are validated trading rules; they are research controls
+# against combinatorial explosion and silent post-hoc rule invention.
+# Editing this file changes hypothesis_config_version (a hash of the raw
+# text) -- a silent parameter change is structurally impossible to hide,
+# same discipline as discovery/config and evaluation/config.
+
+mode: REVIEW_ONLY
+
+allowed_directions:
+  - LONG
+  - SHORT
+
+allowed_entry_execution:
+  - NEXT_BAR_OPEN
+
+horizon_reference_point: ENTRY_BAR
+
+horizon_candidates:
+  unit: BARS
+  allowed_values: [1, 2, 3, 5, 10]
+
+exit_families:
+  - TIME_EXIT
+  - SIGNAL_INVALIDATION
+
+exit_execution_policy: BAR_CLOSE
+
+risk_exit:
+  enabled: false
+
+hypothesis_complexity:
+  max_entry_conditions: 3
+  max_optional_confirmation_conditions: 1
+
+hypothesis_budget:
+  max_hypotheses_per_signature: 3
+  max_exit_families_per_hypothesis: 2
+  max_variants_per_family: 6
+
+# Research Queue eligibility (Spec #004 SS56-59) -- DATA-QUALITY gates
+# only. Never adjusted after seeing which signatures pass/fail (Radu's
+# explicit instruction) -- frozen/versioned via this same config_version.
+research_queue_eligibility:
+  maximum_missingness_ratio: 0.5
+  minimum_valid_episode_n: 30
+  minimum_unique_securities: 10
+  require_stability_bins: true

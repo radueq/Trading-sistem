@@ -1,0 +1,113 @@
+"""Spec #004 SS71-72 -- deterministic pre-preregistration validation.
+
+Runs on an already-assembled StrategyHypothesis + its eagerly-materialized
+StrategyVariants, as the LAST gate before status may become PREREGISTERED
+-- with full registry context available (per-signature hypothesis budget,
+SS52). Distinct from `proposals/validator.py` (which runs on a raw
+HypothesisProposal, before any registry exists): this module re-checks the
+outcome-contamination rule (SS72) defensively on the fully-built objects,
+not just the proposal that led to them.
+"""
+from __future__ import annotations
+
+from hypothesis.models.entities import (
+    Direction,
+    ExitFamily,
+    HypothesisStatus,
+    InvalidationCondition,
+    LaneStateCondition,
+    ReasonCodeCondition,
+    StrategyHypothesis,
+    StrategyVariant,
+)
+from hypothesis.registry.hypotheses import HypothesisRegistry
+
+# Spec #004 SS72 -- Evidence/outcome fields that must NEVER become part of
+# a runtime entry/exit signal condition (a research finding motivates a
+# hypothesis; it can never become a live feature).
+FORBIDDEN_OUTCOME_FIELD_NAMES = {
+    "adjusted_p", "raw_p", "forward_return", "relative_return", "mean_return",
+    "median_return", "win_rate", "standardized_effect", "baseline_mean",
+    "baseline_median", "expectancy", "sharpe", "valid_episode_n",
+    "opportunity_density", "review_priority",
+}
+
+
+def _scan_condition_for_outcome_contamination(
+    condition: "LaneStateCondition | ReasonCodeCondition | InvalidationCondition", where: str, errors: list[str],
+) -> None:
+    for attr in ("lane", "label", "reason_code"):
+        token = getattr(condition, attr, None)
+        if isinstance(token, str) and token.lower() in FORBIDDEN_OUTCOME_FIELD_NAMES:
+            errors.append(
+                f"{where}: {attr}={token!r} looks like an Evidence/outcome field, forbidden in a "
+                f"runtime signal condition (SS72, TEST 18-20)"
+            )
+    holds_labels = getattr(condition, "holds_labels", None) or ()
+    for lbl in holds_labels:
+        if isinstance(lbl, str) and lbl.lower() in FORBIDDEN_OUTCOME_FIELD_NAMES:
+            errors.append(f"{where}: holds_labels contains {lbl!r}, forbidden outcome field (SS72)")
+
+
+def validate_for_preregistration(
+    hypothesis: StrategyHypothesis, variants: tuple[StrategyVariant, ...],
+    registry: HypothesisRegistry, hypothesis_config: dict,
+) -> tuple[bool, tuple[str, ...]]:
+    errors: list[str] = []
+
+    if hypothesis.direction not in (Direction.LONG.value, Direction.SHORT.value):
+        errors.append(f"direction {hypothesis.direction!r} is not a valid Direction (TEST 4)")
+
+    if not hypothesis.evidence_provenance.timeframe:
+        errors.append("evidence_provenance.timeframe is required (TEST 41)")
+
+    if not hypothesis.horizon_candidate_set.values:
+        errors.append("horizon_candidate_set.values must not be empty (TEST 11)")
+
+    if not variants:
+        errors.append(
+            "no StrategyVariant supplied -- at least the TIME_EXIT family must already be "
+            "materialized before PREREGISTERED (SS104-109)"
+        )
+
+    variant_ids = {v.strategy_variant_id for v in variants}
+    if set(hypothesis.variant_ids) != variant_ids:
+        errors.append(
+            f"hypothesis.variant_ids {sorted(hypothesis.variant_ids)} does not match the supplied "
+            f"variants {sorted(variant_ids)} -- variants must be materialized BEFORE freeze, never "
+            f"added or removed afterward (SS106-109, TEST 28)"
+        )
+
+    for c in hypothesis.entry_definition.core_conditions + hypothesis.entry_definition.confirmation_conditions:
+        _scan_condition_for_outcome_contamination(c, "entry_definition", errors)
+
+    for v in variants:
+        if v.exit_hypothesis.exit_family not in (ExitFamily.TIME_EXIT.value, ExitFamily.SIGNAL_INVALIDATION.value):
+            errors.append(f"variant {v.strategy_variant_id!r} has invalid exit_family {v.exit_hypothesis.exit_family!r} (TEST 15)")
+        if v.exit_hypothesis.exit_family == ExitFamily.SIGNAL_INVALIDATION.value and v.exit_hypothesis.max_holding_bars is None:
+            errors.append(
+                f"variant {v.strategy_variant_id!r}: SIGNAL_INVALIDATION requires max_holding_bars "
+                f"(Radu's SS110-B -- no unbounded holding period)"
+            )
+        for ic in v.exit_hypothesis.invalidation_conditions:
+            _scan_condition_for_outcome_contamination(ic, f"variant {v.strategy_variant_id}.invalidation_conditions", errors)
+
+    has_time_exit = any(v.exit_hypothesis.exit_family == ExitFamily.TIME_EXIT.value for v in variants)
+    if variants and not has_time_exit:
+        errors.append("TIME_EXIT is the mandatory baseline exit family (SS24) -- no variant found for it")
+
+    same_signature_families = [
+        h for h in registry.all_hypotheses()
+        if h.parent_signature_id == hypothesis.parent_signature_id
+        and h.hypothesis_id != hypothesis.hypothesis_id
+        and h.status in (HypothesisStatus.PREREGISTERED.value, HypothesisStatus.HANDOFF_TO_BACKTEST.value)
+    ]
+    max_per_sig = hypothesis_config["hypothesis_budget"]["max_hypotheses_per_signature"]
+    if len(same_signature_families) + 1 > max_per_sig:
+        errors.append(
+            f"parent_signature_id={hypothesis.parent_signature_id!r} would have "
+            f"{len(same_signature_families) + 1} PREREGISTERED hypotheses, exceeds "
+            f"max_hypotheses_per_signature={max_per_sig} (SS52)"
+        )
+
+    return (not errors, tuple(errors))
