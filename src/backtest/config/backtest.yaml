@@ -1,0 +1,40 @@
+# Spec #005 v1.0 -- Backtest guardrails.
+#
+# Batch 1 scope: contracts, provenance guards, calendar-input contract.
+# Most V1 semantics are deliberately FIXED as Python constants
+# (backtest.models.entities), not tunable config -- Spec #005 SS9/SS13/
+# SS18 are explicit that the execution profile, cost-accrual convention
+# and selection rule's ranking metric/operator/tie-break must never be
+# knobs fit after seeing results. This file documents those frozen V1
+# choices in one place and holds the few values later batches actually
+# read at runtime.
+
+execution_semantics_profile_version: "v1"
+
+# Spec #005 SS14: ONE_ACTIVE_TRADE_PER_SECURITY_PER_VARIANT -- overlap
+# suppresses trade CREATION only, never the underlying SignalEvent.
+overlap_policy: "ONE_ACTIVE_TRADE_PER_SECURITY_PER_VARIANT"
+
+# Spec #005 SS12: V1 is price-return only, never total-return.
+return_basis: "SPLIT_ADJUSTED_PRICE_RETURN"
+
+calendar:
+  # Spec #005 SS11/SS24: a formal run requires a separate, verified,
+  # versioned calendar -- never inferred from benchmark bars or a
+  # vote/union of security series. Synthetic test fixtures may declare
+  # their own calendar but can never satisfy this.
+  required_source_for_formal_run: "OFFICIAL_VERIFIED"
+
+# Spec #005 SS18 -- documented here, enforced by
+# backtest.models.entities.validate_selection_rule() against the fixed
+# Python constants, never against this file (config drift here must
+# never silently relax the guard).
+selection_rule_fixed:
+  ranking_metric: "MEDIAN_NET_RETURN"
+  minimum_selection_metric: 0.0
+  threshold_operator: "STRICTLY_GREATER"
+  tie_break: "LEXICOGRAPHIC_STRATEGY_VARIANT_ID"
+
+# Spec #005 SS13 -- V1 borrow model's fixed accrual convention.
+cost_model_fixed:
+  borrow_accrual_convention: "CALENDAR_DAYS_365"
