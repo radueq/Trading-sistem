@@ -92,6 +92,16 @@ unchanged and still passing.
 |---|---|---|
 | `PITPriceBar` exposed `split_adjusted_close`/`split_adjusted_volume` but only `raw_open`/`raw_high`/`raw_low` -- surfaced while architecting Spec #005's Backtester: an executable `NEXT_BAR_OPEN` entry price and MAE/MFE both need adjusted open/high/low, and #005 cannot derive them from `split_adjusted_close` alone. | IMPLEMENTATION BLOCKER for Spec #005 (flagged explicitly, not silently patched around in #005) | Fixed in Data Foundation, before any #005 code was written: `split_adjusted_open/high/low` added to `PITPriceBar`, computed as `raw_open/high/low * split_factor` -- the SAME PIT-safe `split_factor` already used for `split_adjusted_close`, applied identically (a split scales an entire OHLC bar uniformly). No schema change, no new methodology, `raw_open/high/low` untouched, total-return-adjusted OHLC deliberately not added (no #005 v1 consumer -- price-return only). TEST 17. |
 
+**GPT Review verdict: PATCH #001-D -- ACCEPTED at `b1bb301`.** Full
+suite 282 passed, 1 skipped (TEST 8, `PENDING_LEVEL_2_DATA`, unaffected).
+One non-blocker point registered, not requested as a follow-up: TEST 17d
+covers "split still in the future relative to `as_of`," not separately
+the narrower `effective_date < as_of < available_at` case -- not needed
+since the new fields share the exact `factors` computation TEST 13a
+already validates for `split_adjusted_close`, with no parallel PIT logic
+of their own to diverge. Spec #005 blocker A (`NEXT_BAR_OPEN`, MAE, MFE,
+split-safe executable P&L) is closed.
+
 ## How to reproduce
 
 ```bash

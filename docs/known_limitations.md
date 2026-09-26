@@ -184,6 +184,18 @@ announcement-date-or-effective-date fallback with an explicit, nullable
   price-return strategies only (total-return remains
   `EXPERIMENTAL_NOT_APPROVED_FOR_RESEARCH`), so no consumer needs it yet.
 
+  **GPT Review verdict: PATCH #001-D -- ACCEPTED at `b1bb301`.** One
+  non-blocker point registered rather than requested as a fix: TEST 17d
+  exercises "split still in the future relative to `as_of`," not
+  separately the narrower `effective_date < as_of < available_at` case
+  (the event already happened but wasn't yet knowable). Not required as
+  a follow-up patch, since `split_adjusted_open/high/low` run through
+  the exact same as_of-scoped `factors` computation TEST 13a already
+  validates for `split_adjusted_close` -- there is no separate/parallel
+  PIT logic for the new fields that could diverge from it. Blocker A for
+  Spec #005 (`NEXT_BAR_OPEN`, MAE, MFE, split-safe executable P&L) is
+  closed; Spec #005 design work may proceed.
+
 ## Listing status
 
 - `available_at` (added 2026-09-21, GPT Review #001 PATCH B) gates
