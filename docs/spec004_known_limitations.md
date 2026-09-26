@@ -103,11 +103,12 @@ execution) or later specs this one deliberately does not reach into.
 ## Test coverage
 
 - All 44 required tests (Spec #004 SS97) plus 8 tests added for Radu's
-  SS110 architecture-review amendments (TEST 45-52), plus 33 tests added
-  for PATCH #004-A (TEST 53-61) pass -- see `docs/spec004_test_report.md`.
-  None are `PENDING`; hand-constructed fixtures are sufficient to
-  exercise every required property, since no PIT/pipeline dependency
-  exists in this package at all.
+  SS110 architecture-review amendments (TEST 45-52), 33 tests added for
+  PATCH #004-A (TEST 53-61), and 19 tests added for PATCH #004-B
+  (TEST 62-66) pass -- see `docs/spec004_test_report.md`. None are
+  `PENDING`; hand-constructed fixtures are sufficient to exercise every
+  required property, since no PIT/pipeline dependency exists in this
+  package at all.
 
 ## PATCH #004-A (GPT Review #004 Round 1)
 
@@ -179,3 +180,60 @@ correction -- all fixed:
 No changes requested to, or made in, Spec #001-#003's architecture, and
 Spec #005 remains out of scope -- per Radu's own explicit instruction
 closing the review.
+
+## PATCH #004-B (GPT Review #004 Round 2)
+
+Four structural findings plus one minor point -- all fixed. Scope was
+strictly these five items; none of PATCH #004-A's 7 findings, nor
+Spec #001-#003's architecture, were reopened.
+
+1. **Fixed -- approval was never tied to the hypothesis it approved.**
+   `preregister_hypothesis()` received `draft`, `proposal_validation`,
+   and `consensus` with nothing verifying they all named the SAME
+   proposal -- a caller could hand in APPROVE for proposal A while
+   preregistering an unrelated draft B, since `ProposalValidationResult`
+   didn't even carry a `proposal_id`. Fixed: `ProposalValidationResult.
+   proposal_id` was added; `preregister_hypothesis()` now requires a
+   `proposal=` argument and verifies `proposal.proposal_id ==
+   proposal_validation.proposal_id == consensus.proposal_id ==
+   draft.hypothesis_provenance.proposal_id`, plus
+   `draft.hypothesis_provenance.approved_by`/`approved_at` must match
+   `consensus.human_decision.decided_by`/`decided_at`. TEST 62.
+2. **Fixed -- content-addressed identity was never re-verified at the
+   gate.** The design's central claim is that `hypothesis_id`/
+   `definition_hash`/`strategy_variant_id`/`variant_definition_hash` are
+   derived from content -- but nothing recomputed the fingerprint at
+   preregistration and compared it against what a caller supplied. A
+   hand-built object with an arbitrary, non-matching id/hash could pass
+   every other check and reach the registry. Fixed:
+   `validate_for_preregistration()` now recomputes
+   `hypothesis_fingerprint()` from the hypothesis's own fields and
+   hard-fails on any mismatch, then does the same per-variant with
+   `variant_fingerprint()` against the independently-recomputed (never
+   the hypothesis's own possibly-wrong) `definition_hash`. TEST 63.
+3. **Fixed -- a `StrategyVariant` could be silently rewritten after
+   registration if only `variant_tag` changed.** `variant_tag` is
+   deliberately excluded from `variant_definition_hash` (it is
+   methodological metadata, not trading meaning), but `register_variant()`
+   compared only that hash -- so the SAME id with the SAME hash but a
+   DIFFERENT `variant_tag` (e.g. EXPERIMENTAL_VARIANT rewritten to
+   BASELINE_VARIANT after seeing backtest results) was silently accepted.
+   Fixed: `register_variant()` now compares full object equality: any
+   difference at all, including `variant_tag`, is rejected. TEST 64.
+4. **Fixed -- persistence was durable but not atomic.**
+   `PersistentHypothesisRegistry.preregister()` wrote one
+   `hypothesis_preregistered` line followed by N separate
+   `variant_registered` lines -- a crash between appends could leave the
+   log with a hypothesis durable with only some of its variants, or
+   none. Fixed: a single `preregistration_committed` record now carries
+   `{hypothesis, variants[]}` together in ONE JSONL line; replay is now
+   genuinely all-or-nothing. TEST 65.
+5. **Fixed (minor) -- Research Queue did not reject a duplicate
+   `signature_id`.** `[packet_SIG_A, packet_SIG_A]` could silently
+   produce two queue entries for the same signature. `build_research_
+   queue()` now hard-fails on any duplicate `signature_id` among the
+   supplied packets. TEST 66.
+
+No changes requested to, or made in, PATCH #004-A's 7 findings or
+Spec #001-#003's architecture, per GPT's own closing note: "nu mai văd
+nevoie de încă un review arhitectural larg."

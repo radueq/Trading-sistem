@@ -99,7 +99,10 @@ def _build_and_preregister(raw_proposal: dict, registry: HypothesisRegistry, run
         HCFG.data["hypothesis_complexity"]["max_entry_conditions"],
         HCFG.data["hypothesis_complexity"]["max_optional_confirmation_conditions"], HCFG.config_version,
     )
-    prov = HypothesisProvenance(proposal.proposer, proposal.proposal_id, consensus.consensus_status, "radu", "2026-09-25T00:05:00Z")
+    prov = HypothesisProvenance(
+        proposal.proposer, proposal.proposal_id, consensus.consensus_status,
+        consensus.human_decision.decided_by, consensus.human_decision.decided_at,
+    )
     from hypothesis.models.entities import StrategyHypothesis
     draft = StrategyHypothesis(
         hypothesis_id=hid, hypothesis_version=1, definition_hash=dh, status=HypothesisStatus.DRAFT.value,
@@ -115,7 +118,7 @@ def _build_and_preregister(raw_proposal: dict, registry: HypothesisRegistry, run
 
     try:
         hyp = preregister_hypothesis(
-            draft, variants, proposal_validation=validation, consensus=consensus,
+            draft, variants, proposal=proposal, proposal_validation=validation, consensus=consensus,
             registry=registry, run_registry=run_reg, hypothesis_config=HCFG.data,
         )
     except PreregistrationError as exc:

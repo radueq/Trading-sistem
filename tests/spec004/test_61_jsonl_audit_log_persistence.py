@@ -37,11 +37,17 @@ def test_proposals_and_rejection_survive_a_fresh_replay(tmp_path, discovery_conf
 
 def test_preregistered_hypothesis_and_variants_survive_a_fresh_replay(tmp_path, entry_definition, horizon_candidates, evidence_provenance, hypothesis_config, run_registry):
     from hypothesis.models.entities import Direction, HypothesisComplexitySnapshot, HypothesisProvenance, HypothesisResearchMode, StrategyHypothesis
+    from hypothesis.proposals.normalize import normalize_proposal
     from hypothesis.proposals.validator import ProposalValidationResult
 
     log_path = tmp_path / "audit.jsonl"
     persistent = PersistentHypothesisRegistry.open(log_path)
 
+    # PATCH #004-B finding #1: `preregister()` now verifies the draft's
+    # own provenance names THIS proposal, and that approved_by/approved_at
+    # match the human decision actually supplied -- build a real,
+    # matching proposal instead of an unrelated "prop_1" placeholder.
+    proposal = normalize_proposal(make_proposal_raw(proposal_id="prop_1"))
     fp = hypothesis_fingerprint(evidence_provenance.signature_id, Direction.LONG.value, entry_definition, "NEXT_BAR_OPEN", horizon_candidates, evidence_provenance, hypothesis_config.config_version)
     hid, dh = build_hypothesis_id(fp)
     draft = StrategyHypothesis(
@@ -50,7 +56,7 @@ def test_preregistered_hypothesis_and_variants_survive_a_fresh_replay(tmp_path, 
         signature_set_id=evidence_provenance.signature_set_id, direction=Direction.LONG.value, direction_basis="EVIDENCE_SIGN",
         entry_definition=entry_definition, entry_execution_policy="NEXT_BAR_OPEN", horizon_candidate_set=horizon_candidates,
         variant_ids=(), evidence_provenance=evidence_provenance,
-        hypothesis_provenance=HypothesisProvenance("HUMAN:radu", None, None, "radu", "t"),
+        hypothesis_provenance=HypothesisProvenance("HUMAN:radu", proposal.proposal_id, None, "radu", "t"),
         constraints=HypothesisComplexitySnapshot(3, 1, hypothesis_config.config_version),
         created_at="t", created_by="radu", strategy_config_version=hypothesis_config.config_version,
     )
@@ -58,8 +64,8 @@ def test_preregistered_hypothesis_and_variants_survive_a_fresh_replay(tmp_path, 
     draft = dataclasses.replace(draft, variant_ids=tuple(v.strategy_variant_id for v in variants))
 
     frozen = persistent.preregister(
-        draft, variants, proposal_validation=ProposalValidationResult(True, "OK", ()),
-        consensus=compute_consensus("prop_1", (), human_decision=approved_human_decision()),
+        draft, variants, proposal=proposal, proposal_validation=ProposalValidationResult(True, "OK", (), proposal.proposal_id),
+        consensus=compute_consensus(proposal.proposal_id, (), human_decision=approved_human_decision(at="t")),
         run_registry=run_registry, hypothesis_config=hypothesis_config.data,
     )
 

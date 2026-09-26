@@ -6,26 +6,41 @@ completely skipping consensus, human approval, provenance checks, and
 `validate_for_preregistration()`. This test proves the fix from both
 directions: `register()` refuses the direct insert, and
 `preregister_hypothesis()` is the only path that succeeds -- and only
-when every one of its checks passes."""
+when every one of its checks passes.
+
+PATCH #004-B (GPT Review #004 Round 2): `preregister_hypothesis()` now
+also requires a `proposal=` argument and verifies the proposal/consensus/
+draft binding (finding #1, see TEST 62) -- `_draft()` and every call
+below were updated to supply a real, matching `HypothesisProposal` and
+consistent `approved_by`/`approved_at`, so these tests keep exercising
+ONLY their own original concern (bypass/approval/validity/status)."""
 import dataclasses
 
 from hypothesis.models.entities import (
     Direction, HypothesisComplexitySnapshot, HypothesisProvenance, HypothesisResearchMode, HypothesisStatus,
     StrategyHypothesis,
 )
+from hypothesis.proposals.normalize import normalize_proposal
 from hypothesis.proposals.validator import ProposalValidationResult
 from hypothesis.registry.hypotheses import HypothesisRegistry, ImmutableHypothesisError, build_hypothesis_id, hypothesis_fingerprint, materialize_variants
 from hypothesis.registry.preregistration import PreregistrationError, preregister_hypothesis
 from hypothesis.consensus.consensus import compute_consensus
 
-from spec004.conftest import approved_human_decision, rejected_human_decision
+from spec004.conftest import approved_human_decision, make_proposal_raw, rejected_human_decision
 
 
-def _draft(entry_definition, horizon_candidates, evidence_provenance, hypothesis_config, status=HypothesisStatus.DRAFT.value):
+def _proposal(proposal_id="prop_1"):
+    return normalize_proposal(make_proposal_raw(proposal_id=proposal_id))
+
+
+def _draft(
+    entry_definition, horizon_candidates, evidence_provenance, hypothesis_config,
+    status=HypothesisStatus.DRAFT.value, proposal_id="prop_1", approved_by="radu", approved_at="2026-09-25T00:05:00Z",
+):
     fp = hypothesis_fingerprint(evidence_provenance.signature_id, Direction.LONG.value, entry_definition, "NEXT_BAR_OPEN", horizon_candidates, evidence_provenance, hypothesis_config.config_version)
     hid, dh = build_hypothesis_id(fp)
     comp = HypothesisComplexitySnapshot(3, 1, hypothesis_config.config_version)
-    prov = HypothesisProvenance("HUMAN:radu", None, None, "radu", "2026-09-25T00:00:00Z")
+    prov = HypothesisProvenance("HUMAN:radu", proposal_id, None, approved_by, approved_at)
     return StrategyHypothesis(
         hypothesis_id=hid, hypothesis_version=1, definition_hash=dh, status=status,
         research_mode=HypothesisResearchMode.PREREGISTERED_STRATEGY.value, parent_signature_id=evidence_provenance.signature_id,
@@ -52,10 +67,11 @@ def test_preregister_hypothesis_succeeds_through_the_real_gate(entry_definition,
     variants = materialize_variants(draft, created_at="2026-09-25T00:00:00Z")
     draft = dataclasses.replace(draft, variant_ids=tuple(v.strategy_variant_id for v in variants))
     reg = HypothesisRegistry()
-    consensus = compute_consensus("prop_1", (), human_decision=approved_human_decision())
+    proposal = _proposal()
+    consensus = compute_consensus(proposal.proposal_id, (), human_decision=approved_human_decision())
 
     frozen = preregister_hypothesis(
-        draft, variants, proposal_validation=ProposalValidationResult(True, "OK", ()),
+        draft, variants, proposal=proposal, proposal_validation=ProposalValidationResult(True, "OK", (), proposal.proposal_id),
         consensus=consensus, registry=reg, run_registry=run_registry, hypothesis_config=hypothesis_config.data,
     )
     assert frozen.status == HypothesisStatus.PREREGISTERED.value
@@ -69,13 +85,14 @@ def test_preregister_hypothesis_rejects_without_human_approve(entry_definition, 
     variants = materialize_variants(draft, created_at="t")
     draft = dataclasses.replace(draft, variant_ids=tuple(v.strategy_variant_id for v in variants))
     reg = HypothesisRegistry()
-    consensus_no_decision = compute_consensus("prop_1", (), human_decision=None)
-    consensus_reject = compute_consensus("prop_1", (), human_decision=rejected_human_decision())
+    proposal = _proposal()
+    consensus_no_decision = compute_consensus(proposal.proposal_id, (), human_decision=None)
+    consensus_reject = compute_consensus(proposal.proposal_id, (), human_decision=rejected_human_decision())
 
     for consensus in (consensus_no_decision, consensus_reject):
         try:
             preregister_hypothesis(
-                draft, variants, proposal_validation=ProposalValidationResult(True, "OK", ()),
+                draft, variants, proposal=proposal, proposal_validation=ProposalValidationResult(True, "OK", (), proposal.proposal_id),
                 consensus=consensus, registry=reg, run_registry=run_registry, hypothesis_config=hypothesis_config.data,
             )
             assert False, "expected PreregistrationError"
@@ -89,10 +106,12 @@ def test_preregister_hypothesis_rejects_an_invalid_proposal(entry_definition, ho
     variants = materialize_variants(draft, created_at="t")
     draft = dataclasses.replace(draft, variant_ids=tuple(v.strategy_variant_id for v in variants))
     reg = HypothesisRegistry()
-    consensus = compute_consensus("prop_1", (), human_decision=approved_human_decision())
+    proposal = _proposal()
+    consensus = compute_consensus(proposal.proposal_id, (), human_decision=approved_human_decision())
     try:
         preregister_hypothesis(
-            draft, variants, proposal_validation=ProposalValidationResult(False, "HYPOTHESIS_COMPLEXITY_EXCEEDED", ("too many conditions",)),
+            draft, variants, proposal=proposal,
+            proposal_validation=ProposalValidationResult(False, "HYPOTHESIS_COMPLEXITY_EXCEEDED", ("too many conditions",), proposal.proposal_id),
             consensus=consensus, registry=reg, run_registry=run_registry, hypothesis_config=hypothesis_config.data,
         )
         assert False, "expected PreregistrationError"
@@ -105,10 +124,11 @@ def test_preregister_hypothesis_rejects_a_draft_already_claiming_preregistered(e
     variants = materialize_variants(already_claiming, created_at="t")
     already_claiming = dataclasses.replace(already_claiming, variant_ids=tuple(v.strategy_variant_id for v in variants))
     reg = HypothesisRegistry()
-    consensus = compute_consensus("prop_1", (), human_decision=approved_human_decision())
+    proposal = _proposal()
+    consensus = compute_consensus(proposal.proposal_id, (), human_decision=approved_human_decision())
     try:
         preregister_hypothesis(
-            already_claiming, variants, proposal_validation=ProposalValidationResult(True, "OK", ()),
+            already_claiming, variants, proposal=proposal, proposal_validation=ProposalValidationResult(True, "OK", (), proposal.proposal_id),
             consensus=consensus, registry=reg, run_registry=run_registry, hypothesis_config=hypothesis_config.data,
         )
         assert False, "expected PreregistrationError"

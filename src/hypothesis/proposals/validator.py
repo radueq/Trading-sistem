@@ -37,9 +37,15 @@ from hypothesis.models.entities import (
 
 @dataclass(frozen=True)
 class ProposalValidationResult:
+    """PATCH #004-B finding #1 (GPT Review #004 Round 2): carries
+    `proposal_id` so a caller of `preregister_hypothesis()` cannot supply
+    a validation result for a DIFFERENT proposal than the one actually
+    being preregistered -- before this field existed, nothing tied this
+    result back to the proposal it was computed from (TEST 62)."""
     valid: bool
     complexity_status: str  # ComplexityStatus
     errors: tuple[str, ...]
+    proposal_id: str
 
 
 def _lane_label_vocabulary(discovery_states: dict) -> dict[str, set[str]]:
@@ -220,4 +226,6 @@ def validate_proposal(
     if not proposal.interpretation or not proposal.interpretation.strip():
         errors.append("interpretation must not be empty (SS49-50)")
 
-    return ProposalValidationResult(valid=not errors, complexity_status=complexity_status, errors=tuple(errors))
+    return ProposalValidationResult(
+        valid=not errors, complexity_status=complexity_status, errors=tuple(errors), proposal_id=proposal.proposal_id,
+    )

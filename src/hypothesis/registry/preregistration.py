@@ -17,7 +17,7 @@ from __future__ import annotations
 from evaluation.models.entities import EvaluationRunRegistry
 
 from hypothesis.consensus.consensus import can_preregister
-from hypothesis.models.entities import ConsensusRecord, HypothesisStatus, StrategyHypothesis, StrategyVariant
+from hypothesis.models.entities import ConsensusRecord, HypothesisProposal, HypothesisStatus, StrategyHypothesis, StrategyVariant
 from hypothesis.proposals.validator import ProposalValidationResult
 from hypothesis.registry.hypotheses import HypothesisRegistry
 from hypothesis.validation.rules import validate_for_preregistration
@@ -31,6 +31,7 @@ def preregister_hypothesis(
     draft: StrategyHypothesis,
     variants: tuple[StrategyVariant, ...],
     *,
+    proposal: HypothesisProposal,
     proposal_validation: ProposalValidationResult,
     consensus: ConsensusRecord,
     registry: HypothesisRegistry,
@@ -42,6 +43,16 @@ def preregister_hypothesis(
     `PreregistrationError` (never proceeds partially) on the first
     failing group:
 
+    0. `proposal`, `proposal_validation`, `consensus`, and
+       `draft.hypothesis_provenance` all name the SAME proposal, and the
+       recorded approver/approval-time on `draft` match the human
+       decision actually supplied (PATCH #004-B finding #1, GPT Review
+       #004 Round 2) -- before this check, a caller could hand in an
+       approval for proposal A while preregistering an unrelated draft B:
+       nothing verified `proposal_validation`/`consensus` were computed
+       from the SAME proposal the draft claims to descend from, so
+       "human approval exists" never actually proved "human approval
+       exists FOR THIS HYPOTHESIS" (TEST 62);
     1. the HypothesisProposal that led to `draft` was itself structurally
        valid (`proposal_validation.valid`, from `proposals/validator.py`);
     2. an explicit `HumanDecision(decision=APPROVE, ...)` exists on
@@ -53,9 +64,13 @@ def preregister_hypothesis(
        function is what performs that transition);
     4. provenance-matches-the-actual-run, `parent_signature_id`/
        `signature_set_id` <-> `evidence_provenance` consistency,
-       outcome-contamination, per-signature hypothesis budget, and
-       variant completeness -- all now performed by
-       `validate_for_preregistration()` (PATCH #004-A findings #2/#5).
+       outcome-contamination, per-signature hypothesis budget, variant
+       completeness, AND content-addressed identity (`hypothesis_id`/
+       `definition_hash`/`strategy_variant_id`/`variant_definition_hash`
+       actually match the fingerprint of the fields they claim to
+       address, PATCH #004-B finding #2) -- all now performed by
+       `validate_for_preregistration()` (PATCH #004-A findings #2/#5,
+       PATCH #004-B finding #2).
 
     On success, freezes `draft` into PREREGISTERED (a NEW
     `StrategyHypothesis`, since the dataclass is frozen -- `hypothesis_id`/
@@ -66,6 +81,38 @@ def preregister_hypothesis(
     instead of calling this function directly against a bare in-memory
     `HypothesisRegistry`."""
     errors: list[str] = []
+
+    if proposal.proposal_id != proposal_validation.proposal_id:
+        errors.append(
+            f"proposal.proposal_id={proposal.proposal_id!r} does not match "
+            f"proposal_validation.proposal_id={proposal_validation.proposal_id!r} -- the supplied "
+            f"validation result must be THIS proposal's own (PATCH #004-B finding #1)"
+        )
+    if proposal.proposal_id != consensus.proposal_id:
+        errors.append(
+            f"proposal.proposal_id={proposal.proposal_id!r} does not match "
+            f"consensus.proposal_id={consensus.proposal_id!r} -- the supplied consensus/human "
+            f"decision must be THIS proposal's own (PATCH #004-B finding #1)"
+        )
+    if draft.hypothesis_provenance.proposal_id != proposal.proposal_id:
+        errors.append(
+            f"draft.hypothesis_provenance.proposal_id={draft.hypothesis_provenance.proposal_id!r} "
+            f"does not match proposal.proposal_id={proposal.proposal_id!r} -- a hypothesis's own "
+            f"provenance must truthfully name the proposal it descends from (PATCH #004-B finding #1)"
+        )
+    if consensus.human_decision is not None:
+        if draft.hypothesis_provenance.approved_by != consensus.human_decision.decided_by:
+            errors.append(
+                f"draft.hypothesis_provenance.approved_by={draft.hypothesis_provenance.approved_by!r} "
+                f"does not match consensus.human_decision.decided_by="
+                f"{consensus.human_decision.decided_by!r} (PATCH #004-B finding #1)"
+            )
+        if draft.hypothesis_provenance.approved_at != consensus.human_decision.decided_at:
+            errors.append(
+                f"draft.hypothesis_provenance.approved_at={draft.hypothesis_provenance.approved_at!r} "
+                f"does not match consensus.human_decision.decided_at="
+                f"{consensus.human_decision.decided_at!r} (PATCH #004-B finding #1)"
+            )
 
     if not proposal_validation.valid:
         errors.append(

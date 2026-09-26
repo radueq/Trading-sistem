@@ -19,6 +19,21 @@ separately from `evidence_provenance.signature_id`/`signature_set_id`
 previously verified they actually agree -- a caller could register a
 hypothesis whose declared "parent signature" and budget accounting
 didn't match the Evidence it actually claims to rest on.
+
+PATCH #004-B finding #2 (GPT Review #004 Round 2): the design's central
+claim is that `hypothesis_id`/`definition_hash`/`strategy_variant_id`/
+`variant_definition_hash` are CONTENT-ADDRESSED -- but nothing at the
+gate actually recomputed the fingerprint and compared it against the
+id/hash a caller supplied. A hand-built `StrategyHypothesis`/
+`StrategyVariant` with an arbitrary, non-matching id/hash could pass
+every other check here and reach the registry, silently breaking "the id
+proves the content" for every future lookup. `validate_for_
+preregistration()` now recomputes `hypothesis_fingerprint()` from the
+hypothesis's OWN fields and hard-fails if `hypothesis_id`/
+`definition_hash` don't match, then does the same per-variant with
+`variant_fingerprint()` against the INDEPENDENTLY-recomputed
+`definition_hash` (never the hypothesis's own possibly-wrong claim) --
+TEST 63.
 """
 from __future__ import annotations
 
@@ -34,7 +49,13 @@ from hypothesis.models.entities import (
     StrategyHypothesis,
     StrategyVariant,
 )
-from hypothesis.registry.hypotheses import HypothesisRegistry
+from hypothesis.registry.hypotheses import (
+    HypothesisRegistry,
+    build_hypothesis_id,
+    build_variant_id,
+    hypothesis_fingerprint,
+    variant_fingerprint,
+)
 from hypothesis.validation.provenance import check_provenance_matches_run
 
 # Spec #004 SS72 -- Evidence/outcome fields that must NEVER become part of
@@ -69,6 +90,33 @@ def validate_for_preregistration(
     registry: HypothesisRegistry, hypothesis_config: dict, run_registry: EvaluationRunRegistry,
 ) -> tuple[bool, tuple[str, ...]]:
     errors: list[str] = []
+
+    expected_fp = hypothesis_fingerprint(
+        hypothesis.parent_signature_id, hypothesis.direction, hypothesis.entry_definition,
+        hypothesis.entry_execution_policy, hypothesis.horizon_candidate_set,
+        hypothesis.evidence_provenance, hypothesis.strategy_config_version,
+    )
+    expected_hypothesis_id, expected_definition_hash = build_hypothesis_id(expected_fp)
+    if hypothesis.hypothesis_id != expected_hypothesis_id or hypothesis.definition_hash != expected_definition_hash:
+        errors.append(
+            f"hypothesis_id={hypothesis.hypothesis_id!r}/definition_hash={hypothesis.definition_hash!r} "
+            f"do not match the content-addressed fingerprint of this hypothesis's own fields "
+            f"(expected hypothesis_id={expected_hypothesis_id!r}, definition_hash="
+            f"{expected_definition_hash!r}) -- ids are content-addressed and must never be supplied "
+            f"by hand (PATCH #004-B finding #2, TEST 63)"
+        )
+
+    for v in variants:
+        expected_variant_fp = variant_fingerprint(expected_definition_hash, v.exit_hypothesis)
+        expected_variant_id, expected_variant_hash = build_variant_id(expected_variant_fp)
+        if v.strategy_variant_id != expected_variant_id or v.variant_definition_hash != expected_variant_hash:
+            errors.append(
+                f"variant {v.strategy_variant_id!r}: strategy_variant_id/variant_definition_hash="
+                f"{v.variant_definition_hash!r} do not match the content-addressed fingerprint of its "
+                f"own exit_hypothesis against the parent's TRUE definition_hash (expected "
+                f"strategy_variant_id={expected_variant_id!r}, variant_definition_hash="
+                f"{expected_variant_hash!r}) -- PATCH #004-B finding #2, TEST 63"
+            )
 
     if hypothesis.direction not in (Direction.LONG.value, Direction.SHORT.value):
         errors.append(f"direction {hypothesis.direction!r} is not a valid Direction (TEST 4)")

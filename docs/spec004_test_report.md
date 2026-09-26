@@ -3,12 +3,13 @@
 Run: `PYTHONPATH=src:tests python3 -m pytest tests/spec004/ -v` -- Python
 3.11.15, pytest 9.1.1, pandas 3.0.6, numpy 2.4.6, PyYAML 6.0.1.
 
-Result: **131 passed, 0 failed, 0 pending** (across the 44 required
+Result: **150 passed, 0 failed, 0 pending** (across the 44 required
 tests, TEST 45-52 added per Radu's SS110 A/B/C/D/E/F/H amendments during
-architecture review, and TEST 53-61 added for PATCH #004-A -- GPT Review
-#004 Round 1 -- several have multiple focused sub-tests). Full repo
-(Spec #001 + Spec #002 + Spec #003 + Spec #004): **256 passed, 1
-skipped** (Spec #001 TEST 8, `PENDING_LEVEL_2_DATA`, unaffected).
+architecture review, TEST 53-61 added for PATCH #004-A -- GPT Review
+#004 Round 1 -- and TEST 62-66 added for PATCH #004-B -- GPT Review #004
+Round 2 -- several have multiple focused sub-tests). Full repo (Spec #001
++ Spec #002 + Spec #003 + Spec #004): **275 passed, 1 skipped** (Spec
+#001 TEST 8, `PENDING_LEVEL_2_DATA`, unaffected).
 
 No PIT/ingestion/database is exercised anywhere in this package -- every
 test runs against hand-built #003-shaped `EvaluationSignatureDefinition`/
@@ -79,6 +80,11 @@ receive already-materialized Evaluation artifacts.
 | 59 | `parameter_source` on TIME_EXIT variants is real, not hardcoded | `test_59_horizon_parameter_source_real.py` | **PASS** (3 sub-tests) | PATCH #004-A finding #5. TIME_EXIT variants inherit the declared `parameter_source` (`PRE_SPECIFIED` or `EVIDENCE_DERIVED`), never a hardcoded value; `parameter_source` participates in the family fingerprint. |
 | 60 | Baseline variant is never auto-deduced from `min(horizon)` | `test_60_baseline_variant_not_auto_deduced.py` | **PASS** (3 sub-tests) | PATCH #004-A finding #5. Default materialization tags nothing as baseline (including the shortest horizon); an explicit `baseline_time_exit_bars` tags exactly that one; a value outside the candidate set is rejected. |
 | 61 | Research history survives a process restart | `test_61_jsonl_audit_log_persistence.py` | **PASS** (3 sub-tests) | PATCH #004-A finding #6. Proposals and a rejection survive a fresh `JsonlAuditLog.replay()`; a preregistered hypothesis and its variants survive a fresh replay AND a third, fully independent `PersistentHypothesisRegistry.open()` call; the log file is never rewritten, only appended to. |
+| 62 | Preregistration binding verified | `test_62_preregistration_binding_verified.py` | **PASS** (6 sub-tests) | PATCH #004-B finding #1. A consistent proposal/validation/consensus/draft binding succeeds; a mismatched `proposal_validation.proposal_id`, `consensus.proposal_id`, or `draft.hypothesis_provenance.proposal_id` is each rejected; an `approved_by`/`approved_at` disagreeing with the human decision actually supplied is each rejected. |
+| 63 | Content-addressed identity verified at the gate | `test_63_content_addressed_identity_verified_at_gate.py` | **PASS** (5 sub-tests) | PATCH #004-B finding #2. A tampered `hypothesis_id`, `definition_hash`, `strategy_variant_id`, or `variant_definition_hash` is each rejected by a recomputed-fingerprint check; a genuine, untampered hypothesis and its variants pass. |
+| 64 | StrategyVariant fully immutable, including variant_tag | `test_64_variant_fully_immutable_including_tag.py` | **PASS** (3 sub-tests) | PATCH #004-B finding #3. Rewriting `variant_tag` on an already-registered variant (same id, same hash) is rejected; re-registering an identical variant is an idempotent no-op; a different `variant_definition_hash` is still rejected (regression). |
+| 65 | Preregistration persisted as one atomic record | `test_65_preregistration_persisted_as_one_atomic_record.py` | **PASS** (3 sub-tests) | PATCH #004-B finding #4. Exactly one JSONL line (`preregistration_committed`) is appended for a whole commit, carrying the hypothesis and every variant together; replay reconstructs all of it from that one line; no commit line means no hypothesis at all, never a partial one. |
+| 66 | Research Queue rejects duplicate signature_id | `test_66_research_queue_rejects_duplicate_signature.py` | **PASS** (2 sub-tests) | PATCH #004-B finding #5 (minor). `[packet_SIG_A, packet_SIG_A]` is rejected; distinct signature ids are unaffected. |
 
 ## How to reproduce
 

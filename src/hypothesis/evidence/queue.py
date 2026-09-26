@@ -99,6 +99,14 @@ def build_research_queue(
     eligibility_config = config.data["research_queue_eligibility"]
     reference_horizon_bars = config.data["evidence_reference"]["reference_horizon_bars"]
 
+    signature_ids = [p.signature_id for p in packets]
+    duplicates = sorted({s for s in signature_ids if signature_ids.count(s) > 1})
+    if duplicates:
+        raise ValueError(
+            f"duplicate signature_id(s) {duplicates!r} among packets -- build_research_queue() "
+            f"requires exactly one EvidencePacket per signature (PATCH #004-B finding #5)"
+        )
+
     offenders = [p.signature_id for p in packets if p.primary_evidence_horizon_bars != reference_horizon_bars]
     if offenders:
         raise ValueError(

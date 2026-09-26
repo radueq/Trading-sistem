@@ -16,6 +16,30 @@ deliberately refuses to do.
 fingerprint string -- identical inputs always reproduce the identical id
 (TEST 44), with no random or time-based component anywhere.
 
+**Content-addressed identity is now RE-VERIFIED at the gate, not just
+computed once (PATCH #004-B finding #2, GPT Review #004 Round 2).**
+Before this patch, `preregister_hypothesis()` trusted a `StrategyHypothesis`/
+`StrategyVariant`'s own claimed `hypothesis_id`/`definition_hash`/
+`strategy_variant_id`/`variant_definition_hash` -- nothing recomputed the
+fingerprint from the object's actual fields and compared it. A hand-built
+object with an arbitrary, non-matching id/hash could pass every other
+check (provenance, budget, completeness) and reach the registry, quietly
+breaking "the id proves the content" for every future lookup.
+`validate_for_preregistration()` now recomputes `hypothesis_fingerprint()`
+from the hypothesis's OWN fields and hard-fails if `hypothesis_id`/
+`definition_hash` don't match, then does the same per variant with
+`variant_fingerprint()` -- against the INDEPENDENTLY-recomputed
+`definition_hash`, never the hypothesis's own possibly-wrong claim, so a
+tampered parent can't launder a tampered variant through it either
+(TEST 63).
+
+`StrategyVariant`'s `variant_tag` is excluded from `variant_definition_hash`
+on purpose (it is methodological metadata -- BASELINE_VARIANT vs
+EXPERIMENTAL_VARIANT -- not trading meaning), but that does NOT mean it is
+mutable: see "Variant materialization contract" below for the separate,
+full-object immutability rule `register_variant()` enforces (PATCH #004-B
+finding #3).
+
 ## Mutability rules
 
 1. **DRAFT / REVIEWED / REJECTED** records may be freely re-registered
@@ -32,24 +56,39 @@ fingerprint string -- identical inputs always reproduce the identical id
    status == PREREGISTERED` is a hard `ImmutableHypothesisError`, not a
    silent success). The only supported path that may produce one is
    `registry/preregistration.py:preregister_hypothesis(draft, variants,
-   *, proposal_validation, consensus, registry, run_registry,
-   hypothesis_config)`, which requires, in order: the source
-   `HypothesisProposal` passed `proposals/validator.py`'s own check; an
-   explicit `HumanDecision(decision=HumanDecisionValue.APPROVE, ...)` on
-   the supplied `ConsensusRecord` (`consensus/consensus.py:
+   *, proposal, proposal_validation, consensus, registry, run_registry,
+   hypothesis_config)`, which requires, in order: `proposal.proposal_id
+   == proposal_validation.proposal_id == consensus.proposal_id ==
+   draft.hypothesis_provenance.proposal_id`, and (when a human decision
+   is present) `draft.hypothesis_provenance.approved_by`/`approved_at`
+   match `consensus.human_decision.decided_by`/`decided_at` exactly
+   (PATCH #004-B finding #1, GPT Review #004 Round 2 -- see below); the
+   source `HypothesisProposal` passed `proposals/validator.py`'s own
+   check; an explicit `HumanDecision(decision=HumanDecisionValue.APPROVE,
+   ...)` on the supplied `ConsensusRecord` (`consensus/consensus.py:
    can_preregister()` -- a `REJECT` decision, free-text approval, or no
    decision at all is a hard rejection, never treated as approval); the
    input hypothesis still being `status=DRAFT` (a caller may never hand
    in an object already claiming `PREREGISTERED`); and the full
-   `validate_for_preregistration()` gate (provenance, budget, variant
-   completeness, outcome-contamination -- see below). Before this patch,
-   a caller could construct `StrategyHypothesis(status="PREREGISTERED",
-   ...)` by hand and pass it straight to the (then-generic) `register()`,
-   bypassing every one of these checks; `build_strategy_definition()`
-   now also independently re-verifies the hypothesis/variant it is given
-   against what the registry itself has stored (object equality, not the
-   object's own claimed status), so a fabricated object cannot reach a
+   `validate_for_preregistration()` gate (content-addressed identity,
+   provenance, budget, variant completeness, outcome-contamination --
+   see below). Before PATCH #004-A, a caller could construct
+   `StrategyHypothesis(status="PREREGISTERED", ...)` by hand and pass it
+   straight to the (then-generic) `register()`, bypassing every one of
+   these checks; `build_strategy_definition()` now also independently
+   re-verifies the hypothesis/variant it is given against what the
+   registry itself has stored (object equality, not the object's own
+   claimed status), so a fabricated object cannot reach a
    `StrategyDefinition` even if it slipped past registration (TEST 53-55).
+
+   **PATCH #004-B finding #1 (GPT Review #004 Round 2):** the checks
+   above closed a real gap -- `proposal_validation.valid` and
+   `consensus`'s APPROVE decision proved SOME proposal was validated and
+   approved, but nothing verified it was THIS proposal, the one `draft`
+   actually descends from. A caller could otherwise hand in APPROVE for
+   proposal A while preregistering an unrelated draft B. `Proposal
+   ValidationResult` gained a `proposal_id` field for exactly this check
+   (TEST 62).
 3. **The only way to change a hypothesis after the fact is
    `create_new_version(parent, **overrides)`**, which recomputes the
    fingerprint from the merged fields, ALWAYS produces a new
@@ -92,6 +131,20 @@ points:
   `variant_ids` -- this is the structural guarantee that Spec #005 can
   only ever select among pre-existing variants, never mint one after
   seeing a result.
+
+**A registered `StrategyVariant` is immutable in FULL, including
+`variant_tag` (PATCH #004-B finding #3, GPT Review #004 Round 2).**
+`variant_tag` is excluded from `variant_definition_hash` (see "Identity"
+above), which means the ORIGINAL `register_variant()` check -- same id,
+compare only the hash -- could not detect a re-registration that kept
+the hash identical but changed `variant_tag` (e.g. rewriting
+EXPERIMENTAL_VARIANT to BASELINE_VARIANT after seeing backtest results,
+exactly the after-the-fact methodological rewrite the `baseline_time_
+exit_bars` design in PATCH #004-A exists to prevent). `register_variant()`
+now compares full object equality against any existing record with the
+same id: identical content is an idempotent no-op (safe for audit-log
+replay), any difference at all -- hash, tag, or anything else --
+raises `ImmutableHypothesisError` (TEST 64).
 
 ## Provenance contract
 
@@ -152,17 +205,32 @@ preregistered 3" must remain provable from this snapshot alone.
 now durable across a process restart, not just within one.** A bare
 `HypothesisRegistry` is still a plain in-memory object -- it holds
 nothing once the Python process exits. `registry/persistence.py`
-provides `JsonlAuditLog` (one JSON line per meaningful event:
-`proposal_registered`, `proposal_rejected`, `hypothesis_preregistered`,
-`variant_registered`, append-only by construction -- `append()` only
-ever opens the file in append mode) and `PersistentHypothesisRegistry`,
-which wraps a bare `HypothesisRegistry` + a `JsonlAuditLog` and exposes
-`register_proposal()`, `mark_proposal_rejected()`, and `preregister()`
-(which calls the real `preregister_hypothesis()` gate, then logs the
-resulting hypothesis and every variant). `JsonlAuditLog.replay()`
-rebuilds an equivalent `HypothesisRegistry` from nothing but the file --
-a completely independent, freshly opened log handle reconstructs the
-identical state (TEST 61), which is the property that matters: a real
-process restart never has the original in-memory objects. This composes
-with, and never replaces, the pure in-memory `HypothesisRegistry` every
-existing test and example above still uses directly.
+provides `JsonlAuditLog` (one JSON line per meaningful event --
+`proposal_registered`, `proposal_rejected`, `preregistration_committed`
+-- append-only by construction, `append()` only ever opens the file in
+append mode) and `PersistentHypothesisRegistry`, which wraps a bare
+`HypothesisRegistry` + a `JsonlAuditLog` and exposes `register_proposal()`,
+`mark_proposal_rejected()`, and `preregister()` (which calls the real
+`preregister_hypothesis()` gate, then logs the result). `JsonlAuditLog.
+replay()` rebuilds an equivalent `HypothesisRegistry` from nothing but
+the file -- a completely independent, freshly opened log handle
+reconstructs the identical state (TEST 61), which is the property that
+matters: a real process restart never has the original in-memory
+objects. This composes with, and never replaces, the pure in-memory
+`HypothesisRegistry` every existing test and example above still uses
+directly.
+
+**PATCH #004-B finding #4 (GPT Review #004 Round 2): the preregistration
+write is now atomic at the file-line level, not just durable.** The
+original version appended one `hypothesis_preregistered` line followed
+by N separate `variant_registered` lines -- a crash between those
+appends (or between the in-memory write and the first append) could
+leave the in-memory registry and the persisted log in different states:
+a hypothesis durable with only SOME of its variants, or none at all.
+`preregister()` now appends exactly ONE `preregistration_committed`
+record, `{"hypothesis": ..., "variants": [...]}`, in a single `append()`
+call. On replay, the hypothesis and every one of its variants appear
+together, or the line simply isn't there yet -- never a partial state
+(TEST 65). `to_jsonable()`/`from_jsonable()` gained generic recursion
+into plain dicts (not just dataclasses/tuples/lists) to support this
+single-record shape without a bespoke serializer.

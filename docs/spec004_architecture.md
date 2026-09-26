@@ -297,6 +297,12 @@ bars` was renamed to `reference_horizon_bars` to make this explicit, and
 built under a different reference-horizon policy than the one it is
 told to use.
 
+**PATCH #004-B finding #5 (GPT Review #004 Round 2, minor):**
+`build_research_queue()` also hard-fails on a duplicate `signature_id`
+among the supplied packets -- `[packet_SIG_A, packet_SIG_A]` could
+otherwise silently produce two queue entries for the same signature,
+undermining the one-entry-per-signature guarantee above (TEST 66).
+
 ## Package layout
 
 ```

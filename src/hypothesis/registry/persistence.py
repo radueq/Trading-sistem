@@ -5,14 +5,15 @@ durable, append-only research audit trail.
 test, and unchanged by this module -- all 52+ pre-existing tests keep
 constructing a bare `HypothesisRegistry()`). `JsonlAuditLog` is a thin
 layer around it: every meaningful write (a proposal registered, a
-proposal rejected, a hypothesis preregistered, a variant registered) is
-ALSO appended as one JSON line to a file -- `append()` never rewrites or
-truncates it -- so "considered 40, rejected 37, preregistered 3"
-survives a process restart, the way a Strategy Registry/research audit
-trail must, before Spec #005 ever consumes it. Level 1 scope: a single
-append-only file, not a database -- durable and auditable without a new
-infrastructure dependency (Radu's own instruction: "nu cer baza de date
-sofisticata... e suficient ceva simplu si auditable").
+proposal rejected, a preregistration committed -- hypothesis + every
+variant together, PATCH #004-B finding #4) is ALSO appended as one JSON
+line to a file -- `append()` never rewrites or truncates it -- so
+"considered 40, rejected 37, preregistered 3" survives a process
+restart, the way a Strategy Registry/research audit trail must, before
+Spec #005 ever consumes it. Level 1 scope: a single append-only file,
+not a database -- durable and auditable without a new infrastructure
+dependency (Radu's own instruction: "nu cer baza de date sofisticata...
+e suficient ceva simplu si auditable").
 """
 from __future__ import annotations
 
@@ -56,11 +57,15 @@ _TYPE_KEY = "__type__"
 
 def to_jsonable(obj: Any) -> Any:
     """Recursively converts a frozen dataclass (and any nested
-    dataclasses/tuples it contains) into a plain JSON-serializable
-    structure, tagging each dataclass instance with its class name so
-    `from_jsonable()` can reconstruct the exact type. Generic over every
-    entity in this package rather than one hand-written (de)serializer
-    per class, which would silently drift out of sync as fields change."""
+    dataclasses/tuples/dicts/lists it contains) into a plain JSON-
+    serializable structure, tagging each dataclass instance with its
+    class name so `from_jsonable()` can reconstruct the exact type.
+    Generic over every entity in this package rather than one
+    hand-written (de)serializer per class, which would silently drift
+    out of sync as fields change. Plain-dict recursion (PATCH #004-B
+    finding #4) lets a caller wrap several dataclasses in one plain
+    dict payload (e.g. `{"hypothesis": ..., "variants": [...]}`) for a
+    single atomic audit-log record, without needing its own dataclass."""
     if dataclasses.is_dataclass(obj) and not isinstance(obj, type):
         return {_TYPE_KEY: type(obj).__name__, **{
             f.name: to_jsonable(getattr(obj, f.name)) for f in dataclasses.fields(obj)
@@ -69,6 +74,8 @@ def to_jsonable(obj: Any) -> Any:
         return {_TUPLE_KEY: [to_jsonable(v) for v in obj]}
     if isinstance(obj, list):
         return [to_jsonable(v) for v in obj]
+    if isinstance(obj, dict):
+        return {k: to_jsonable(v) for k, v in obj.items()}
     return obj
 
 
@@ -81,6 +88,8 @@ def from_jsonable(obj: Any) -> Any:
         return cls(**kwargs)
     if isinstance(obj, list):
         return [from_jsonable(v) for v in obj]
+    if isinstance(obj, dict):
+        return {k: from_jsonable(v) for k, v in obj.items()}
     return obj
 
 
@@ -117,14 +126,20 @@ def _apply(registry: HypothesisRegistry, record_type: str, payload: Any) -> None
         registry.register_proposal(from_jsonable(payload))
     elif record_type == "proposal_rejected":
         registry.mark_proposal_rejected(payload["proposal_id"])
-    elif record_type == "hypothesis_preregistered":
-        # Already validated once (by preregister_hypothesis()) before it
-        # was ever appended -- replay reconstructs the same fact, it does
-        # not re-derive it, so it bypasses register()'s PREREGISTERED
-        # guard via _force_register() the same way the original insert did.
-        registry._force_register(from_jsonable(payload))
-    elif record_type == "variant_registered":
-        registry.register_variant(from_jsonable(payload))
+    elif record_type == "preregistration_committed":
+        # PATCH #004-B finding #4 (GPT Review #004 Round 2): ONE record
+        # carries the hypothesis AND every variant together, so replay
+        # can never observe a hypothesis with only some of its variants
+        # (or vice versa) -- see PersistentHypothesisRegistry.preregister()
+        # below for why this must be a single append() call. Already
+        # validated once (by preregister_hypothesis()) before it was ever
+        # appended -- replay reconstructs the same fact, it does not
+        # re-derive it, so it bypasses register()'s PREREGISTERED guard
+        # via _force_register() the same way the original insert did.
+        committed = from_jsonable(payload)
+        registry._force_register(committed["hypothesis"])
+        for v in committed["variants"]:
+            registry.register_variant(v)
     else:
         raise ValueError(f"unknown audit record_type {record_type!r}")
 
@@ -159,6 +174,7 @@ class PersistentHypothesisRegistry:
         draft: StrategyHypothesis,
         variants: tuple[StrategyVariant, ...],
         *,
+        proposal: HypothesisProposal,
         proposal_validation: ProposalValidationResult,
         consensus: ConsensusRecord,
         run_registry: EvaluationRunRegistry,
@@ -166,14 +182,22 @@ class PersistentHypothesisRegistry:
     ) -> StrategyHypothesis:
         """Runs the exact same atomic gate as `registry.preregistration.
         preregister_hypothesis()` (against `self.registry`), then appends
-        the resulting hypothesis and its variants to the durable log --
-        one call, both effects, so a caller can never validate-and-insert
-        without also persisting."""
+        the resulting hypothesis AND every variant as ONE JSONL record.
+
+        PATCH #004-B finding #4 (GPT Review #004 Round 2): the original
+        version wrote one `hypothesis_preregistered` line followed by N
+        separate `variant_registered` lines -- if the process or disk
+        died between those appends (or between the in-memory registry
+        write and the first append), the in-memory state and the
+        persisted log could diverge: a hypothesis with only some of its
+        variants durable, or none at all. A single `preregistration_
+        committed` record (`{"hypothesis": ..., "variants": [...]}`)
+        makes the durable write atomic at the file-line level: on
+        replay, the hypothesis and ALL of its variants appear together,
+        or the line is simply not there yet -- never a partial state."""
         frozen = preregister_hypothesis(
-            draft, variants, proposal_validation=proposal_validation, consensus=consensus,
+            draft, variants, proposal=proposal, proposal_validation=proposal_validation, consensus=consensus,
             registry=self.registry, run_registry=run_registry, hypothesis_config=hypothesis_config,
         )
-        self.audit_log.append("hypothesis_preregistered", frozen)
-        for v in variants:
-            self.audit_log.append("variant_registered", v)
+        self.audit_log.append("preregistration_committed", {"hypothesis": frozen, "variants": list(variants)})
         return frozen

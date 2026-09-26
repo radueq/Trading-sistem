@@ -242,11 +242,25 @@ class HypothesisRegistry:
         return hyp
 
     def register_variant(self, variant: StrategyVariant) -> StrategyVariant:
+        """PATCH #004-B finding #3 (GPT Review #004 Round 2): a
+        `StrategyVariant` is immutable in FULL once registered, not just
+        in its `variant_definition_hash`. The original check compared
+        only the hash, which never covers `variant_tag` (by design --
+        `variant_tag` is administrative/methodological metadata, not
+        trading-meaning content, so it was deliberately excluded from the
+        fingerprint). That left a real gap: a caller could re-register
+        the SAME `strategy_variant_id` with the SAME hash but a DIFFERENT
+        `variant_tag` (e.g. flipping EXPERIMENTAL_VARIANT to
+        BASELINE_VARIANT after seeing backtest results) and the old check
+        would silently accept the overwrite -- exactly the kind of
+        after-the-fact methodological rewrite Spec #004 exists to
+        prevent. Now any field difference at all is rejected (TEST 64)."""
         existing = self._variants.get(variant.strategy_variant_id)
-        if existing is not None and existing.variant_definition_hash != variant.variant_definition_hash:
+        if existing is not None and existing != variant:
             raise ImmutableHypothesisError(
-                f"strategy_variant_id={variant.strategy_variant_id!r} already registered with a "
-                f"DIFFERENT variant_definition_hash"
+                f"strategy_variant_id={variant.strategy_variant_id!r} already registered with "
+                f"DIFFERENT content -- a StrategyVariant is immutable in full once registered, "
+                f"including variant_tag, not only variant_definition_hash (PATCH #004-B finding #3)"
             )
         self._variants[variant.strategy_variant_id] = variant
         return variant

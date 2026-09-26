@@ -91,10 +91,25 @@ actual transition to `PREREGISTERED` only ever happens inside
 `registry/preregistration.py:preregister_hypothesis()`, which also
 requires the source proposal to have passed `proposals/validator.py`'s
 own check, requires the input hypothesis to still be `status=DRAFT`,
-and runs the full `validate_for_preregistration()` gate (provenance,
-per-signature budget, variant completeness) before registering anything.
-See `docs/spec004_registry_contract.md`'s "Mutability rules" section
-for the complete, current contract.
+and runs the full `validate_for_preregistration()` gate (content-
+addressed identity, provenance, per-signature budget, variant
+completeness) before registering anything. See
+`docs/spec004_registry_contract.md`'s "Mutability rules" section for the
+complete, current contract.
+
+**The human decision must be bound to the specific hypothesis it approves
+(PATCH #004-B finding #1, GPT Review #004 Round 2).** An `APPROVE`
+decision proves a human approved SOME proposal -- it does not, by itself,
+prove they approved THIS one. `preregister_hypothesis()` therefore also
+requires a `proposal=` argument and verifies `proposal.proposal_id ==
+proposal_validation.proposal_id == consensus.proposal_id ==
+draft.hypothesis_provenance.proposal_id`, plus
+`draft.hypothesis_provenance.approved_by`/`approved_at` match
+`consensus.human_decision.decided_by`/`decided_at` exactly. A caller
+(human or agent orchestration code) that fabricates a `HypothesisProvenance`
+naming a different proposal, or a different approver/time, than the
+`ConsensusRecord` it is paired with is rejected outright -- approval for
+proposal A can never be silently applied to an unrelated draft B.
 
 ## Facts vs. interpretation (SS49-50)
 
