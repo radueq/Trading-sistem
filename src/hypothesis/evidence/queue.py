@@ -16,75 +16,99 @@ standardized_effect, support) to order review attention -- but every
 "DEVELOPMENT_OUTCOME_AWARE_SELECTION"` permanently (never silently), and
 this module's output must never be imported by anything that builds a
 `StrategyDefinition` (TEST 34 enforces this by field-name scan).
+
+PATCH #004-A finding #4 (GPT Review #004 Round 1): the original design
+took individual `EvidenceProfile`s and produced one `ResearchQueueEntry`
+per (signature, horizon) -- meaning the SAME signature could occupy up
+to 5 queue slots, and because priority was computed per-horizon from
+that horizon's own outcome strength, whichever horizon happened to look
+best would tend to rank first. No field named `selected_horizon` was
+ever written anywhere, but operationally this was a backdoor form of
+exactly the best-horizon selection Spec #004 exists to forbid (SS12/34).
+Fixed: this module now consumes `EvidencePacket`s (already one per
+signature, carrying the full decay curve for context, but with a single
+policy-fixed `primary_*` reference point -- see `evidence/packet.py`) and
+produces exactly ONE `ResearchQueueEntry` per signature, using ONLY that
+same reference horizon for every signature uniformly.
 """
 from __future__ import annotations
 
-from evaluation.models.entities import EvidenceProfile
-
 from hypothesis.config.loader import HypothesisConfig
-from hypothesis.models.entities import ResearchQueueEntry
+from hypothesis.models.entities import EvidencePacket, ResearchQueueEntry
 
 PRIORITY_BASIS_OUTCOME_AWARE = "DEVELOPMENT_OUTCOME_AWARE_SELECTION"
 PRIORITY_BASIS_NOT_APPLICABLE = "NOT_APPLICABLE"
 
 
-def eligibility_basis(profile: EvidenceProfile, eligibility_config: dict) -> tuple[bool, tuple[str, ...]]:
+def eligibility_basis(packet: EvidencePacket, eligibility_config: dict) -> tuple[bool, tuple[str, ...]]:
     reasons: list[str] = []
     eligible = True
 
-    m = profile.missingness
-    non_valid = m.insufficient_future_data + m.crosses_locked_oos + m.missing_benchmark + m.invalid_input
-    total = m.episodes
-    missingness_ratio = (non_valid / total) if total else 1.0
+    missingness_ratio = packet.primary_missingness_ratio if packet.primary_missingness_ratio is not None else 1.0
     max_ratio = eligibility_config["maximum_missingness_ratio"]
     ok = missingness_ratio <= max_ratio
     eligible = eligible and ok
     reasons.append(f"missingness_ratio={missingness_ratio:.4f} {'<=' if ok else '>'} maximum_missingness_ratio={max_ratio}")
 
     min_valid = eligibility_config["minimum_valid_episode_n"]
-    ok = profile.support.valid_episode_n >= min_valid
+    ok = packet.primary_valid_episode_n >= min_valid
     eligible = eligible and ok
-    reasons.append(f"valid_episode_n={profile.support.valid_episode_n} {'>=' if ok else '<'} minimum_valid_episode_n={min_valid}")
+    reasons.append(f"valid_episode_n={packet.primary_valid_episode_n} {'>=' if ok else '<'} minimum_valid_episode_n={min_valid}")
 
     min_sec = eligibility_config["minimum_unique_securities"]
-    ok = profile.concentration.unique_security_count >= min_sec
+    ok = packet.primary_unique_security_count >= min_sec
     eligible = eligible and ok
-    reasons.append(f"unique_security_count={profile.concentration.unique_security_count} {'>=' if ok else '<'} minimum_unique_securities={min_sec}")
+    reasons.append(f"unique_security_count={packet.primary_unique_security_count} {'>=' if ok else '<'} minimum_unique_securities={min_sec}")
 
     if eligibility_config.get("require_stability_bins", True):
-        ok = len(profile.stability) > 0
+        ok = packet.primary_has_stability_bins
         eligible = eligible and ok
         reasons.append("stability bins present" if ok else "stability bins required but missing")
 
     return eligible, tuple(reasons)
 
 
-def is_eligible_for_review(profile: EvidenceProfile, eligibility_config: dict) -> bool:
-    eligible, _ = eligibility_basis(profile, eligibility_config)
+def is_eligible_for_review(packet: EvidencePacket, eligibility_config: dict) -> bool:
+    eligible, _ = eligibility_basis(packet, eligibility_config)
     return eligible
 
 
-def compute_review_priority(profile: EvidenceProfile) -> tuple[float, float, float]:
+def compute_review_priority(packet: EvidencePacket) -> tuple[float, float, float]:
     """Ascending sort key -- smaller is higher priority. Explicitly
-    outcome-aware (adjusted_p, standardized_effect, valid_episode_n);
-    every caller MUST label the result with `PRIORITY_BASIS_OUTCOME_AWARE`
-    (see `build_research_queue` below) rather than treat it as a neutral
-    ordering."""
-    adjusted_p = profile.baseline_comparison.adjusted_p
-    effect = profile.baseline_comparison.standardized_effect
+    outcome-aware (adjusted_p, standardized_effect, valid_episode_n), ALL
+    read from the packet's single policy-fixed reference horizon -- never
+    from whichever horizon in the decay curve looks strongest. Every
+    caller MUST label the result with `PRIORITY_BASIS_OUTCOME_AWARE` (see
+    `build_research_queue` below) rather than treat it as neutral."""
+    adjusted_p = packet.primary_adjusted_p
+    effect = packet.primary_standardized_effect
     p_key = adjusted_p if adjusted_p is not None else float("inf")
     effect_key = -abs(effect) if effect is not None else 0.0
-    support_key = float(-profile.support.valid_episode_n)
+    support_key = float(-packet.primary_valid_episode_n)
     return (p_key, effect_key, support_key)
 
 
 def build_research_queue(
-    profiles: list[EvidenceProfile], evaluation_run_id: str, config: HypothesisConfig,
+    packets: list[EvidencePacket], config: HypothesisConfig,
 ) -> tuple[ResearchQueueEntry, ...]:
+    """ONE entry per `EvidencePacket` (i.e. per signature) -- never per
+    horizon. All packets must share the same `reference_horizon_bars`
+    (they will, if all were built under the same `hypothesis_config`,
+    since that's where the reference horizon comes from -- checked here
+    defensively regardless)."""
     eligibility_config = config.data["research_queue_eligibility"]
+    reference_horizon_bars = config.data["evidence_reference"]["reference_horizon_bars"]
+
+    offenders = [p.signature_id for p in packets if p.primary_evidence_horizon_bars != reference_horizon_bars]
+    if offenders:
+        raise ValueError(
+            f"packet(s) for {offenders!r} were not built at the configured reference_horizon_bars="
+            f"{reference_horizon_bars!r} -- the Research Queue must compare every signature at the "
+            f"SAME horizon (PATCH #004-A finding #4)"
+        )
 
     computed = []
-    for p in profiles:
+    for p in packets:
         eligible, basis = eligibility_basis(p, eligibility_config)
         key = compute_review_priority(p) if eligible else None
         computed.append((p, eligible, basis, key))
@@ -97,8 +121,8 @@ def build_research_queue(
     for i, (p, eligible, basis, key) in enumerate(computed):
         entries.append(ResearchQueueEntry(
             signature_id=p.signature_id,
-            evidence_horizon_bars=p.horizon_bars,
-            evaluation_run_id=evaluation_run_id,
+            reference_horizon_bars=p.primary_evidence_horizon_bars,
+            evaluation_run_id=p.evidence_provenance.evaluation_run_id,
             eligible=eligible,
             eligibility_basis=basis,
             eligibility_config_version=config.config_version,

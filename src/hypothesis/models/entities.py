@@ -98,6 +98,17 @@ class ComplexityStatus(str, Enum):
     HYPOTHESIS_COMPLEXITY_EXCEEDED = "HYPOTHESIS_COMPLEXITY_EXCEEDED"
 
 
+class HumanDecisionValue(str, Enum):
+    """PATCH #004-A finding #1 (GPT Review #004 Round 1): an explicit
+    two-value contract, never free text used as a truthy boolean -- the
+    original `human_decision: Optional[str]` accepted ANY non-empty
+    string, including "REJECT" or "NU SUNT DE ACORD", as if it meant
+    approval. `can_preregister()` now checks this enum value, not string
+    truthiness."""
+    APPROVE = "APPROVE"
+    REJECT = "REJECT"
+
+
 # --------------------------------------------------------------------------
 # Fixed V1 constants (Radu's approval on SS110-A, 2026-09-25)
 # --------------------------------------------------------------------------
@@ -114,12 +125,21 @@ ENTRY_EXECUTION_POLICY = "NEXT_BAR_OPEN"
 # entry bar: holding bar 1 = entry bar itself; holding bar N = entry bar
 # index + (N-1); exit at the CLOSE of holding bar N (Radu's SS110-A
 # worked example: Monday close signal -> Tuesday open entry -> holding bars
-# Tue/Wed/Thu -> Thursday close exit for N=3). Deliberately ONE BAR off
-# from Spec #003's own horizon_bars semantics (close(signal) -> close(signal+h)),
-# because #003 measures from the SIGNAL bar while #004/#005 measure
-# holding duration from the EXECUTABLE ENTRY bar -- see
-# `evidence_horizon_bars` vs `strategy_holding_bars` in EvidencePacket/
-# ExitHypothesis docstrings below, and docs/spec004_architecture.md.
+# Tue/Wed/Thu -> Thursday close exit for N=3). #003 measures from the
+# SIGNAL bar (close(signal)->close(signal+h)) while #004/#005 measure
+# holding duration from the EXECUTABLE ENTRY bar -- under NEXT_BAR_OPEN
+# entry these two conventions currently land on the SAME exit bar/date
+# (entry is exactly one bar after signal, so TIME_EXIT N and Spec #003's
+# horizon_bars=N are numerically equal), but they are not the same
+# quantity: what differs is the ENTRY REFERENCE (price/timing) the return
+# is measured from -- #003 measures close(signal)->close(signal+h), #005
+# will measure open(entry)->close(exit). GPT Review #004 Round 1 flagged
+# the original wording here ("deliberately one bar off") as imprecise
+# for overclaiming a date difference that TEST 45 itself disproves;
+# corrected to state the actual difference (entry reference point), not
+# exit-bar date. See `evidence_horizon_bars` vs
+# `strategy_holding_bars` in EvidencePacket/ExitHypothesis docstrings
+# below, and docs/spec004_architecture.md.
 HORIZON_REFERENCE_POINT = "ENTRY_BAR"
 
 # Only allowed value in V1 (Radu's SS110-B addendum).
@@ -178,10 +198,19 @@ class HorizonCandidateSet:
     together -- #004 never auto-selects one. `selection_basis` is a
     human/agent-written description of why this range was proposed (e.g.
     "Development evidence decay concentrated in the 2-5 bar zone"), never
-    a claim that any one value is optimal."""
+    a claim that any one value is optimal.
+
+    `parameter_source` (PATCH #004-A finding #5, GPT Review #004 Round 1):
+    a REQUIRED, honest declaration of how this candidate set was chosen --
+    `materialize_variants()` propagates it verbatim onto every TIME_EXIT
+    variant it derives, so a caller who pre-specified [2,3,5] before ever
+    seeing evidence (`PRE_SPECIFIED`) is never mislabeled as
+    `EVIDENCE_DERIVED`. Part of the family fingerprint (a set considered
+    for a different reason is a different commitment, TEST 59)."""
     unit: str  # "BARS" -- only allowed value V1
     values: tuple[int, ...]
     selection_basis: str
+    parameter_source: str  # ParameterSource
 
 
 @dataclass(frozen=True)
@@ -442,6 +471,20 @@ class AgentReview:
 
 
 @dataclass(frozen=True)
+class HumanDecision:
+    """PATCH #004-A finding #1 (GPT Review #004 Round 1) -- the explicit,
+    structured record of the ONE decision that actually gates
+    PREREGISTERED (SS46). Replaces the original bare
+    `human_decision: Optional[str]`, which `can_preregister()` treated as
+    a boolean by non-emptiness alone -- accepting "REJECT" or any other
+    non-empty rejection text as if it were approval."""
+    decision: str  # HumanDecisionValue
+    decided_by: str
+    decided_at: str
+    rationale: Optional[str] = None
+
+
+@dataclass(frozen=True)
 class ConsensusRecord:
     """Spec #004 SS45-46. `human_decision` is None until Radu (or another
     designated human) records one; `consensus_status` ALONE can never
@@ -450,7 +493,7 @@ class ConsensusRecord:
     reviews: tuple[AgentReview, ...]
     consensus_status: str  # ConsensusStatus
     unresolved_objections: tuple[str, ...]
-    human_decision: Optional[str] = None
+    human_decision: Optional[HumanDecision] = None
 
 
 @dataclass(frozen=True)
@@ -477,9 +520,11 @@ class FutureResearchNote:
 class DecayPoint:
     """One point on the #003 decay curve, carried through unmodified
     (Spec #004 must never auto-pick a "best" horizon from this -- SS12/34,
-    TEST 12). `horizon_bars` here is `evidence_horizon_bars` (Spec #003
-    close(signal)->close(signal+h)), NOT `strategy_holding_bars` -- see
-    ExitHypothesis docstring for why these are two different number lines."""
+    TEST 12). `evidence_horizon_bars` here is Spec #003's own quantity
+    (close(signal)->close(signal+h)), NOT `strategy_holding_bars` -- see
+    ExitHypothesis/HORIZON_REFERENCE_POINT docstrings for the precise
+    difference (entry reference point, not exit-bar date -- corrected per
+    GPT Review #004 Round 1)."""
     evidence_horizon_bars: int
     mean_relative_return: Optional[float]
     median_relative_return: Optional[float]
@@ -494,7 +539,19 @@ class EvidencePacket:
     RunRegistry, per Radu's SS110-F confirmation), never from a live PIT
     connection. Flat/primitive fields on purpose: keeps the packet compact
     for an LLM prompt (target ~1-3KB, SS40), and makes the outcome-
-    contamination boundary (SS72) trivial to scan for by field name."""
+    contamination boundary (SS72) trivial to scan for by field name.
+
+    `primary_evidence_horizon_bars` is the config-policy `reference_
+    horizon_bars` (PATCH #004-A finding #4, GPT Review #004 Round 1) --
+    NEVER a free parameter a caller picks per call, and never chosen
+    because it looks best: `evidence/packet.py:build_evidence_packet()`
+    reads it from `hypothesis.yaml`'s `evidence_reference` block and
+    applies the SAME horizon to every signature, so no signature's entry
+    into a downstream Research Queue is implicitly "the horizon that
+    happened to win." `primary_missingness_ratio`/`primary_has_stability_
+    bins` were added so the Research Queue's data-quality eligibility
+    check can run entirely off this packet, without also needing the raw
+    `EvidenceProfile` (SS110-H)."""
     signature_id: str
     entry_conditions_summary: tuple[str, ...]
     timeframe: str
@@ -516,6 +573,8 @@ class EvidencePacket:
     primary_baseline_median: Optional[float]
     primary_standardized_effect: Optional[float]
     primary_adjusted_p: Optional[float]
+    primary_missingness_ratio: Optional[float]
+    primary_has_stability_bins: bool
 
     warnings: tuple[str, ...] = field(default_factory=tuple)
 
@@ -532,9 +591,21 @@ class ResearchQueueEntry:
     is ALWAYS the literal string "DEVELOPMENT_OUTCOME_AWARE_SELECTION"
     whenever `review_priority_key` is populated (Radu's SS110-H guard) and
     "NOT_APPLICABLE" otherwise -- this field, and everything it is derived
-    from, must never appear inside a StrategyDefinition (TEST 34)."""
+    from, must never appear inside a StrategyDefinition (TEST 34).
+
+    ONE entry per SIGNATURE (PATCH #004-A finding #4, GPT Review #004
+    Round 1) -- never per (signature, horizon). The original per-horizon
+    design meant the same signature could occupy up to 5 queue slots, one
+    per tested horizon, and the horizon whose outcome looked strongest
+    would tend to rank first -- an implicit, backdoor form of the exact
+    "best-horizon selection" #004 exists to forbid, even though no field
+    named `selected_horizon` was ever written anywhere. `reference_
+    horizon_bars` (renamed from `evidence_horizon_bars`) records WHICH
+    horizon the packet's policy-designated reference point was -- the
+    same value for every signature in one queue run, never chosen per
+    signature."""
     signature_id: str
-    evidence_horizon_bars: int
+    reference_horizon_bars: int
     evaluation_run_id: str
 
     eligible: bool

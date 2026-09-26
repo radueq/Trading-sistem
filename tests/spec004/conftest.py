@@ -29,12 +29,21 @@ from evaluation.models.entities import EvaluationSignatureDefinition
 
 from hypothesis.config.loader import load_config as load_hypothesis_config
 from hypothesis.models.entities import (
+    Direction,
     EntryDefinition,
     EvidenceProvenance,
     HorizonCandidateSet,
+    HumanDecision,
+    HumanDecisionValue,
+    HypothesisComplexitySnapshot,
+    HypothesisProvenance,
+    HypothesisResearchMode,
+    HypothesisStatus,
     LaneStateCondition,
+    ParameterSource,
+    StrategyHypothesis,
 )
-from hypothesis.registry.hypotheses import HypothesisRegistry
+from hypothesis.registry.hypotheses import HypothesisRegistry, build_hypothesis_id, hypothesis_fingerprint, materialize_variants
 
 SIGNATURE_ID = "VOL_COMPRESSION_RS_HIGH"
 EVALUATION_RUN_ID = "run_x"
@@ -113,7 +122,18 @@ def entry_definition():
 
 @pytest.fixture
 def horizon_candidates():
-    return HorizonCandidateSet(unit="BARS", values=(2, 3, 5), selection_basis="decay concentrated in the 2-5 bar zone")
+    return HorizonCandidateSet(
+        unit="BARS", values=(2, 3, 5), selection_basis="decay concentrated in the 2-5 bar zone",
+        parameter_source=ParameterSource.PRE_SPECIFIED.value,
+    )
+
+
+def approved_human_decision(by: str = "radu", at: str = "2026-09-25T00:05:00Z") -> HumanDecision:
+    return HumanDecision(decision=HumanDecisionValue.APPROVE.value, decided_by=by, decided_at=at)
+
+
+def rejected_human_decision(by: str = "radu", at: str = "2026-09-25T00:05:00Z", rationale: str = "") -> HumanDecision:
+    return HumanDecision(decision=HumanDecisionValue.REJECT.value, decided_by=by, decided_at=at, rationale=rationale)
 
 
 def make_evidence_profile(
@@ -165,6 +185,15 @@ def profiles_all_horizons():
     ]
 
 
+@pytest.fixture
+def evidence_packet(signature_definition, profiles_all_horizons, run_registry, hypothesis_config):
+    """One signature's full decay curve, packaged the way evidence/queue.py
+    now consumes it (PATCH #004-A finding #4) -- ONE packet per signature,
+    never per (signature, horizon)."""
+    from hypothesis.evidence.packet import build_evidence_packet
+    return build_evidence_packet(signature_definition, profiles_all_horizons, run_registry, hypothesis_config)
+
+
 def make_proposal_raw(**overrides) -> dict:
     raw = {
         "proposal_id": "prop_1",
@@ -179,7 +208,10 @@ def make_proposal_raw(**overrides) -> dict:
             {"lane": "volatility", "label": "COMPRESSION"}, {"lane": "relative_strength", "label": "VERY_HIGH"},
         ]},
         "entry_execution_policy": "NEXT_BAR_OPEN",
-        "horizon_candidates": {"unit": "BARS", "values": [2, 3, 5], "selection_basis": "decay concentrated in the 2-5 bar zone"},
+        "horizon_candidates": {
+            "unit": "BARS", "values": [2, 3, 5], "selection_basis": "decay concentrated in the 2-5 bar zone",
+            "parameter_source": "PRE_SPECIFIED",
+        },
         "exit_hypotheses": [{
             "exit_family": "SIGNAL_INVALIDATION", "horizon_reference_point": "ENTRY_BAR",
             "exit_execution_policy": "BAR_CLOSE", "parameter_source": "EVIDENCE_DERIVED", "max_holding_bars": 5,
@@ -191,3 +223,53 @@ def make_proposal_raw(**overrides) -> dict:
     }
     raw.update(overrides)
     return raw
+
+
+def build_preregistered_hypothesis_for_test(
+    entry_definition, horizon_candidates, evidence_provenance, hypothesis_config,
+    direction: str = Direction.LONG.value, parent_signature_id: str | None = None,
+    registry: HypothesisRegistry | None = None, signal_invalidation_exits: tuple = (),
+    baseline_time_exit_bars: int | None = None,
+):
+    """Test-only helper (PATCH #004-A): builds a DRAFT StrategyHypothesis,
+    materializes its variants, freezes it to PREREGISTERED, and
+    `_force_register()`s both into `registry` -- bypassing the full
+    `preregister_hypothesis()` gate ON PURPOSE, since most tests using
+    this helper are exercising something ELSE entirely (fingerprints,
+    immutability, provenance consistency, StrategyDefinition assembly)
+    and don't need to re-prove consensus/human-approval machinery every
+    time. TEST 53-55 exercise the real gate directly. Returns
+    (hypothesis, variants, registry)."""
+    registry = registry if registry is not None else HypothesisRegistry()
+    parent_signature_id = parent_signature_id or evidence_provenance.signature_id
+    fp = hypothesis_fingerprint(
+        parent_signature_id, direction, entry_definition, "NEXT_BAR_OPEN", horizon_candidates,
+        evidence_provenance, hypothesis_config.config_version,
+    )
+    hid, dh = build_hypothesis_id(fp)
+    comp = HypothesisComplexitySnapshot(
+        hypothesis_config.data["hypothesis_complexity"]["max_entry_conditions"],
+        hypothesis_config.data["hypothesis_complexity"]["max_optional_confirmation_conditions"],
+        hypothesis_config.config_version,
+    )
+    prov = HypothesisProvenance("HUMAN:radu", None, None, "radu", "2026-09-25T00:00:00Z")
+    draft = StrategyHypothesis(
+        hypothesis_id=hid, hypothesis_version=1, definition_hash=dh, status=HypothesisStatus.DRAFT.value,
+        research_mode=HypothesisResearchMode.PREREGISTERED_STRATEGY.value, parent_signature_id=parent_signature_id,
+        signature_set_id=evidence_provenance.signature_set_id, direction=direction, direction_basis="EVIDENCE_SIGN",
+        entry_definition=entry_definition, entry_execution_policy="NEXT_BAR_OPEN", horizon_candidate_set=horizon_candidates,
+        variant_ids=(), evidence_provenance=evidence_provenance, hypothesis_provenance=prov, constraints=comp,
+        created_at="2026-09-25T00:00:00Z", created_by="radu", strategy_config_version=hypothesis_config.config_version,
+    )
+    variants = materialize_variants(
+        draft, signal_invalidation_exits=signal_invalidation_exits, created_at="2026-09-25T00:00:00Z",
+        baseline_time_exit_bars=baseline_time_exit_bars,
+    )
+    hyp = draft.__class__(**{
+        **draft.__dict__, "status": HypothesisStatus.PREREGISTERED.value,
+        "variant_ids": tuple(v.strategy_variant_id for v in variants),
+    })
+    registry._force_register(hyp)
+    for v in variants:
+        registry.register_variant(v)
+    return hyp, variants, registry

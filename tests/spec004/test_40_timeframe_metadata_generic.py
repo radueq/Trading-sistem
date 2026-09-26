@@ -17,5 +17,5 @@ def test_no_day_coupled_field_name_anywhere():
 
 
 def test_horizon_unit_field_exists_and_is_bars():
-    hs = HorizonCandidateSet(unit="BARS", values=(2, 3), selection_basis="x")
+    hs = HorizonCandidateSet(unit="BARS", values=(2, 3), selection_basis="x", parameter_source="PRE_SPECIFIED")
     assert hs.unit == "BARS"

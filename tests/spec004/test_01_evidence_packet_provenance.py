@@ -2,8 +2,8 @@
 from hypothesis.evidence.packet import build_evidence_packet
 
 
-def test_evidence_packet_carries_full_provenance(signature_definition, profiles_all_horizons, run_registry):
-    packet = build_evidence_packet(signature_definition, profiles_all_horizons, run_registry, primary_horizon_bars=3)
+def test_evidence_packet_carries_full_provenance(signature_definition, profiles_all_horizons, run_registry, hypothesis_config):
+    packet = build_evidence_packet(signature_definition, profiles_all_horizons, run_registry, hypothesis_config)
     ep = packet.evidence_provenance
     assert ep.evaluation_run_id == run_registry.evaluation_run_id
     assert ep.evaluation_engine_version == run_registry.evaluation_engine_version

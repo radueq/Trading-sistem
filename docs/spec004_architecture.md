@@ -142,6 +142,21 @@ shows the two numbers coincide only because entry is exactly one bar
 after signal, never because they are the same formula. Documented per
 Radu's own closing note:
 
+**PATCH #004-A correction (GPT Review #004 Round 1, finding #7):** an
+earlier version of this note framed the distinction as the two
+conventions being "one bar off" from each other. That wording
+overclaimed a date difference: under the frozen `NEXT_BAR_OPEN` /
+`ENTRY_BAR` convention, Spec #003's `horizon_bars=N` and Spec #004's
+`TIME_EXIT N` land on the **same exit bar** -- TEST 45 proves the exit
+indices are numerically equal, it does not show a one-bar gap. The real
+difference is the **entry reference point**, not the exit date: #003
+measures `close(signal) -> close(signal+h)`; #004/#005 measure
+`open(entry) -> close(exit)`, where `entry = signal + 1 bar`. So the
+precise statement is: *the same nominal horizon can currently share the
+same exit bar, while measuring a different executable return, because
+the entry reference differs* -- never that the exit dates themselves
+differ by a bar.
+
 > "Nu putem afirma ca #003 a demonstrat +1% la 3 zile, deci strategia cu
 > entry next-open si exit 3 bars are +1% expectancy. #003 a motivat
 > ipoteza; #005 va masura strategia executabila." -- Radu
@@ -260,6 +275,28 @@ built, stays entirely outside this package (SS93-94).
   `StrategyDefinition` (TEST 34/51) -- review priority can never reach a
   runtime trading rule.
 
+**PATCH #004-A finding #4 (GPT Review #004 Round 1): the queue is now
+strictly signature-level, never signature x horizon.** The original
+design produced one `ResearchQueueEntry` per `(signature, horizon)`
+pair -- so the same signature could occupy up to 5 queue slots (one per
+tested horizon), and whichever horizon happened to look strongest would
+tend to surface first. Even with no field literally named
+`selected_horizon`, that was an operational backdoor around the "never
+select the best horizon" rule (SS12/TEST 12). `build_research_queue()`
+now consumes a `list[EvidencePacket]` (already the whole-decay-curve,
+one-per-signature artifact `evidence/packet.py` produces) and emits
+exactly one `ResearchQueueEntry` per packet (TEST 58). Both eligibility
+and priority are computed from the packet's `primary_*` fields --
+values pinned to ONE policy-fixed horizon, `hypothesis.yaml`'s
+`evidence_reference.reference_horizon_bars` (applied identically to
+every signature, never chosen per-signature and never a free parameter
+to `build_evidence_packet()`/`build_research_queue()`) -- never from a
+max/min search across the curve. `ResearchQueueEntry.evidence_horizon_
+bars` was renamed to `reference_horizon_bars` to make this explicit, and
+`build_research_queue()` hard-fails (`ValueError`) if handed a packet
+built under a different reference-horizon policy than the one it is
+told to use.
+
 ## Package layout
 
 ```
@@ -277,6 +314,12 @@ src/hypothesis/
   registry/
     hypotheses.py             fingerprinting, HypothesisRegistry, versions
     strategy_registry.py      StrategyDefinition assembly
+    preregistration.py       preregister_hypothesis() -- the ONE atomic
+                               gate that may produce PREREGISTERED
+                               (PATCH #004-A finding #1)
+    persistence.py           JsonlAuditLog + PersistentHypothesisRegistry
+                               -- durable append-only audit trail
+                               (PATCH #004-A finding #6)
   validation/
     rules.py                  pre-preregistration gate (registry context)
     provenance.py              provenance-vs-actual-run guard (SS110-F)

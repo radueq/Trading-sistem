@@ -31,8 +31,8 @@ def test_only_horizon_candidates_differing_still_changes_the_family_id_but_keeps
     import hypothesis.models.entities as ent
     ed = ent.EntryDefinition(core_conditions=(ent.LaneStateCondition("volatility", "COMPRESSION"),))
     ev = ent.EvidenceProvenance("run_x", "v1.0.0", "cfg_eval", "SIG_X", "sigset_x", "v1.0.0", "cfg_disc", "1D")
-    hs_a = HorizonCandidateSet(unit="BARS", values=(2, 3, 5), selection_basis="x")
-    hs_b = HorizonCandidateSet(unit="BARS", values=(2, 3), selection_basis="x")
+    hs_a = HorizonCandidateSet(unit="BARS", values=(2, 3, 5), selection_basis="x", parameter_source="PRE_SPECIFIED")
+    hs_b = HorizonCandidateSet(unit="BARS", values=(2, 3), selection_basis="x", parameter_source="PRE_SPECIFIED")
     fp_a = hypothesis_fingerprint("SIG_X", "LONG", ed, "NEXT_BAR_OPEN", hs_a, ev, "cfg_hyp")
     fp_b = hypothesis_fingerprint("SIG_X", "LONG", ed, "NEXT_BAR_OPEN", hs_b, ev, "cfg_hyp")
     assert fp_a != fp_b, "a different horizon_candidate_set is a different family commitment, and must change the id"

@@ -17,8 +17,8 @@ def test_evidence_packet_fields_never_reference_price_history():
             assert token not in name.lower(), f"EvidencePacket.{name} looks like raw price history"
 
 
-def test_built_packet_repr_has_no_price_series(signature_definition, profiles_all_horizons, run_registry):
-    packet = build_evidence_packet(signature_definition, profiles_all_horizons, run_registry, primary_horizon_bars=3)
+def test_built_packet_repr_has_no_price_series(signature_definition, profiles_all_horizons, run_registry, hypothesis_config):
+    packet = build_evidence_packet(signature_definition, profiles_all_horizons, run_registry, hypothesis_config)
     text = repr(packet)
     for token in ("open=", "close=", "high=", "low=", "ohlc"):
         assert token not in text.lower()

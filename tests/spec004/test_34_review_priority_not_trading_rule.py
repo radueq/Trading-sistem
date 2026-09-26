@@ -13,8 +13,8 @@ def test_no_priority_field_on_runtime_trading_structures():
             assert "priority" not in f.name.lower(), f"{cls.__name__}.{f.name} must never carry review priority"
 
 
-def test_research_queue_entries_never_reference_a_strategy_definition_field(profiles_all_horizons, hypothesis_config):
-    entries = build_research_queue(profiles_all_horizons, "run_x", hypothesis_config)
+def test_research_queue_entries_never_reference_a_strategy_definition_field(evidence_packet, hypothesis_config):
+    entries = build_research_queue([evidence_packet], hypothesis_config)
     strategy_field_names = {f.name for f in dataclasses.fields(StrategyDefinition)}
     entry_field_names = {f.name for f in dataclasses.fields(type(entries[0]))}
     assert not (strategy_field_names & entry_field_names), "ResearchQueueEntry must share no fields with StrategyDefinition"

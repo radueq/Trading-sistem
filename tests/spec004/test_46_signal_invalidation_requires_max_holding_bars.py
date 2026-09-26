@@ -23,7 +23,7 @@ def test_signal_invalidation_without_max_holding_bars_is_rejected_at_proposal_st
     assert any("max_holding_bars" in e for e in result.errors)
 
 
-def test_signal_invalidation_without_max_holding_bars_is_rejected_at_preregistration_gate(registry, hypothesis_config):
+def test_signal_invalidation_without_max_holding_bars_is_rejected_at_preregistration_gate(registry, hypothesis_config, run_registry):
     from hypothesis.models.entities import (
         Direction, EntryDefinition, HypothesisComplexitySnapshot, HypothesisProvenance,
         HypothesisResearchMode, HypothesisStatus, LaneStateCondition, StrategyHypothesis, InvalidationCondition,
@@ -31,7 +31,7 @@ def test_signal_invalidation_without_max_holding_bars_is_rejected_at_preregistra
     from hypothesis.registry.hypotheses import build_hypothesis_id, build_variant, hypothesis_fingerprint, materialize_variants, HorizonCandidateSet
 
     entry = EntryDefinition(core_conditions=(LaneStateCondition("volatility", "COMPRESSION"),))
-    horizons = HorizonCandidateSet(unit="BARS", values=(3,), selection_basis="x")
+    horizons = HorizonCandidateSet(unit="BARS", values=(3,), selection_basis="x", parameter_source="PRE_SPECIFIED")
     from hypothesis.models.entities import EvidenceProvenance
     ev = EvidenceProvenance("run_x", "v1.0.0", "cfg_eval", "SIG_X", "sigset_x", "v1.0.0", "cfg_disc", "1D")
     fp = hypothesis_fingerprint("SIG_X", Direction.LONG.value, entry, "NEXT_BAR_OPEN", horizons, ev, hypothesis_config.config_version)
@@ -57,6 +57,6 @@ def test_signal_invalidation_without_max_holding_bars_is_rejected_at_preregistra
     all_variants = time_exit_variants + (bad_variant,)
     hyp = hyp.__class__(**{**hyp.__dict__, "variant_ids": tuple(v.strategy_variant_id for v in all_variants)})
 
-    ok, errors = validate_for_preregistration(hyp, all_variants, registry, hypothesis_config.data)
+    ok, errors = validate_for_preregistration(hyp, all_variants, registry, hypothesis_config.data, run_registry)
     assert not ok
     assert any("max_holding_bars" in e for e in errors)

@@ -13,6 +13,7 @@ from __future__ import annotations
 import hashlib
 
 from hypothesis.models.entities import HypothesisStatus, StrategyDefinition, StrategyHypothesis, StrategyVariant
+from hypothesis.registry.hypotheses import HypothesisRegistry
 
 UNIVERSE_POLICY = "DISCOVERY_ELIGIBLE_UNIVERSE"
 
@@ -23,12 +24,36 @@ def build_strategy_id(hypothesis_id: str, strategy_variant_id: str) -> str:
 
 
 def build_strategy_definition(
-    hypothesis: StrategyHypothesis, variant: StrategyVariant, market: str = "US_EQUITIES",
+    hypothesis: StrategyHypothesis, variant: StrategyVariant, registry: HypothesisRegistry, market: str = "US_EQUITIES",
 ) -> StrategyDefinition:
+    """PATCH #004-A finding #1 (GPT Review #004 Round 1): the previous
+    version trusted `hypothesis.status`/`variant.strategy_variant_id`
+    literally, so a caller could fabricate a `StrategyHypothesis(status=
+    "PREREGISTERED", ...)` object by hand -- never registered anywhere --
+    and still get a `StrategyDefinition` out of it. `registry` is now
+    REQUIRED, and this function verifies the exact objects passed in
+    match what the registry actually has on file for that id, closing
+    the gap between "claims PREREGISTERED" and "went through
+    `preregister_hypothesis()`, the only gate that writes one"."""
+    stored_hypothesis = registry.get(hypothesis.hypothesis_id)
+    if stored_hypothesis is None or stored_hypothesis != hypothesis:
+        raise ValueError(
+            f"hypothesis {hypothesis.hypothesis_id!r} does not match the registry's own stored record "
+            f"(or isn't registered at all) -- a StrategyDefinition can only be built from a hypothesis "
+            f"that actually went through registry.preregistration.preregister_hypothesis(), never a "
+            f"caller-constructed object claiming PREREGISTERED"
+        )
     if hypothesis.status != HypothesisStatus.PREREGISTERED.value:
         raise ValueError(
             f"hypothesis {hypothesis.hypothesis_id!r} is not PREREGISTERED (status={hypothesis.status!r}) -- "
             f"a StrategyDefinition can only be built from a frozen, approved hypothesis (SS63)"
+        )
+
+    stored_variant = registry.get_variant(variant.strategy_variant_id)
+    if stored_variant is None or stored_variant != variant:
+        raise ValueError(
+            f"variant {variant.strategy_variant_id!r} does not match the registry's own stored record "
+            f"(or isn't registered at all)"
         )
     if variant.parent_hypothesis_id != hypothesis.hypothesis_id:
         raise ValueError(

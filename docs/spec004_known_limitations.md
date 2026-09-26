@@ -64,7 +64,14 @@ Evaluation produced, exactly as-is.
   future change to entry timing (there is none planned) would break this
   coincidence and must not silently change what "3 bars" means in
   existing frozen hypotheses (their `definition_hash` would already
-  differ, since `entry_execution_policy` is part of it).
+  differ, since `entry_execution_policy` is part of it). **PATCH #004-A
+  correction (GPT Review #004 Round 1, finding #7):** the same nominal
+  horizon currently shares the same exit bar between #003 and #004/#005
+  (TEST 45 proves the exit indices are equal) -- it is the ENTRY
+  REFERENCE point (`close(signal)` vs `open(entry)`) that differs, not
+  the exit date. An earlier version of this note described the two
+  conventions as "one bar off," which overclaimed a date difference that
+  does not exist under the frozen convention.
 - **Rejected proposals/hypotheses are never deleted** (SS53/SS108) -- the
   registry is append-only. This means a research cycle's `HypothesisUniverse`
   snapshot can grow large over many iterations; no pruning/archival
@@ -96,7 +103,79 @@ execution) or later specs this one deliberately does not reach into.
 ## Test coverage
 
 - All 44 required tests (Spec #004 SS97) plus 8 tests added for Radu's
-  SS110 architecture-review amendments (TEST 45-52) pass -- see
-  `docs/spec004_test_report.md`. None are `PENDING`; hand-constructed
-  fixtures are sufficient to exercise every required property, since no
-  PIT/pipeline dependency exists in this package at all.
+  SS110 architecture-review amendments (TEST 45-52), plus 33 tests added
+  for PATCH #004-A (TEST 53-61) pass -- see `docs/spec004_test_report.md`.
+  None are `PENDING`; hand-constructed fixtures are sufficient to
+  exercise every required property, since no PIT/pipeline dependency
+  exists in this package at all.
+
+## PATCH #004-A (GPT Review #004 Round 1)
+
+Seven findings, six requiring code changes plus one documentation-only
+correction -- all fixed:
+
+1. **Fixed -- preregistration could be fully bypassed.**
+   `can_preregister()` treated any non-empty `human_decision` string as
+   approval (even `"REJECT"`); `HypothesisRegistry.register()` accepted
+   a hand-built `StrategyHypothesis(status="PREREGISTERED", ...)`
+   directly with no consensus/approval/provenance check;
+   `build_strategy_definition()` only checked the object's own claimed
+   status, never that it went through the real registry.
+   `human_decision` is now a `HumanDecision` dataclass whose `decision`
+   field is constrained to `HumanDecisionValue.APPROVE`/`REJECT`;
+   `registry/preregistration.py:preregister_hypothesis()` is the ONE
+   atomic entry point that may produce a PREREGISTERED hypothesis;
+   `HypothesisRegistry.register()` now refuses a first-time
+   PREREGISTERED insert; `build_strategy_definition()` now verifies the
+   supplied hypothesis/variant against what the registry itself has
+   stored. TEST 53-55.
+2. **Fixed -- the provenance guard existed but wasn't wired into the
+   gate.** `check_provenance_matches_run()` was correct but
+   `validate_for_preregistration()` never called it and didn't even
+   receive an `EvaluationRunRegistry`. It now requires `run_registry`
+   and calls the check itself, plus two new internal-consistency checks
+   (`parent_signature_id`/`signature_set_id` must agree with
+   `evidence_provenance`'s own copies of those fields). TEST 56.
+3. **Fixed -- `EvidencePacket` could combine incompatible artifacts.**
+   `build_evidence_packet()` only checked `signature_id` agreement --
+   never timeframe, Discovery engine/config version, exact horizon-set
+   match, duplicate horizons, or a single shared `evaluation_mode`. All
+   six are now hard-fail checks. TEST 57.
+4. **Fixed -- the Research Queue reintroduced implicit best-horizon
+   selection.** Producing one `ResearchQueueEntry` per `(signature,
+   horizon)` meant the same signature could occupy up to 5 slots, with
+   whichever horizon looked strongest tending to rank first -- an
+   operational backdoor around "never select the best horizon" even
+   with no field named `selected_horizon`. The queue is now strictly
+   signature-level (one `EvidencePacket` -> one entry), keyed off a
+   fixed config policy (`evidence_reference.reference_horizon_bars`)
+   applied identically to every signature. TEST 58.
+5. **Fixed -- TIME_EXIT provenance was hardcoded, and baseline was
+   auto-deduced from `min(horizon)`.** `materialize_variants()` always
+   wrote `parameter_source=EVIDENCE_DERIVED` regardless of how the
+   candidate set was actually chosen, and tagged the shortest horizon
+   `BASELINE_VARIANT` by construction. `HorizonCandidateSet.
+   parameter_source` is now a required, fingerprinted field that flows
+   through to every TIME_EXIT variant unchanged; no variant is
+   auto-tagged baseline -- a caller must explicitly pass
+   `baseline_time_exit_bars` (one of the candidate values) to
+   `materialize_variants()`, and the default is no baseline assumed
+   (all `EXPERIMENTAL_VARIANT`). TEST 59-60.
+6. **Fixed -- "append-only registry" was only process memory.**
+   `HypothesisRegistry` stored everything in plain Python dicts/sets --
+   history vanished on process restart. `registry/persistence.py` adds
+   `JsonlAuditLog` (append-only JSONL, one line per event) and
+   `PersistentHypothesisRegistry`, which replays the log into an
+   equivalent registry from nothing but the file -- verified by
+   reconstructing from a completely independent, freshly opened log
+   handle. Composes with, never replaces, the pure in-memory
+   `HypothesisRegistry`. TEST 61.
+7. **Fixed (documentation only) -- imprecise "one bar off" framing.**
+   See the corrected note above under "Statistical/evidentiary
+   honesty": the same nominal horizon currently shares the same exit bar
+   between #003 and #004/#005; the actual difference is the entry
+   reference point, not the exit date.
+
+No changes requested to, or made in, Spec #001-#003's architecture, and
+Spec #005 remains out of scope -- per Radu's own explicit instruction
+closing the review.

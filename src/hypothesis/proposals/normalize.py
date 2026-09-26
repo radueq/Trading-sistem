@@ -73,6 +73,7 @@ def _normalize_horizon_candidates(raw: dict) -> HorizonCandidateSet:
         unit=_require(raw, "unit"),
         values=tuple(_require(raw, "values")),
         selection_basis=raw.get("selection_basis", ""),
+        parameter_source=_require(raw, "parameter_source"),
     )
 
 

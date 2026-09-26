@@ -20,6 +20,18 @@ horizon_candidates:
   unit: BARS
   allowed_values: [1, 2, 3, 5, 10]
 
+# PATCH #004-A finding #4 (GPT Review #004 Round 1): the SINGLE horizon
+# EvidencePacket/Research Queue use as their "primary"/reference point,
+# fixed here BEFORE any evidence is ever built -- never a free parameter
+# a caller picks per call, and never selected because it happens to look
+# best for a given signature. Applied UNIFORMLY to every signature in a
+# run, so no signature's queue entry is implicitly "the horizon that won."
+# 3 bars is the middle value of horizon_candidates.allowed_values above --
+# a Level 1 engineering default, not a validated claim that 3 bars is
+# where edge concentrates.
+evidence_reference:
+  reference_horizon_bars: 3
+
 exit_families:
   - TIME_EXIT
   - SIGNAL_INVALIDATION

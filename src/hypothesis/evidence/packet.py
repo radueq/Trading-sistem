@@ -9,11 +9,28 @@ access, per Radu's SS110-F confirmation) -- never `evaluation.engine`,
 `discovery.engine`, or anything under `data_foundation/`. TEST 36 in
 tests/spec004 is an AST import scan that enforces this for the whole
 `src/hypothesis/` package, not just this module.
+
+PATCH #004-A finding #3 (GPT Review #004 Round 1): the original version
+only checked that every profile's `signature_id` matched the supplied
+signature -- it silently accepted a signature/profiles/run_registry
+combination that "looked compatible" without actually verifying
+provenance agreement (timeframe, Discovery engine/config versions,
+which horizons were tested, whether every profile came from the SAME
+evaluation_mode). `build_evidence_packet()` now hard-fails on any
+mismatch, matching the same discipline Spec #003 uses for its own
+provenance guards, instead of quietly building an internally
+contradictory packet.
+
+PATCH #004-A finding #4: `primary_horizon_bars` is no longer a free
+parameter a caller passes per call -- it is READ from `hypothesis_config`
+(`evidence_reference.reference_horizon_bars`), a policy value fixed
+before any evidence exists and applied identically to every signature.
 """
 from __future__ import annotations
 
 from evaluation.models.entities import EvaluationRunRegistry, EvaluationSignatureDefinition, EvidenceProfile
 
+from hypothesis.config.loader import HypothesisConfig
 from hypothesis.models.entities import DecayPoint, EvidencePacket, EvidenceProvenance
 
 
@@ -23,29 +40,86 @@ def _entry_conditions_summary(sig: EvaluationSignatureDefinition) -> tuple[str, 
     return lane_part + reason_part
 
 
+def _missingness_ratio(profile: EvidenceProfile) -> float | None:
+    m = profile.missingness
+    if not m.episodes:
+        return None
+    non_valid = m.insufficient_future_data + m.crosses_locked_oos + m.missing_benchmark + m.invalid_input
+    return non_valid / m.episodes
+
+
 def build_evidence_packet(
     signature: EvaluationSignatureDefinition,
     profiles: list[EvidenceProfile],
     run_registry: EvaluationRunRegistry,
-    primary_horizon_bars: int,
+    hypothesis_config: HypothesisConfig,
 ) -> EvidencePacket:
     """`profiles` must be every EvidenceProfile for THIS signature across
-    all horizons tested in one run (so the decay curve is complete, SS39)
-    -- never a single horizon in isolation, which would silently hide the
-    rest of the decay curve from the reviewer (SS18-20/TEST 12)."""
+    every horizon `run_registry` actually tested (so the decay curve is
+    complete, SS39, and matches the run's own accounting exactly -- TEST
+    57) -- never a single horizon in isolation, and never a set that
+    silently drops or duplicates a horizon."""
     if not profiles:
         raise ValueError("build_evidence_packet() requires at least one EvidenceProfile")
+
     signature_ids = {p.signature_id for p in profiles}
     if signature_ids != {signature.signature_id}:
         raise ValueError(
             f"all profiles must belong to signature_id={signature.signature_id!r}, got {signature_ids!r}"
         )
 
-    primary = next((p for p in profiles if p.horizon_bars == primary_horizon_bars), None)
+    if signature.timeframe != run_registry.timeframe:
+        raise ValueError(
+            f"signature.timeframe={signature.timeframe!r} does not match run_registry.timeframe="
+            f"{run_registry.timeframe!r} -- cross-artifact provenance mismatch (PATCH #004-A finding #3)"
+        )
+    mismatched_profile_timeframes = {p.timeframe for p in profiles} - {run_registry.timeframe}
+    if mismatched_profile_timeframes:
+        raise ValueError(
+            f"profile(s) with timeframe(s) {sorted(mismatched_profile_timeframes)!r} do not match "
+            f"run_registry.timeframe={run_registry.timeframe!r}"
+        )
+
+    if signature.discovery_engine_version != run_registry.discovery_engine_version:
+        raise ValueError(
+            f"signature.discovery_engine_version={signature.discovery_engine_version!r} does not match "
+            f"run_registry.discovery_engine_version={run_registry.discovery_engine_version!r}"
+        )
+    if signature.discovery_config_version != run_registry.discovery_config_version:
+        raise ValueError(
+            f"signature.discovery_config_version={signature.discovery_config_version!r} does not match "
+            f"run_registry.discovery_config_version={run_registry.discovery_config_version!r}"
+        )
+
+    horizon_list = [p.horizon_bars for p in profiles]
+    if len(horizon_list) != len(set(horizon_list)):
+        raise ValueError(f"duplicate horizon_bars among profiles: {horizon_list!r}")
+    profile_horizons = set(horizon_list)
+    run_horizons = set(run_registry.horizons)
+    if profile_horizons != run_horizons:
+        raise ValueError(
+            f"profiles cover horizons {sorted(profile_horizons)!r}, but run_registry.horizons="
+            f"{sorted(run_horizons)!r} -- every horizon the run actually tested must be present, "
+            f"and none extra (PATCH #004-A finding #3)"
+        )
+
+    evaluation_modes = {p.evaluation_mode for p in profiles}
+    if len(evaluation_modes) != 1:
+        raise ValueError(f"profiles mix evaluation_mode values {sorted(evaluation_modes)!r} -- must all agree")
+    if next(iter(evaluation_modes)) != run_registry.mode:
+        raise ValueError(
+            f"profiles' evaluation_mode={next(iter(evaluation_modes))!r} does not match "
+            f"run_registry.mode={run_registry.mode!r}"
+        )
+
+    reference_horizon_bars = hypothesis_config.data["evidence_reference"]["reference_horizon_bars"]
+    primary = next((p for p in profiles if p.horizon_bars == reference_horizon_bars), None)
     if primary is None:
         raise ValueError(
-            f"primary_horizon_bars={primary_horizon_bars!r} has no matching EvidenceProfile "
-            f"among horizons {sorted(p.horizon_bars for p in profiles)!r}"
+            f"the configured evidence_reference.reference_horizon_bars={reference_horizon_bars!r} "
+            f"has no matching EvidenceProfile among horizons {sorted(profile_horizons)!r} for signature "
+            f"{signature.signature_id!r} -- the reference horizon is a fixed policy value and is never "
+            f"substituted for a different one"
         )
 
     decay_curve = tuple(
@@ -89,5 +163,7 @@ def build_evidence_packet(
         primary_baseline_median=primary.baseline_comparison.baseline_median,
         primary_standardized_effect=primary.baseline_comparison.standardized_effect,
         primary_adjusted_p=primary.baseline_comparison.adjusted_p,
+        primary_missingness_ratio=_missingness_ratio(primary),
+        primary_has_stability_bins=len(primary.stability) > 0,
         warnings=primary.warnings,
     )

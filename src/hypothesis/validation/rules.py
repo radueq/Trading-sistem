@@ -7,8 +7,22 @@ SS52). Distinct from `proposals/validator.py` (which runs on a raw
 HypothesisProposal, before any registry exists): this module re-checks the
 outcome-contamination rule (SS72) defensively on the fully-built objects,
 not just the proposal that led to them.
+
+PATCH #004-A finding #2 (GPT Review #004 Round 1): `validate_for_
+preregistration()` now REQUIRES `run_registry` and calls `validation.
+provenance.check_provenance_matches_run()` itself -- the provenance guard
+existed but nothing wired it into this gate, so a caller could skip it
+entirely. Also adds the internal consistency check the review flagged:
+`StrategyHypothesis.parent_signature_id`/`signature_set_id` are stored
+separately from `evidence_provenance.signature_id`/`signature_set_id`
+(kept for the top-level registry/budget-accounting API), and nothing
+previously verified they actually agree -- a caller could register a
+hypothesis whose declared "parent signature" and budget accounting
+didn't match the Evidence it actually claims to rest on.
 """
 from __future__ import annotations
+
+from evaluation.models.entities import EvaluationRunRegistry
 
 from hypothesis.models.entities import (
     Direction,
@@ -21,6 +35,7 @@ from hypothesis.models.entities import (
     StrategyVariant,
 )
 from hypothesis.registry.hypotheses import HypothesisRegistry
+from hypothesis.validation.provenance import check_provenance_matches_run
 
 # Spec #004 SS72 -- Evidence/outcome fields that must NEVER become part of
 # a runtime entry/exit signal condition (a research finding motivates a
@@ -51,7 +66,7 @@ def _scan_condition_for_outcome_contamination(
 
 def validate_for_preregistration(
     hypothesis: StrategyHypothesis, variants: tuple[StrategyVariant, ...],
-    registry: HypothesisRegistry, hypothesis_config: dict,
+    registry: HypothesisRegistry, hypothesis_config: dict, run_registry: EvaluationRunRegistry,
 ) -> tuple[bool, tuple[str, ...]]:
     errors: list[str] = []
 
@@ -60,6 +75,24 @@ def validate_for_preregistration(
 
     if not hypothesis.evidence_provenance.timeframe:
         errors.append("evidence_provenance.timeframe is required (TEST 41)")
+
+    provenance_ok, provenance_errors = check_provenance_matches_run(hypothesis.evidence_provenance, run_registry)
+    if not provenance_ok:
+        errors.extend(provenance_errors)
+
+    if hypothesis.parent_signature_id != hypothesis.evidence_provenance.signature_id:
+        errors.append(
+            f"hypothesis.parent_signature_id={hypothesis.parent_signature_id!r} does not match "
+            f"hypothesis.evidence_provenance.signature_id={hypothesis.evidence_provenance.signature_id!r} "
+            f"(PATCH #004-A finding #2 -- budget accounting must key on the same signature the "
+            f"evidence actually rests on, TEST 56)"
+        )
+    if hypothesis.signature_set_id != hypothesis.evidence_provenance.signature_set_id:
+        errors.append(
+            f"hypothesis.signature_set_id={hypothesis.signature_set_id!r} does not match "
+            f"hypothesis.evidence_provenance.signature_set_id={hypothesis.evidence_provenance.signature_set_id!r} "
+            f"(PATCH #004-A finding #2, TEST 56)"
+        )
 
     if not hypothesis.horizon_candidate_set.values:
         errors.append("horizon_candidate_set.values must not be empty (TEST 11)")

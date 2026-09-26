@@ -30,6 +30,7 @@ from hypothesis.models.entities import (
     HypothesisProposal,
     InvalidationCondition,
     LaneStateCondition,
+    ParameterSource,
     ReasonCodeCondition,
 )
 
@@ -113,6 +114,12 @@ def _check_horizon_candidates(hs: HorizonCandidateSet, cfg: dict, errors: list[s
         errors.append(f"horizon_candidates.values {sorted(extra)} not in allowed_values={sorted(allowed)} (TEST 11)")
     if not hs.selection_basis or not hs.selection_basis.strip():
         errors.append("horizon_candidates.selection_basis is required (SS20 -- provenance for WHY this range)")
+    valid_parameter_sources = {p.value for p in ParameterSource}
+    if hs.parameter_source not in valid_parameter_sources:
+        errors.append(
+            f"horizon_candidates.parameter_source {hs.parameter_source!r} is not a recognized "
+            f"ParameterSource (PATCH #004-A finding #5) -- must be one of {sorted(valid_parameter_sources)!r}"
+        )
 
 
 def _check_invalidation_condition(ic: InvalidationCondition, lane_vocab: dict[str, set[str]], reason_vocab: set[str], errors: list[str]) -> None:

@@ -14,8 +14,8 @@ def test_horizon_candidate_set_has_no_selected_or_optimal_field():
     assert not any("optimal" in n or "best" in n for n in field_names)
 
 
-def test_decay_curve_reports_every_horizon_even_though_3_bars_is_strongest(signature_definition, profiles_all_horizons, run_registry):
-    packet = build_evidence_packet(signature_definition, profiles_all_horizons, run_registry, primary_horizon_bars=3)
+def test_decay_curve_reports_every_horizon_even_though_3_bars_is_strongest(signature_definition, profiles_all_horizons, run_registry, hypothesis_config):
+    packet = build_evidence_packet(signature_definition, profiles_all_horizons, run_registry, hypothesis_config)
     reported_horizons = {d.evidence_horizon_bars for d in packet.decay_curve}
     assert reported_horizons == {1, 2, 3, 5, 10}
     strongest = max(packet.decay_curve, key=lambda d: d.mean_relative_return or 0)

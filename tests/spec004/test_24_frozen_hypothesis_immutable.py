@@ -36,7 +36,7 @@ def test_dataclass_field_assignment_is_rejected(entry_definition, horizon_candid
 def test_registry_refuses_to_overwrite_preregistered_with_different_content(entry_definition, horizon_candidates, evidence_provenance, hypothesis_config):
     hyp = _preregistered(entry_definition, horizon_candidates, evidence_provenance, hypothesis_config)
     reg = HypothesisRegistry()
-    reg.register(hyp)
+    reg._force_register(hyp)  # planting an already-valid PREREGISTERED record, not exercising register()'s own guard (see TEST 53 for that)
     tampered = dataclasses.replace(hyp, direction_basis="HUMAN_DECISION", created_by="someone_else")
     with pytest.raises(ImmutableHypothesisError):
         reg.register(tampered)

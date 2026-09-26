@@ -3,10 +3,11 @@
 Run: `PYTHONPATH=src:tests python3 -m pytest tests/spec004/ -v` -- Python
 3.11.15, pytest 9.1.1, pandas 3.0.6, numpy 2.4.6, PyYAML 6.0.1.
 
-Result: **98 passed, 0 failed, 0 pending** (across the 44 required tests
-plus TEST 45-52, added per Radu's SS110 A/B/C/D/E/F/H amendments during
-architecture review -- several have multiple focused sub-tests). Full
-repo (Spec #001 + Spec #002 + Spec #003 + Spec #004): **223 passed, 1
+Result: **131 passed, 0 failed, 0 pending** (across the 44 required
+tests, TEST 45-52 added per Radu's SS110 A/B/C/D/E/F/H amendments during
+architecture review, and TEST 53-61 added for PATCH #004-A -- GPT Review
+#004 Round 1 -- several have multiple focused sub-tests). Full repo
+(Spec #001 + Spec #002 + Spec #003 + Spec #004): **256 passed, 1
 skipped** (Spec #001 TEST 8, `PENDING_LEVEL_2_DATA`, unaffected).
 
 No PIT/ingestion/database is exercised anywhere in this package -- every
@@ -69,6 +70,15 @@ receive already-materialized Evaluation artifacts.
 | 50 | Eligibility thresholds frozen/versioned | `test_50_eligibility_thresholds_frozen_versioned.py` | **PASS** (2 sub-tests) | Identical inputs+config reproduce identical eligibility; a tightened config changes both `eligibility_config_version` and the actual results. |
 | 51 | Review priority always labeled and excluded | `test_51_review_priority_always_labeled_and_excluded.py` | **PASS** (2 sub-tests) | Every ranked entry carries `DEVELOPMENT_OUTCOME_AWARE_SELECTION`; the constant never appears as a `StrategyDefinition` field. |
 | 52 | Family boundary: direction/entry change | `test_52_family_boundary_direction_or_entry_change.py` | **PASS** (3 sub-tests) | Different entry or direction always changes the family id; a different `horizon_candidate_set` also changes it (the family's own frozen commitment), distinct from the exit/variant level (TEST 22). |
+| 53 | Preregistration cannot be bypassed | `test_53_preregistration_cannot_be_bypassed.py` | **PASS** (5 sub-tests) | PATCH #004-A finding #1. `register()` refuses a hand-built first-time PREREGISTERED object; `preregister_hypothesis()` succeeds through the real gate; rejects without human APPROVE, with an invalid proposal, and with a draft already claiming PREREGISTERED. |
+| 54 | Human decision is an explicit enum, not free text | `test_54_human_decision_explicit_enum.py` | **PASS** (3 sub-tests) | A REJECT decision with any rationale text is never treated as approval; only the literal APPROVE value passes; `HumanDecision` is a structured dataclass, not a bare string. |
+| 55 | StrategyDefinition rejects a fabricated hypothesis | `test_55_strategy_definition_rejects_fabricated_object.py` | **PASS** | Reproduces the exact fabricated-object attack the review described; `build_strategy_definition()` refuses it because the object was never in the registry. |
+| 56 | Provenance and signature-id consistency wired into the gate | `test_56_provenance_and_signature_consistency_wired_into_gate.py` | **PASS** (4 sub-tests) | PATCH #004-A finding #2. A provenance mismatch against the actual run is caught; `parent_signature_id`/`signature_set_id` disagreeing with `evidence_provenance`'s own copies is each rejected; a fully consistent hypothesis passes. |
+| 57 | EvidencePacket cross-artifact consistency | `test_57_evidence_packet_cross_artifact_consistency.py` | **PASS** (7 sub-tests) | PATCH #004-A finding #3. Signature/profile timeframe mismatch, Discovery engine version mismatch, duplicate horizons, missing/extra horizons vs `run_registry.horizons`, and mixed `evaluation_mode` are each rejected; consistent artifacts build successfully. |
+| 58 | Research Queue is signature-level, no implicit selection | `test_58_research_queue_signature_level_no_implicit_selection.py` | **PASS** (4 sub-tests) | PATCH #004-A finding #4. Exactly one entry per signature regardless of decay-curve length; priority uses only the configured reference horizon, never the strongest one; a packet built off-policy is rejected; multiple signatures each get exactly one entry. |
+| 59 | `parameter_source` on TIME_EXIT variants is real, not hardcoded | `test_59_horizon_parameter_source_real.py` | **PASS** (3 sub-tests) | PATCH #004-A finding #5. TIME_EXIT variants inherit the declared `parameter_source` (`PRE_SPECIFIED` or `EVIDENCE_DERIVED`), never a hardcoded value; `parameter_source` participates in the family fingerprint. |
+| 60 | Baseline variant is never auto-deduced from `min(horizon)` | `test_60_baseline_variant_not_auto_deduced.py` | **PASS** (3 sub-tests) | PATCH #004-A finding #5. Default materialization tags nothing as baseline (including the shortest horizon); an explicit `baseline_time_exit_bars` tags exactly that one; a value outside the candidate set is rejected. |
+| 61 | Research history survives a process restart | `test_61_jsonl_audit_log_persistence.py` | **PASS** (3 sub-tests) | PATCH #004-A finding #6. Proposals and a rejection survive a fresh `JsonlAuditLog.replay()`; a preregistered hypothesis and its variants survive a fresh replay AND a third, fully independent `PersistentHypothesisRegistry.open()` call; the log file is never rewritten, only appended to. |
 
 ## How to reproduce
 

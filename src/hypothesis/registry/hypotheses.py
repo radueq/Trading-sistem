@@ -26,7 +26,6 @@ from hypothesis.models.entities import (
     HypothesisStatus,
     HypothesisUniverse,
     LaneStateCondition,
-    ParameterSource,
     ReasonCodeCondition,
     StrategyHypothesis,
     StrategyVariant,
@@ -49,7 +48,13 @@ def _entry_fp(entry: EntryDefinition) -> str:
 
 
 def _horizon_fp(hs: HorizonCandidateSet) -> str:
-    return f"{hs.unit}:{','.join(str(v) for v in sorted(hs.values))}"
+    """Includes `parameter_source` (PATCH #004-A finding #5, GPT Review
+    #004 Round 1): the SAME [2,3,5] proposed for a different reason
+    (e.g. PRE_SPECIFIED before any evidence existed vs. EVIDENCE_DERIVED
+    from a decay curve) is a different commitment, not an implementation
+    detail -- `selection_basis` (free text) stays excluded from the hash,
+    same as any other narrative-only field."""
+    return f"{hs.unit}:{','.join(str(v) for v in sorted(hs.values))}:{hs.parameter_source}"
 
 
 def _evidence_fp(ep: EvidenceProvenance) -> str:
@@ -123,28 +128,50 @@ def materialize_variants(
     parent: StrategyHypothesis,
     signal_invalidation_exits: tuple[ExitHypothesis, ...] = (),
     created_at: str = "",
+    baseline_time_exit_bars: Optional[int] = None,
 ) -> tuple[StrategyVariant, ...]:
     """Eager materialization at freeze/preregistration time (Radu's
     SS110-C/D, 2026-09-25): every value in `parent.horizon_candidate_set.
-    values` becomes its own TIME_EXIT StrategyVariant -- the shortest
-    horizon tagged BASELINE_VARIANT, the rest EXPERIMENTAL_VARIANT (a
-    documented Level 1 choice, SS83: TIME_EXIT is the mandatory baseline
-    exit family, SS24). Every supplied SIGNAL_INVALIDATION ExitHypothesis
-    becomes one more EXPERIMENTAL_VARIANT. #005 must only ever select
-    among these pre-existing ids -- never create a new one dynamically
-    (this is what proves [2,3,5] were ALL considered before any backtest
-    ran, not invented after seeing which one won)."""
+    values` becomes its own TIME_EXIT StrategyVariant. Every supplied
+    SIGNAL_INVALIDATION ExitHypothesis becomes one more variant. #005
+    must only ever select among these pre-existing ids -- never create a
+    new one dynamically (this is what proves [2,3,5] were ALL considered
+    before any backtest ran, not invented after seeing which one won).
+
+    Two PATCH #004-A fixes (GPT Review #004 Round 1, findings #5):
+
+    - `parameter_source` on each TIME_EXIT's `ExitHypothesis` now comes
+      from `parent.horizon_candidate_set.parameter_source` -- it is no
+      longer hardcoded `EVIDENCE_DERIVED`. If the candidate set was
+      actually `PRE_SPECIFIED` (Radu picked [2,3,5] before seeing any
+      evidence) or `HUMAN_DEFINED`, every materialized TIME_EXIT variant
+      now truthfully says so.
+    - `variant_tag` is no longer DEDUCED from `min(horizon)`: TIME_EXIT
+      is the mandatory baseline exit FAMILY (SS24), but nothing in the
+      spec implies the shortest horizon is methodologically "the"
+      control. By default every TIME_EXIT variant is tagged
+      EXPERIMENTAL_VARIANT (no baseline assumed); a caller that has
+      EXPLICITLY pre-designated one horizon as the baseline (a decision
+      made before backtesting, never inferred here) may pass it via
+      `baseline_time_exit_bars`, and ONLY that exact value is tagged
+      BASELINE_VARIANT. `baseline_time_exit_bars` must itself be one of
+      `parent.horizon_candidate_set.values` (raises otherwise)."""
+    if baseline_time_exit_bars is not None and baseline_time_exit_bars not in parent.horizon_candidate_set.values:
+        raise ValueError(
+            f"baseline_time_exit_bars={baseline_time_exit_bars!r} is not one of the candidate "
+            f"values {sorted(parent.horizon_candidate_set.values)!r}"
+        )
     variants: list[StrategyVariant] = []
     sorted_horizons = sorted(parent.horizon_candidate_set.values)
-    for i, bars in enumerate(sorted_horizons):
+    for bars in sorted_horizons:
         exit_h = ExitHypothesis(
             exit_family=ExitFamily.TIME_EXIT.value,
             horizon_reference_point=HORIZON_REFERENCE_POINT,
             exit_execution_policy=EXIT_EXECUTION_POLICY,
-            parameter_source=ParameterSource.EVIDENCE_DERIVED.value,
+            parameter_source=parent.horizon_candidate_set.parameter_source,
             time_exit_bars=bars,
         )
-        tag = VariantTag.BASELINE_VARIANT.value if i == 0 else VariantTag.EXPERIMENTAL_VARIANT.value
+        tag = VariantTag.BASELINE_VARIANT.value if bars == baseline_time_exit_bars else VariantTag.EXPERIMENTAL_VARIANT.value
         variants.append(build_variant(parent, exit_h, tag, created_at))
     for exit_h in signal_invalidation_exits:
         variants.append(build_variant(parent, exit_h, VariantTag.EXPERIMENTAL_VARIANT.value, created_at))
@@ -160,7 +187,21 @@ class HypothesisRegistry:
     PREREGISTERED record can never be overwritten with different content
     under the same id -- the only way to change trading meaning is
     `create_new_version()`, which always produces a different
-    `hypothesis_id` (TEST 24/25)."""
+    `hypothesis_id` (TEST 24/25).
+
+    PATCH #004-A finding #1 (GPT Review #004 Round 1): `register()` can
+    no longer be used to introduce a hypothesis that already claims
+    `status=PREREGISTERED` for the first time -- previously a caller
+    could construct `StrategyHypothesis(status="PREREGISTERED", ...)`
+    by hand and hand it straight to `register()`, completely bypassing
+    consensus, human approval, provenance checks, and the pre-
+    preregistration gate. The ONLY supported path to a new PREREGISTERED
+    record is `registry.preregistration.preregister_hypothesis()`, which
+    performs every required check and then calls the internal
+    `_force_register()` below. `register()` remains available for
+    DRAFT/REVIEWED/REJECTED/HANDOFF_TO_BACKTEST records, and for
+    idempotently re-registering an ALREADY-stored PREREGISTERED record
+    with identical content (e.g. replaying an audit log)."""
 
     def __init__(self) -> None:
         self._hypotheses: dict[str, StrategyHypothesis] = {}
@@ -169,6 +210,21 @@ class HypothesisRegistry:
         self._rejected_proposal_ids: set[str] = set()
 
     def register(self, hyp: StrategyHypothesis) -> StrategyHypothesis:
+        existing = self._hypotheses.get(hyp.hypothesis_id)
+        if existing is None and hyp.status == HypothesisStatus.PREREGISTERED.value:
+            raise ImmutableHypothesisError(
+                f"hypothesis_id={hyp.hypothesis_id!r} cannot be inserted directly as PREREGISTERED via "
+                f"register() -- use registry.preregistration.preregister_hypothesis(), the only atomic "
+                f"gate allowed to introduce a new PREREGISTERED record (PATCH #004-A finding #1)"
+            )
+        return self._force_register(hyp)
+
+    def _force_register(self, hyp: StrategyHypothesis) -> StrategyHypothesis:
+        """Internal bypass of the PREREGISTERED-insertion guard above --
+        called ONLY by `registry.preregistration.preregister_hypothesis()`
+        after it has already performed every required check, and by
+        `registry.persistence` when replaying an audit log (whose entries
+        were themselves written only after passing that same gate)."""
         existing = self._hypotheses.get(hyp.hypothesis_id)
         if existing is not None:
             if existing.definition_hash != hyp.definition_hash:

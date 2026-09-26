@@ -44,7 +44,7 @@ with no evidence it's needed yet.
 | core -> agent | `EvidencePacket` | Python dataclass, trivially `dataclasses.asdict()`-able to JSON for pasting into a prompt |
 | agent -> core | raw proposal | plain dict/JSON matching `HypothesisProposal`'s field names (`proposals/normalize.py` documents every required/optional key) |
 | agent -> core | `AgentReview` | `{agent_id, model_id, hypothesis_proposal_id, stance, objections[], suggested_changes[], timestamp}` |
-| human -> core | `human_decision` | a plain string, passed to `consensus/consensus.py:compute_consensus()` |
+| human -> core | `human_decision` | a `HumanDecision(decision, decided_by, decided_at, rationale=None)` dataclass, passed to `consensus/consensus.py:compute_consensus()` -- **not** a plain string (PATCH #004-A finding #1, see below) |
 
 `model_id` on `AgentReview` may be a real model identifier (e.g.
 `claude-opus-5-5`) or a manual-relay marker (e.g. `"manual-relay:gpt"`,
@@ -67,13 +67,34 @@ the resulting `stance`s, never about which conceptual role produced them.
 
 `consensus/consensus.py:compute_consensus()` classifies the SHAPE of the
 reviews that occurred (`CONSENSUS`/`DISAGREEMENT`/`BLOCKED`) purely
-descriptively. `can_preregister()` is the ONE function that gates the
-lifecycle, and it checks exactly one thing: whether `human_decision` is a
-non-empty string. A `BLOCKED` consensus (every review objecting) does
-NOT structurally prevent preregistration if a human explicitly decides
-to override it -- Radu remains final approver (SS46), and this
-implementation takes that literally: the human's authority is not
-itself gated by the agents' agreement.
+descriptively. `can_preregister()` gates the lifecycle -- but it is no
+longer the ONLY gate, and its own check changed under PATCH #004-A
+(GPT Review #004 Round 1, finding #1). **Before the patch**, it checked
+whether `human_decision` was any non-empty string -- which meant
+`human_decision="REJECT"` or `human_decision="NU SUNT DE ACORD"` was
+(wrongly) treated as approval, since the string is non-empty. **Now**,
+`human_decision` is an explicit `HumanDecision` dataclass with a
+`decision` field constrained to the `HumanDecisionValue` enum
+(`APPROVE`/`REJECT`); `can_preregister()` requires
+`decision == HumanDecisionValue.APPROVE.value` exactly -- a `REJECT`
+decision (with any rationale text attached) is a valid, final,
+non-approving outcome, never coerced into a truthy "approved" (TEST 54).
+A `BLOCKED` consensus (every review objecting) does NOT structurally
+prevent preregistration if a human explicitly decides to override it --
+Radu remains final approver (SS46), and this implementation takes that
+literally: the human's authority is not itself gated by the agents'
+agreement, but that authority must still be expressed as an explicit
+`APPROVE`, never inferred from any other field.
+
+**`can_preregister()` passing is necessary but not sufficient.** The
+actual transition to `PREREGISTERED` only ever happens inside
+`registry/preregistration.py:preregister_hypothesis()`, which also
+requires the source proposal to have passed `proposals/validator.py`'s
+own check, requires the input hypothesis to still be `status=DRAFT`,
+and runs the full `validate_for_preregistration()` gate (provenance,
+per-signature budget, variant completeness) before registering anything.
+See `docs/spec004_registry_contract.md`'s "Mutability rules" section
+for the complete, current contract.
 
 ## Facts vs. interpretation (SS49-50)
 
