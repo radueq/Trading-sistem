@@ -2,6 +2,8 @@
 content-sensitive (Spec #005 v1.0 SS9, Batch 1). "The profile hash
 enters run and selection identities. It is common to all compared
 variants and cannot be tuned after results.\""""
+import dataclasses
+
 from backtest.models.entities import (
     CAP_FILL_V1,
     CAP_IS_HARD_V1,
@@ -11,6 +13,7 @@ from backtest.models.entities import (
     TIME_EXIT_FILL_V1,
     build_execution_semantics_profile_v1,
     execution_semantics_fingerprint,
+    verify_execution_semantics_profile_v1,
 )
 
 
@@ -51,3 +54,27 @@ def test_cap_is_hard_toggle_changes_the_hash():
         ENTRY_FILL_V1, INVALIDATION_DETECTION_V1, INVALIDATION_FILL_V1, TIME_EXIT_FILL_V1, CAP_FILL_V1, False,
     )
     assert v1_fp != toggled_fp
+
+
+def test_the_real_v1_profile_passes_re_verification():
+    ok, errors = verify_execution_semantics_profile_v1(build_execution_semantics_profile_v1())
+    assert ok, errors
+
+
+def test_a_replace_tampered_profile_fails_the_v1_literal_check():
+    """GPT Batch 1 review (general validator requirement): `frozen=True`
+    blocks in-place mutation, not `dataclasses.replace()`-constructing a
+    non-V1 object while keeping the OLD profile_id/profile_hash."""
+    profile = build_execution_semantics_profile_v1()
+    tampered = dataclasses.replace(profile, invalidation_fill="SAME_CLOSE_AS_DETECTION")
+    ok, errors = verify_execution_semantics_profile_v1(tampered)
+    assert not ok
+    assert any("invalidation_fill" in e for e in errors)
+
+
+def test_a_replace_tampered_profile_also_fails_content_address_verification():
+    profile = build_execution_semantics_profile_v1()
+    tampered = dataclasses.replace(profile, cap_is_hard=False)
+    ok, errors = verify_execution_semantics_profile_v1(tampered)
+    assert not ok
+    assert any("content-address mismatch" in e for e in errors)

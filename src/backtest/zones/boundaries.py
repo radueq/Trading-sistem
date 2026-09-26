@@ -16,12 +16,44 @@ never touching a price past it.
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
+from datetime import date as _date
 from typing import Optional
+
+
+def _is_valid_iso_date(value) -> bool:
+    if not isinstance(value, str):
+        return False
+    try:
+        _date.fromisoformat(value)
+        return True
+    except ValueError:
+        return False
+
+
+@dataclass(frozen=True)
+class EvidencePeriod:
+    """One evidence run's actually-used data window (Spec #005 SS3/SS4).
+    `hypothesis_id` is carried through purely for error-message
+    attribution -- it plays no role in the inequalities themselves."""
+    hypothesis_id: str
+    development_start: Optional[str]
+    development_end: Optional[str]
 
 
 def verify_zone_ordering(
     formation_start: str, formation_end: str, validation_start: str, validation_end: str, locked_oos_start: str,
 ) -> tuple[bool, tuple[str, ...]]:
+    errors: list[str] = []
+    for name, value in (
+        ("formation_start", formation_start), ("formation_end", formation_end),
+        ("validation_start", validation_start), ("validation_end", validation_end),
+        ("locked_oos_start", locked_oos_start),
+    ):
+        if not _is_valid_iso_date(value):
+            errors.append(f"{name} is not a valid ISO date: {value!r}")
+    if errors:
+        return False, tuple(errors)
     if not (formation_start <= formation_end < validation_start <= validation_end < locked_oos_start):
         return False, (
             f"zone ordering violated: require formation_start({formation_start!r}) <= "
@@ -31,26 +63,46 @@ def verify_zone_ordering(
     return True, ()
 
 
-def verify_evidence_development_ends(
-    formation_end: str, validation_start: str, development_ends: tuple[Optional[str], ...],
+def verify_evidence_periods(
+    formation_end: str, validation_start: str, periods: tuple[EvidencePeriod, ...],
 ) -> tuple[bool, tuple[str, ...]]:
-    """`development_ends` must already be resolved (one per evidence run
-    in the cohort, via `backtest.provenance.evaluation_run`) -- this
-    function only checks the two required inequalities against them.
-    SS3: "Require non-null dates and matching evidence lineage." """
+    """Checks BOTH ends of each evidence run's actually-used data window
+    (SS3: "Require non-null dates and matching evidence lineage") --
+    `development_start` not just `development_end`, so a missing/absent
+    start date or a start-after-end ordering bug is caught, not just the
+    two upper-bound inequalities against `formation_end`/`validation_start`."""
     errors: list[str] = []
-    for i, dev_end in enumerate(development_ends):
-        if dev_end is None:
-            errors.append(f"evidence run #{i}: development_end is None -- a non-null date is required (SS3)")
+    for period in periods:
+        label = f"evidence run {period.hypothesis_id!r}"
+        if period.development_start is None:
+            errors.append(f"{label}: development_start is None -- a non-null date is required (SS3)")
+        elif not _is_valid_iso_date(period.development_start):
+            errors.append(f"{label}: development_start is not a valid ISO date: {period.development_start!r}")
+
+        if period.development_end is None:
+            errors.append(f"{label}: development_end is None -- a non-null date is required (SS3)")
             continue
-        if dev_end > formation_end:
+        if not _is_valid_iso_date(period.development_end):
+            errors.append(f"{label}: development_end is not a valid ISO date: {period.development_end!r}")
+            continue
+
+        if (
+            period.development_start is not None
+            and _is_valid_iso_date(period.development_start)
+            and period.development_start > period.development_end
+        ):
             errors.append(
-                f"evidence run #{i}: development_end={dev_end!r} exceeds formation_end={formation_end!r} "
+                f"{label}: development_start={period.development_start!r} is after "
+                f"development_end={period.development_end!r}"
+            )
+        if period.development_end > formation_end:
+            errors.append(
+                f"{label}: development_end={period.development_end!r} exceeds formation_end={formation_end!r} "
                 f"(require development_end <= formation_end, SS3)"
             )
-        if dev_end >= validation_start:
+        if period.development_end >= validation_start:
             errors.append(
-                f"evidence run #{i}: development_end={dev_end!r} does not precede validation_start="
+                f"{label}: development_end={period.development_end!r} does not precede validation_start="
                 f"{validation_start!r} (require development_end < validation_start, SS3) -- this period was "
                 f"already used to form the hypothesis and cannot also be independent validation"
             )
@@ -59,11 +111,11 @@ def verify_evidence_development_ends(
 
 def verify_zone_boundaries(
     formation_start: str, formation_end: str, validation_start: str, validation_end: str, locked_oos_start: str,
-    evidence_development_ends: tuple[Optional[str], ...],
+    evidence_periods: tuple[EvidencePeriod, ...],
 ) -> tuple[bool, tuple[str, ...]]:
     errors: list[str] = []
     ordering_ok, ordering_errors = verify_zone_ordering(formation_start, formation_end, validation_start, validation_end, locked_oos_start)
     errors.extend(ordering_errors)
-    dates_ok, dates_errors = verify_evidence_development_ends(formation_end, validation_start, evidence_development_ends)
-    errors.extend(dates_errors)
+    periods_ok, periods_errors = verify_evidence_periods(formation_end, validation_start, evidence_periods)
+    errors.extend(periods_errors)
     return (not errors, tuple(errors))

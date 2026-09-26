@@ -5,20 +5,24 @@ wall-clock performance from semantic identity." `created_at`/
 all -- confirmed structurally (the function doesn't take them as
 parameters), and behaviorally (two plans differing only in those
 fields get the identical id)."""
+import dataclasses
+
 from backtest.models.entities import (
     CostAssumptions,
     ExposureManifest,
+    ResearchPlan,
     SelectionFold,
     SelectionRule,
     build_research_plan_id,
     research_plan_fingerprint,
+    verify_research_plan_identity,
 )
 
 _FOLDS = (SelectionFold("fold_1", "2020-01-01", "2021-01-01"), SelectionFold("fold_2", "2021-01-01", "2022-01-01"))
 _COHORT = ("hyp_a", "hyp_b")
 _RULE = SelectionRule(minimum_executed_trades=30, minimum_evaluable_trades=25, minimum_evaluable_ratio=0.8)
 _COSTS = CostAssumptions(commission_entry_rate=0.0005, commission_exit_rate=0.0005, slippage_entry_bps=5.0, slippage_exit_bps=5.0, borrow_annual_rate=0.0)
-_EXPOSURE = ExposureManifest()
+_EXPOSURE = ExposureManifest(declared_unseen=True)
 
 
 def _fp(**overrides):
@@ -89,3 +93,35 @@ def test_changed_calendar_or_profile_id_changes_the_fingerprint():
     fp_c = _fp(execution_semantics_profile_id="exsem_DIFFERENT")
     assert fp_a != fp_b
     assert fp_a != fp_c
+
+
+def _build_plan(**overrides) -> ResearchPlan:
+    base = dict(
+        formation_start="2020-01-01", formation_end="2024-01-01", validation_start="2024-02-01",
+        validation_end="2024-12-31", locked_oos_start="2025-01-01", selection_folds=_FOLDS,
+        hypothesis_cohort_ids=_COHORT, trading_calendar_id="cal_abc", benchmark_security_id="SBENCH",
+        execution_semantics_profile_id="exsem_abc", selection_rule=_RULE, cost_assumptions=_COSTS,
+        exposure_manifest=_EXPOSURE,
+    )
+    base.update(overrides)
+    fp = research_plan_fingerprint(**base)
+    plan_id, plan_hash = build_research_plan_id(fp)
+    return ResearchPlan(research_plan_id=plan_id, plan_hash=plan_hash, created_at="2026-09-26T00:00:00Z", created_by="radu", **base)
+
+
+def test_a_genuinely_built_plan_passes_identity_re_verification():
+    ok, errors = verify_research_plan_identity(_build_plan())
+    assert ok, errors
+
+
+def test_a_replace_tampered_plan_fails_identity_re_verification():
+    """GPT Batch 1 review (general validator requirement): `frozen=True`
+    blocks in-place mutation, not `dataclasses.replace()`-constructing a
+    plan whose content no longer matches its OWN stored
+    research_plan_id/plan_hash -- same bug class PATCH #004-B fixed once
+    for StrategyHypothesis/StrategyVariant."""
+    plan = _build_plan()
+    tampered = dataclasses.replace(plan, validation_end="2024-11-30")
+    ok, errors = verify_research_plan_identity(tampered)
+    assert not ok
+    assert any("content-address mismatch" in e for e in errors)

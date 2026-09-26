@@ -32,6 +32,8 @@ from backtest.models.entities import (
     TradingCalendar,
     build_calendar_id,
     calendar_fingerprint,
+    verify_calendar_content_address,
+    verify_calendar_structure,
 )
 
 
@@ -62,7 +64,25 @@ def require_verified_calendar_for_formal_run(calendar: TradingCalendar) -> None:
     and required warm-up, fail closed with CALENDAR_UNVERIFIED... before
     formal execution. Synthetic infrastructure tests may declare their
     own explicit fixture calendar; they cannot label it a verified
-    real-market calendar." """
+    real-market calendar."
+
+    Re-verifies the calendar's own content-address and structural shape
+    FIRST -- `source`/`verified_by`/`verified_at` alone are stored fields
+    that a `dataclasses.replace()`-tampered object (e.g. one with a
+    session date silently dropped, keeping the old `calendar_id`) would
+    still carry unchanged. Neither check is optional for a formal run."""
+    address_ok, address_errors = verify_calendar_content_address(calendar)
+    if not address_ok:
+        raise CalendarNotVerifiedError(
+            f"CALENDAR_UNVERIFIED: calendar_id={calendar.calendar_id!r} failed content-address "
+            f"re-verification: {'; '.join(address_errors)} (Spec #005 SS11/SS21)"
+        )
+    structure_ok, structure_errors = verify_calendar_structure(calendar)
+    if not structure_ok:
+        raise CalendarNotVerifiedError(
+            f"CALENDAR_UNVERIFIED: calendar_id={calendar.calendar_id!r} failed structural "
+            f"validation: {'; '.join(structure_errors)} (Spec #005 SS11)"
+        )
     if calendar.source != CalendarSource.OFFICIAL_VERIFIED.value:
         raise CalendarNotVerifiedError(
             f"CALENDAR_UNVERIFIED: calendar_id={calendar.calendar_id!r} has source={calendar.source!r}, "
@@ -83,6 +103,11 @@ def require_calendar_covers_window(calendar: TradingCalendar, window_start: str,
     coverage does not fully contain the window a run needs (the stage
     dates plus any required warm-up -- the caller computes that combined
     window and passes it here)."""
+    if window_start > window_end:
+        raise CalendarCoverageIncompleteError(
+            f"CALENDAR_COVERAGE_INCOMPLETE: window_start={window_start!r} is after "
+            f"window_end={window_end!r} -- a reversed window can never be covered (Spec #005 SS11)"
+        )
     if not (calendar.coverage_start <= window_start and window_end <= calendar.coverage_end):
         raise CalendarCoverageIncompleteError(
             f"CALENDAR_COVERAGE_INCOMPLETE: calendar_id={calendar.calendar_id!r} covers "
@@ -95,5 +120,17 @@ def is_session(calendar: TradingCalendar, date: str) -> bool:
     """A date's ABSENCE from `session_dates` means the calendar declares
     it a non-session -- this is the ground truth (SS11), never inferred
     from whether any particular security's price series happens to have
-    a bar on that date."""
+    a bar on that date. But that ground truth only extends as far as the
+    calendar's own declared coverage: a date OUTSIDE [coverage_start,
+    coverage_end] is UNKNOWN, not a verified non-session -- conflating
+    "unknown" with "non-session" was exactly the gap SS11 exists to
+    close, so an out-of-coverage query raises instead of silently
+    returning False."""
+    if not (calendar.coverage_start <= date <= calendar.coverage_end):
+        raise CalendarCoverageIncompleteError(
+            f"CALENDAR_COVERAGE_INCOMPLETE: date={date!r} falls outside calendar_id="
+            f"{calendar.calendar_id!r}'s declared coverage [{calendar.coverage_start!r}, "
+            f"{calendar.coverage_end!r}] -- this calendar has no verified information about "
+            f"whether that date is a session (Spec #005 SS11)"
+        )
     return date in calendar.session_dates

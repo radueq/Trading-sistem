@@ -59,6 +59,30 @@ def test_non_lexicographic_tie_break_is_rejected():
     assert not ok
 
 
+def test_bool_true_minimum_executed_trades_is_rejected():
+    """GPT Batch 1 review (P2 finding): `bool` is a subclass of `int` --
+    a naive `<= 0` check silently accepted `True` (== 1) as if it were a
+    genuine positive trade-count threshold."""
+    ok, errors = validate_selection_rule(_valid_rule(minimum_executed_trades=True))
+    assert not ok
+    assert any("minimum_executed_trades" in e for e in errors)
+
+
+def test_non_integer_float_minimum_evaluable_trades_is_rejected():
+    ok, errors = validate_selection_rule(_valid_rule(minimum_evaluable_trades=0.5))
+    assert not ok
+    assert any("minimum_evaluable_trades" in e for e in errors)
+
+
+def test_nan_minimum_evaluable_ratio_is_rejected():
+    """NaN comparisons are always False -- a naive `0 < x <= 1` check
+    silently treats NaN as passing neither bound, which happens to
+    already reject it, but this pins that behavior explicitly."""
+    ok, errors = validate_selection_rule(_valid_rule(minimum_evaluable_ratio=float("nan")))
+    assert not ok
+    assert any("minimum_evaluable_ratio" in e for e in errors)
+
+
 def _valid_costs(**overrides) -> CostAssumptions:
     return dataclasses.replace(
         CostAssumptions(
