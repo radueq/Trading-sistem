@@ -237,3 +237,41 @@ Spec #001-#003's architecture, were reopened.
 No changes requested to, or made in, PATCH #004-A's 7 findings or
 Spec #001-#003's architecture, per GPT's own closing note: "nu mai văd
 nevoie de încă un review arhitectural larg."
+
+## GPT Review #004 -- Round 3 / Closure verdict
+
+**SPEC #004 v1.0 -- ACCEPTED at commit `d19dd25`** (PATCH #004-A
+`feb8470` + PATCH #004-B `d19dd25`, on top of the base `6082215`). All
+four structural findings from Round 2 (bindings, content-address
+verification, variant immutability, duplicate-signature rejection) are
+closed without reservation; TEST 62-66 cover them, and the full Spec
+#004 suite (150 tests) and full repo suite (275 passed, 1 skipped) both
+report green.
+
+One residual point was registered as a known limitation rather than a
+blocking finding, since it does not affect Hypothesis Generation as
+scoped (no live trading/broker execution exists yet):
+
+- **LEVEL_1 persistence is replay-atomic at the logical-record level,
+  not crash/IO-failure transactional.** `PersistentHypothesisRegistry.
+  preregister()` writes to the in-memory registry FIRST (via
+  `preregister_hypothesis()`) and only THEN appends the
+  `preregistration_committed` JSONL record. If the process survives but
+  the append itself fails (disk-full, I/O error -- not a process crash),
+  the hypothesis can exist in memory without ever reaching the audit
+  log. Separately, "one JSONL line" is not a filesystem-level ACID
+  transaction (no `fsync`/write-ahead guarantee) -- TEST 65 verifies
+  that a successful append is all-or-nothing (hypothesis + every
+  variant together, never partial), not that the append itself is
+  crash-proof. **Persistent storage (the JSONL file) remains the
+  authoritative state after a process restart** -- an in-memory-only
+  state that never made it to the log does not survive, by design.
+  Before live trading/broker execution, a more serious transactional
+  solution (write-ahead semantics, or an actual rollback path on append
+  failure) will be needed; not necessary for Hypothesis Generation at
+  Level 1 scope.
+
+Baseline now accepted: `#001 aa56bb5` + `#002 4f36708` (+ patches) +
+`#003 d889049` + `#004 6082215` + PATCH #004-A `feb8470` + PATCH #004-B
+`d19dd25`. Next: Spec #005 -- Executable Strategy Backtesting & Exit
+Evaluation.
