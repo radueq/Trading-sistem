@@ -2,9 +2,19 @@
 
 Run: `python3 -m pytest tests/ -v` -- Python 3.11.15, pytest 9.1.1, yfinance 1.7.0, pandas 3.0.6, PyYAML 6.0.1.
 
-Result: **27 passed, 1 skipped (PENDING_LEVEL_2_DATA)**, 0 failed.
+Result: **34 passed, 1 skipped (PENDING_LEVEL_2_DATA)**, 0 failed.
 
-Updated 2026-09-21, fourth round -- PATCH #001-C: `split_adjusted_volume`
+Updated 2026-09-26, fifth round -- PATCH #001-D: `split_adjusted_open`/
+`split_adjusted_high`/`split_adjusted_low` added to `PITPriceBar`
+(surfaced while architecting Spec #005's Backtester -- an executable
+`NEXT_BAR_OPEN` entry price and MAE/MFE both need adjusted open/high/low,
+which only `split_adjusted_close` didn't cover). Fixed in Data
+Foundation, before any #005 code was written, per the same standing rule
+as PATCH #001-C. TEST 17 added (factor correctness, OHLC ordering
+preservation, boundary continuity, PIT knowledge-time immunity). TESTs
+1-16 unchanged and still passing.
+
+Prior round (fourth) -- PATCH #001-C: `split_adjusted_volume`
 added to `PITPriceBar` (Radu's correction, prompted by a real gap Spec
 #002's Discovery Engine surfaced -- raw, unadjusted volume paired with
 split-adjusted close produced a mechanical level-shift around a split).
@@ -49,6 +59,10 @@ unchanged and still passing.
 | 15c | Listing status `available_at` enrichment via re-ingestion | `tests/test_15_listing_status_knowledge_time.py::test_listing_status_available_at_enrichment_updates_existing_row` | **PASS** | Same persistence-lifecycle class of fix for listing status: re-upserting the same `(security_id, effective_from)` with a newly-supplied `available_at` updates the existing row rather than being dropped, and a date visible under the old NULL/UNKNOWN policy correctly becomes hidden again once the real `available_at` shows it wasn't actually knowable yet. |
 | 16a | Split-adjusted volume round-trip invariant | `tests/test_16_split_adjusted_volume.py::test_split_adjusted_volume_round_trip_invariant` | **PASS** (2 sub-cases: forward AAPL 4-for-1, reverse RVSQ 1-for-5) | `split_adjusted_close * split_adjusted_volume == raw_close * raw_volume` for every bar; `raw_volume` confirmed unmodified. Verified to fail if the volume formula's direction is inverted (`raw_volume * split_factor` instead of `/`). |
 | 16b | Split-adjusted volume continuity across the split boundary | `tests/test_16_split_adjusted_volume.py::test_split_adjusted_volume_continuous_across_split_boundary` | **PASS** (2 sub-cases: 4-for-1 forward, 1-for-5 reverse) | Dedicated fixture where `raw_volume` already reflects a genuine post-split share-count change proportional to the ratio (100->400 forward, 500->100 reverse) -- `split_adjusted_volume` stays constant across the boundary for both directions, same formula, no special-casing. |
+| 17a | Split-adjusted OHLC factor correctness | `tests/test_17_split_adjusted_ohlc.py::test_split_adjusted_ohlc_factor_correctness` | **PASS** (2 sub-cases: forward AAPL 4-for-1, reverse RVSQ 1-for-5) | `split_adjusted_open/high/low == raw_open/high/low * split_factor` for every bar, using the SAME factor implicitly recovered from `split_adjusted_close`; `raw_open/high/low` confirmed unmodified. |
+| 17b | Split-adjusted OHLC ordering preserved | `tests/test_17_split_adjusted_ohlc.py::test_split_adjusted_ohlc_ordering_preserved` | **PASS** (2 sub-cases) | `split_adjusted_low <= split_adjusted_open,close <= split_adjusted_high` for every bar -- scaling by a positive factor must never invert a bar's own internal ordering. |
+| 17c | Split-adjusted OHLC continuity across the split boundary | `tests/test_17_split_adjusted_ohlc.py::test_split_adjusted_ohlc_continuous_across_split_boundary` | **PASS** (2 sub-cases) | Mirrors TEST 2's close-only continuity check, extended to open/high/low (<5% residual jump at the boundary). |
+| 17d | Split-adjusted OHLC PIT immunity before the split is knowable | `tests/test_17_split_adjusted_ohlc.py::test_split_adjusted_ohlc_pit_immune_before_split_knowable` | **PASS** | Mirrors TEST 9 exactly (byte-identical `get_data`-equivalent snapshot before/after future-dated split data is ingested), asserting specifically on `split_adjusted_open/high/low` -- proves the as_of-scoped factor computation that already protected `split_adjusted_close` protects the new fields with no separate PIT logic to get wrong. |
 
 ## GPT Review #001 (commit `8492ade`) findings and resolution
 
@@ -71,6 +85,12 @@ unchanged and still passing.
 | Finding | Severity | Resolution |
 |---|---|---|
 | `PITPriceBar` exposed only `raw_volume` (unadjusted); Spec #002's Discovery Engine paired it with `split_adjusted_close` (adjusted), so a split produced a mechanical level-shift in volume that could look like a real spike -- a real Data Foundation gap surfaced by a downstream consumer, not a Spec #002 defect. | Bug (missing interface, pre-real-data-backtesting blocker per `docs/spec002_known_limitations.md`) | Fixed in Data Foundation, not in Discovery, per Radu's own standing rule: `split_adjusted_volume` added to `PITPriceBar`, derived on-the-fly as `raw_volume / split_factor` (opposite direction from price) using the same PIT-safe `split_factor`. No schema change. TEST 16. Discovery's `_price_series_to_df()` updated to consume it (Spec #002 PATCH, no lane/formula changes -- see `docs/spec002_known_limitations.md` and TEST 23). |
+
+## PATCH #001-D (GPT Review #005 scaffold blocker A, 2026-09-26) finding and resolution
+
+| Finding | Severity | Resolution |
+|---|---|---|
+| `PITPriceBar` exposed `split_adjusted_close`/`split_adjusted_volume` but only `raw_open`/`raw_high`/`raw_low` -- surfaced while architecting Spec #005's Backtester: an executable `NEXT_BAR_OPEN` entry price and MAE/MFE both need adjusted open/high/low, and #005 cannot derive them from `split_adjusted_close` alone. | IMPLEMENTATION BLOCKER for Spec #005 (flagged explicitly, not silently patched around in #005) | Fixed in Data Foundation, before any #005 code was written: `split_adjusted_open/high/low` added to `PITPriceBar`, computed as `raw_open/high/low * split_factor` -- the SAME PIT-safe `split_factor` already used for `split_adjusted_close`, applied identically (a split scales an entire OHLC bar uniformly). No schema change, no new methodology, `raw_open/high/low` untouched, total-return-adjusted OHLC deliberately not added (no #005 v1 consumer -- price-return only). TEST 17. |
 
 ## How to reproduce
 

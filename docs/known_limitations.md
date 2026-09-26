@@ -165,6 +165,25 @@ announcement-date-or-effective-date fallback with an explicit, nullable
   untouched. See `docs/architecture.md` for the full note and TEST 16
   for the formula/continuity/round-trip verification.
 
+- **`split_adjusted_open`/`high`/`low` added (PATCH #001-D, GPT Review
+  #005 scaffold blocker A, 2026-09-26).** Surfaced while architecting
+  Spec #005 (Backtester), before any #005 code was written -- same
+  standing rule as PATCH #001-C: a Data Foundation gap found by a
+  downstream design review is fixed here, never patched around
+  downstream. `PITPriceBar` previously exposed
+  `split_adjusted_close`/`split_adjusted_volume` but only `raw_open`/
+  `raw_high`/`raw_low` -- insufficient for an executable
+  `NEXT_BAR_OPEN` entry price or for MAE/MFE (both need adjusted
+  high/low). Fixed: the same `split_factor` already used for
+  `split_adjusted_close` is applied identically to
+  `raw_open`/`raw_high`/`raw_low` -- one existing PIT-safe multiplier,
+  three more fields, no new methodology, no schema change. TEST 17
+  covers factor correctness (forward + reverse split), OHLC ordering
+  preservation, boundary continuity, and PIT knowledge-time immunity.
+  Total-return-adjusted OHLC was NOT added -- #005 v1 is scoped to
+  price-return strategies only (total-return remains
+  `EXPERIMENTAL_NOT_APPROVED_FOR_RESEARCH`), so no consumer needs it yet.
+
 ## Listing status
 
 - `available_at` (added 2026-09-21, GPT Review #001 PATCH B) gates

@@ -30,6 +30,7 @@ tests/
   test_14_cancelled_action_adjustment.py       GPT Review #001 PATCH A coverage (2026-09-21)
   test_15_listing_status_knowledge_time.py     GPT Review #001 PATCH B coverage (2026-09-21)
   test_16_split_adjusted_volume.py             PATCH #001-C coverage (2026-09-21)
+  test_17_split_adjusted_ohlc.py               PATCH #001-D coverage (2026-09-26)
 docs/
   architecture.md             this file
   known_limitations.md
@@ -209,6 +210,33 @@ docs/
   (unadjusted), so a split produced a mechanical level-shift in volume
   that could look like a real volume spike -- see
   `docs/spec002_known_limitations.md`.
+
+- **`split_adjusted_open`/`split_adjusted_high`/`split_adjusted_low`**
+  (PATCH #001-D, GPT Review #005 scaffold blocker A, 2026-09-26 --
+  found while architecting Spec #005's Backtester, before any #005 code
+  was written, per the same standing rule: a Spec #001 gap is fixed in
+  Data Foundation, never patched around downstream). `PITPriceBar` now
+  carries the full split-adjusted OHLC bar, not just close/volume --
+  needed for an executable `NEXT_BAR_OPEN` entry price and for MAE/MFE
+  (which need adjusted high/low), neither of which #005 can compute from
+  `split_adjusted_close` alone. Same PIT-safe `split_factor` already
+  used for `split_adjusted_close`, applied identically to
+  `raw_open`/`raw_high`/`raw_low` -- a split scales an entire OHLC bar
+  uniformly, so this is one existing multiplier applied to three more
+  fields, not a new methodology or a schema change (still computed
+  on-the-fly in `pit/access.py`, `raw_*` untouched). TEST 17 validates:
+  factor correctness for a forward (4-for-1) and reverse (1-for-5)
+  split; that scaling by a positive factor never inverts a bar's own
+  `low <= open,close <= high` ordering; continuity across the split
+  boundary (mirroring TEST 2, extended from close to open/high/low); and
+  PIT knowledge-time immunity (mirroring TEST 9 exactly, asserting on
+  the three new fields specifically) -- proving the as_of-scoped
+  `factors` computation that already protected `split_adjusted_close`
+  protects the new fields too, with no separate PIT logic to get wrong.
+  Total-return-adjusted OHLC was deliberately NOT added: #005 v1 is
+  scoped to price-return strategies only (`total_return_adjusted_close`
+  remains `EXPERIMENTAL_NOT_APPROVED_FOR_RESEARCH`), so there is no
+  present consumer for it.
 
 ## Who may call what
 

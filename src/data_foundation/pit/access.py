@@ -151,12 +151,25 @@ class PITCorporateAction:
 
 @dataclass(frozen=True)
 class PITPriceBar:
+    """PATCH #001-D (Split-Adjusted OHLC Completion, GPT Review #005
+    scaffold blocker A): `split_adjusted_open/high/low` complete the
+    split-adjusted OHLC representation that only `split_adjusted_close`
+    (and `split_adjusted_volume`, PATCH #001-C) previously covered. Same
+    per-date `split_adjustment_factor` already used for
+    `split_adjusted_close`, applied identically -- no new adjustment
+    methodology, no schema change (still derived on-the-fly here, never
+    stored). A split scales price uniformly across open/high/low/close
+    (Level 1's own multiplicative methodology has no field-specific
+    component), so this is a mechanical extension, not a new formula."""
     date: str
     raw_open: Optional[float]
     raw_high: Optional[float]
     raw_low: Optional[float]
     raw_close: Optional[float]
     raw_volume: Optional[int]
+    split_adjusted_open: Optional[float]
+    split_adjusted_high: Optional[float]
+    split_adjusted_low: Optional[float]
     split_adjusted_close: Optional[float]
     split_adjusted_volume: Optional[float]
     total_return_adjusted_close: Optional[float]
@@ -267,9 +280,23 @@ def get_price_series_as_of(conn, security_id: str, as_of: str) -> list[PITPriceB
         # = 4x), since post-split there are 4x as many shares for the same
         # dollar turnover. Derived on-the-fly here, exactly like
         # split_adjusted_close -- no schema change, raw_volume untouched.
+        #
+        # split_adjusted_open/high/low (PATCH #001-D, GPT Review #005
+        # scaffold blocker A, 2026-09-26): the SAME split_factor applied
+        # to raw_open/raw_high/raw_low -- a split scales the entire OHLC
+        # bar uniformly, there is no separate open/high/low-specific
+        # methodology. Multiplying every field by the same positive
+        # scalar preserves ordering (low <= open,close <= high stays true
+        # after scaling), and the same as_of-scoped `factors` computation
+        # above already makes this knowledge-time-safe with zero extra
+        # code -- no new PIT logic, just applying an existing PIT-safe
+        # factor to three more fields.
         result.append(PITPriceBar(
             date=b.date, raw_open=b.raw_open, raw_high=b.raw_high, raw_low=b.raw_low,
             raw_close=b.raw_close, raw_volume=b.raw_volume,
+            split_adjusted_open=b.raw_open * split_factor if b.raw_open is not None else None,
+            split_adjusted_high=b.raw_high * split_factor if b.raw_high is not None else None,
+            split_adjusted_low=b.raw_low * split_factor if b.raw_low is not None else None,
             split_adjusted_close=b.raw_close * split_factor if b.raw_close is not None else None,
             split_adjusted_volume=b.raw_volume / split_factor if b.raw_volume is not None else None,
             total_return_adjusted_close=b.raw_close * total_return_factor if b.raw_close is not None else None,
