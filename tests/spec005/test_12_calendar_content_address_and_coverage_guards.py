@@ -103,3 +103,79 @@ def test_require_calendar_covers_window_rejects_a_reversed_window():
     calendar = _verified_calendar()
     with pytest.raises(CalendarCoverageIncompleteError, match="CALENDAR_COVERAGE_INCOMPLETE"):
         require_calendar_covers_window(calendar, "2024-01-10", "2024-01-02")
+
+
+def test_require_calendar_covers_window_rejects_garbage_suffixed_dates():
+    """GPT Batch 1 review, round 2 (P2 finding): "2024-01-02junk"/
+    "2024-01-03junk" were previously compared as raw strings and could
+    slip through undetected -- must be rejected outright as invalid
+    dates, not silently classified as covered or uncovered."""
+    calendar = _verified_calendar()
+    with pytest.raises(CalendarCoverageIncompleteError, match="CALENDAR_COVERAGE_INCOMPLETE"):
+        require_calendar_covers_window(calendar, "2024-01-02junk", "2024-01-03junk")
+
+
+def test_require_calendar_covers_window_rejects_an_iso_week_date():
+    """Same non-canonical-ISO-form loophole as the zone-ordering exploit
+    -- "2024W011" (== 2024-01-01) must be rejected outright, never
+    accepted as a window bound."""
+    calendar = _verified_calendar()
+    with pytest.raises(CalendarCoverageIncompleteError, match="CALENDAR_COVERAGE_INCOMPLETE"):
+        require_calendar_covers_window(calendar, "2024W011", "2024-01-10")
+
+
+def test_is_session_rejects_a_garbage_suffixed_date_instead_of_returning_false():
+    """GPT Batch 1 review, round 2 (P2 finding): is_session() previously
+    returned False for "2024-01-02junk" (treating it like a genuine
+    non-session) instead of rejecting the malformed input outright."""
+    calendar = _verified_calendar()
+    with pytest.raises(CalendarCoverageIncompleteError, match="CALENDAR_COVERAGE_INCOMPLETE"):
+        is_session(calendar, "2024-01-02junk")
+
+
+def test_verify_calendar_structure_rejects_a_nonexistent_timezone():
+    """GPT Batch 1 review, round 2 (P2 finding): a nonexistent timezone
+    previously passed formal verification entirely -- structure
+    validation never checked it."""
+    calendar = _verified_calendar(timezone="Not/AZone")
+    ok, errors = verify_calendar_structure(calendar)
+    assert not ok
+    assert any("timezone" in e for e in errors)
+
+
+def test_verify_calendar_structure_rejects_a_garbage_session_open_time():
+    calendar = _verified_calendar(session_open_time="garbage")
+    ok, errors = verify_calendar_structure(calendar)
+    assert not ok
+    assert any("session_open_time" in e for e in errors)
+
+
+def test_verify_calendar_structure_rejects_open_time_not_before_close_time():
+    calendar = _verified_calendar(session_open_time="16:00", session_close_time="09:30")
+    ok, errors = verify_calendar_structure(calendar)
+    assert not ok
+    assert any("must be before session_close_time" in e for e in errors)
+
+
+def test_verify_calendar_structure_rejects_contradictory_early_closes_on_a_non_session_day():
+    """GPT Batch 1 review, round 2 (P2 finding): two contradictory
+    early-close entries on a day that is not even one of the calendar's
+    session_dates previously passed formal verification entirely."""
+    calendar = _verified_calendar(early_close_dates=(("2024-01-10", "13:00"), ("2024-01-10", "14:00")))
+    ok, errors = verify_calendar_structure(calendar)
+    assert not ok
+    assert any("is not one of the calendar's session_dates" in e for e in errors)
+    assert any("appears more than once" in e for e in errors)
+
+
+def test_verify_calendar_structure_rejects_an_early_close_not_earlier_than_session_close():
+    calendar = _verified_calendar(early_close_dates=(("2024-01-03", "16:00"),))
+    ok, errors = verify_calendar_structure(calendar)
+    assert not ok
+    assert any("must be earlier than session_close_time" in e for e in errors)
+
+
+def test_verify_calendar_structure_accepts_a_genuine_early_close_on_a_session_day():
+    calendar = _verified_calendar(early_close_dates=(("2024-01-03", "13:00"),))
+    ok, errors = verify_calendar_structure(calendar)
+    assert ok, errors

@@ -32,6 +32,7 @@ from backtest.models.entities import (
     TradingCalendar,
     build_calendar_id,
     calendar_fingerprint,
+    parse_iso_date,
     verify_calendar_content_address,
     verify_calendar_structure,
 )
@@ -102,13 +103,35 @@ def require_calendar_covers_window(calendar: TradingCalendar, window_start: str,
     INCOMPLETE before formal execution" when the calendar's own declared
     coverage does not fully contain the window a run needs (the stage
     dates plus any required warm-up -- the caller computes that combined
-    window and passes it here)."""
-    if window_start > window_end:
+    window and passes it here).
+
+    All four dates (`window_start`, `window_end`, and the calendar's own
+    `coverage_start`/`coverage_end`) are parsed via `parse_iso_date()`
+    and compared as `date` objects -- GPT Batch 1 patch review (P2
+    finding, second round): a garbage-suffixed string like
+    "2024-01-02junk" was previously compared as a raw string and could
+    slip through undetected; it is now rejected outright as an invalid
+    date, never silently treated as in- or out-of-coverage."""
+    parsed_window_start = parse_iso_date(window_start)
+    parsed_window_end = parse_iso_date(window_end)
+    if parsed_window_start is None or parsed_window_end is None:
+        raise CalendarCoverageIncompleteError(
+            f"CALENDAR_COVERAGE_INCOMPLETE: window_start={window_start!r}/window_end={window_end!r} "
+            f"must both be valid ISO dates (YYYY-MM-DD) (Spec #005 SS11)"
+        )
+    parsed_coverage_start = parse_iso_date(calendar.coverage_start)
+    parsed_coverage_end = parse_iso_date(calendar.coverage_end)
+    if parsed_coverage_start is None or parsed_coverage_end is None:
+        raise CalendarCoverageIncompleteError(
+            f"CALENDAR_COVERAGE_INCOMPLETE: calendar_id={calendar.calendar_id!r} has a malformed "
+            f"coverage_start/coverage_end and cannot be checked against a window (Spec #005 SS11)"
+        )
+    if parsed_window_start > parsed_window_end:
         raise CalendarCoverageIncompleteError(
             f"CALENDAR_COVERAGE_INCOMPLETE: window_start={window_start!r} is after "
             f"window_end={window_end!r} -- a reversed window can never be covered (Spec #005 SS11)"
         )
-    if not (calendar.coverage_start <= window_start and window_end <= calendar.coverage_end):
+    if not (parsed_coverage_start <= parsed_window_start and parsed_window_end <= parsed_coverage_end):
         raise CalendarCoverageIncompleteError(
             f"CALENDAR_COVERAGE_INCOMPLETE: calendar_id={calendar.calendar_id!r} covers "
             f"[{calendar.coverage_start!r}, {calendar.coverage_end!r}] but the required window is "
@@ -125,8 +148,25 @@ def is_session(calendar: TradingCalendar, date: str) -> bool:
     coverage_end] is UNKNOWN, not a verified non-session -- conflating
     "unknown" with "non-session" was exactly the gap SS11 exists to
     close, so an out-of-coverage query raises instead of silently
-    returning False."""
-    if not (calendar.coverage_start <= date <= calendar.coverage_end):
+    returning False. The queried `date` and the calendar's own
+    `coverage_start`/`coverage_end` are all parsed via `parse_iso_date()`
+    and compared as `date` objects -- a malformed query (e.g.
+    "2024-01-02junk") is rejected outright, never silently classified as
+    a non-session."""
+    query_date = parse_iso_date(date)
+    if query_date is None:
+        raise CalendarCoverageIncompleteError(
+            f"CALENDAR_COVERAGE_INCOMPLETE: date={date!r} is not a valid ISO date (YYYY-MM-DD) -- "
+            f"cannot be classified as a session or non-session (Spec #005 SS11)"
+        )
+    coverage_start = parse_iso_date(calendar.coverage_start)
+    coverage_end = parse_iso_date(calendar.coverage_end)
+    if coverage_start is None or coverage_end is None:
+        raise CalendarCoverageIncompleteError(
+            f"CALENDAR_COVERAGE_INCOMPLETE: calendar_id={calendar.calendar_id!r} has a malformed "
+            f"coverage_start/coverage_end and cannot be queried (Spec #005 SS11)"
+        )
+    if not (coverage_start <= query_date <= coverage_end):
         raise CalendarCoverageIncompleteError(
             f"CALENDAR_COVERAGE_INCOMPLETE: date={date!r} falls outside calendar_id="
             f"{calendar.calendar_id!r}'s declared coverage [{calendar.coverage_start!r}, "

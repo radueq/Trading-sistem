@@ -17,18 +17,9 @@ never touching a price past it.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date as _date
 from typing import Optional
 
-
-def _is_valid_iso_date(value) -> bool:
-    if not isinstance(value, str):
-        return False
-    try:
-        _date.fromisoformat(value)
-        return True
-    except ValueError:
-        return False
+from backtest.models.entities import parse_iso_date
 
 
 @dataclass(frozen=True)
@@ -44,17 +35,33 @@ class EvidencePeriod:
 def verify_zone_ordering(
     formation_start: str, formation_end: str, validation_start: str, validation_end: str, locked_oos_start: str,
 ) -> tuple[bool, tuple[str, ...]]:
+    """Every comparison is made on PARSED `date` objects, never on the
+    raw strings. GPT Batch 1 patch review (P1 finding, second round):
+    `datetime.date.fromisoformat()` alone accepts non-canonical forms
+    like ISO week dates ("2024W011" == 2024-01-01) that do not sort
+    lexically the same way their canonical `YYYY-MM-DD` equivalent
+    would -- `parse_iso_date()` rejects anything but strict
+    `YYYY-MM-DD` BEFORE any date ever reaches a comparison, closing the
+    exact loophole that let a `validation_start` slip chronologically
+    before `formation_end` while still passing this check as strings."""
     errors: list[str] = []
+    parsed = {}
     for name, value in (
         ("formation_start", formation_start), ("formation_end", formation_end),
         ("validation_start", validation_start), ("validation_end", validation_end),
         ("locked_oos_start", locked_oos_start),
     ):
-        if not _is_valid_iso_date(value):
+        d = parse_iso_date(value)
+        if d is None:
             errors.append(f"{name} is not a valid ISO date: {value!r}")
+        else:
+            parsed[name] = d
     if errors:
         return False, tuple(errors)
-    if not (formation_start <= formation_end < validation_start <= validation_end < locked_oos_start):
+    if not (
+        parsed["formation_start"] <= parsed["formation_end"] < parsed["validation_start"]
+        <= parsed["validation_end"] < parsed["locked_oos_start"]
+    ):
         return False, (
             f"zone ordering violated: require formation_start({formation_start!r}) <= "
             f"formation_end({formation_end!r}) < validation_start({validation_start!r}) <= "
@@ -70,37 +77,49 @@ def verify_evidence_periods(
     (SS3: "Require non-null dates and matching evidence lineage") --
     `development_start` not just `development_end`, so a missing/absent
     start date or a start-after-end ordering bug is caught, not just the
-    two upper-bound inequalities against `formation_end`/`validation_start`."""
+    two upper-bound inequalities against `formation_end`/`validation_start`.
+    `formation_end`/`validation_start` themselves are validated and
+    parsed here too -- all comparisons are on `date` objects, never raw
+    strings (see `verify_zone_ordering()`'s docstring for why)."""
     errors: list[str] = []
+    formation_end_date = parse_iso_date(formation_end)
+    validation_start_date = parse_iso_date(validation_start)
+    if formation_end_date is None:
+        errors.append(f"formation_end is not a valid ISO date: {formation_end!r}")
+    if validation_start_date is None:
+        errors.append(f"validation_start is not a valid ISO date: {validation_start!r}")
+    if errors:
+        return False, tuple(errors)
+
     for period in periods:
         label = f"evidence run {period.hypothesis_id!r}"
+        start_date = None
         if period.development_start is None:
             errors.append(f"{label}: development_start is None -- a non-null date is required (SS3)")
-        elif not _is_valid_iso_date(period.development_start):
-            errors.append(f"{label}: development_start is not a valid ISO date: {period.development_start!r}")
+        else:
+            start_date = parse_iso_date(period.development_start)
+            if start_date is None:
+                errors.append(f"{label}: development_start is not a valid ISO date: {period.development_start!r}")
 
         if period.development_end is None:
             errors.append(f"{label}: development_end is None -- a non-null date is required (SS3)")
             continue
-        if not _is_valid_iso_date(period.development_end):
+        end_date = parse_iso_date(period.development_end)
+        if end_date is None:
             errors.append(f"{label}: development_end is not a valid ISO date: {period.development_end!r}")
             continue
 
-        if (
-            period.development_start is not None
-            and _is_valid_iso_date(period.development_start)
-            and period.development_start > period.development_end
-        ):
+        if start_date is not None and start_date > end_date:
             errors.append(
                 f"{label}: development_start={period.development_start!r} is after "
                 f"development_end={period.development_end!r}"
             )
-        if period.development_end > formation_end:
+        if end_date > formation_end_date:
             errors.append(
                 f"{label}: development_end={period.development_end!r} exceeds formation_end={formation_end!r} "
                 f"(require development_end <= formation_end, SS3)"
             )
-        if period.development_end >= validation_start:
+        if end_date >= validation_start_date:
             errors.append(
                 f"{label}: development_end={period.development_end!r} does not precede validation_start="
                 f"{validation_start!r} (require development_end < validation_start, SS3) -- this period was "

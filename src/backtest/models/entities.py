@@ -17,10 +17,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, time
 from enum import Enum
 from typing import Optional
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from evaluation.models.entities import EvaluationRunRegistry
 
@@ -37,13 +39,46 @@ def _canonical_json(value) -> str:
     return json.dumps(value, sort_keys=True, ensure_ascii=True, separators=(",", ":"))
 
 
-def _is_valid_iso_date(value) -> bool:
+_ISO_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+_HH_MM_RE = re.compile(r"^\d{2}:\d{2}$")
+
+
+def parse_iso_date(value) -> Optional[date]:
+    """Strict canonical `YYYY-MM-DD` parsing ONLY. GPT Batch 1 patch
+    review (P1 finding, second round): `datetime.date.fromisoformat()`
+    alone also accepts ISO week dates ("2024W011") and unpadded basic
+    format ("20240101"), which parse to a DIFFERENT calendar date than
+    the string suggests and do not sort correctly against canonical
+    `YYYY-MM-DD` strings -- e.g. "2024-12-31" < "2024W011" lexically even
+    though 2024W011 == 2024-01-01, chronologically BEFORE. That let a
+    `validation_start` slip before `formation_end` undetected. The
+    regex pre-check closes the loophole; used by every date/period/
+    calendar check in this module, `backtest.zones.boundaries`, and
+    `backtest.data.calendar` -- ONE recipe, not three divergent ones."""
+    if not isinstance(value, str) or not _ISO_DATE_RE.match(value):
+        return None
+    try:
+        return date.fromisoformat(value)
+    except ValueError:
+        return None
+
+
+def _parse_hh_mm(value) -> Optional[time]:
+    if not isinstance(value, str) or not _HH_MM_RE.match(value):
+        return None
+    try:
+        return time.fromisoformat(value)
+    except ValueError:
+        return None
+
+
+def _is_valid_timezone(value) -> bool:
     if not isinstance(value, str):
         return False
     try:
-        date.fromisoformat(value)
+        ZoneInfo(value)
         return True
-    except ValueError:
+    except (ZoneInfoNotFoundError, ValueError):
         return False
 
 
@@ -163,35 +198,69 @@ def verify_calendar_content_address(calendar: TradingCalendar) -> tuple[bool, tu
 
 def verify_calendar_structure(calendar: TradingCalendar) -> tuple[bool, tuple[str, ...]]:
     """Validates the calendar's declared SHAPE, independent of its
-    content address: `coverage_start`/`coverage_end` and every
-    session/early-close date must be genuine ISO dates, coverage must
-    not be reversed, every `session_date` must fall within the declared
-    coverage, and there must be no duplicate `session_dates`."""
+    content address: `timezone` must be a real IANA zone;
+    `session_open_time`/`session_close_time` must be genuine `HH:MM`
+    times with open before close; `coverage_start`/`coverage_end` and
+    every session/early-close date must be genuine ISO dates (see
+    `parse_iso_date()`), coverage must not be reversed, every
+    `session_date` must fall within the declared coverage with no
+    duplicates; and every `early_close_dates` entry must name an actual
+    session date (never a non-session day), have a close_time strictly
+    before `session_close_time`, and appear at most once (no
+    contradictory early closes for the same date)."""
     errors: list[str] = []
-    coverage_start_valid = _is_valid_iso_date(calendar.coverage_start)
-    coverage_end_valid = _is_valid_iso_date(calendar.coverage_end)
-    if not coverage_start_valid:
+
+    if not _is_valid_timezone(calendar.timezone):
+        errors.append(f"timezone is not a recognized IANA timezone: {calendar.timezone!r}")
+
+    open_time = _parse_hh_mm(calendar.session_open_time)
+    close_time = _parse_hh_mm(calendar.session_close_time)
+    if open_time is None:
+        errors.append(f"session_open_time is not a valid HH:MM time: {calendar.session_open_time!r}")
+    if close_time is None:
+        errors.append(f"session_close_time is not a valid HH:MM time: {calendar.session_close_time!r}")
+    if open_time is not None and close_time is not None and not (open_time < close_time):
+        errors.append(f"session_open_time={calendar.session_open_time!r} must be before session_close_time={calendar.session_close_time!r}")
+
+    coverage_start_date = parse_iso_date(calendar.coverage_start)
+    coverage_end_date = parse_iso_date(calendar.coverage_end)
+    if coverage_start_date is None:
         errors.append(f"coverage_start is not a valid ISO date: {calendar.coverage_start!r}")
-    if not coverage_end_valid:
+    if coverage_end_date is None:
         errors.append(f"coverage_end is not a valid ISO date: {calendar.coverage_end!r}")
-    coverage_known = coverage_start_valid and coverage_end_valid and calendar.coverage_start <= calendar.coverage_end
-    if coverage_start_valid and coverage_end_valid and not coverage_known:
+    coverage_known = coverage_start_date is not None and coverage_end_date is not None and coverage_start_date <= coverage_end_date
+    if coverage_start_date is not None and coverage_end_date is not None and not coverage_known:
         errors.append(f"coverage_start={calendar.coverage_start!r} is after coverage_end={calendar.coverage_end!r}")
 
     if len(calendar.session_dates) != len(set(calendar.session_dates)):
         errors.append("session_dates contains duplicate entries")
 
     for d in calendar.session_dates:
-        if not _is_valid_iso_date(d):
+        d_date = parse_iso_date(d)
+        if d_date is None:
             errors.append(f"session_dates contains a non-ISO-date value: {d!r}")
-        elif coverage_known and not (calendar.coverage_start <= d <= calendar.coverage_end):
+        elif coverage_known and not (coverage_start_date <= d_date <= coverage_end_date):
             errors.append(f"session_date {d!r} falls outside declared coverage [{calendar.coverage_start!r}, {calendar.coverage_end!r}]")
 
-    for entry_date, _close_time in calendar.early_close_dates:
-        if not _is_valid_iso_date(entry_date):
+    seen_early_close_dates: set[str] = set()
+    for entry_date, entry_close_time in calendar.early_close_dates:
+        entry_date_parsed = parse_iso_date(entry_date)
+        if entry_date_parsed is None:
             errors.append(f"early_close_dates contains a non-ISO-date value: {entry_date!r}")
-        elif coverage_known and not (calendar.coverage_start <= entry_date <= calendar.coverage_end):
-            errors.append(f"early_close_date {entry_date!r} falls outside declared coverage [{calendar.coverage_start!r}, {calendar.coverage_end!r}]")
+        else:
+            if coverage_known and not (coverage_start_date <= entry_date_parsed <= coverage_end_date):
+                errors.append(f"early_close_date {entry_date!r} falls outside declared coverage [{calendar.coverage_start!r}, {calendar.coverage_end!r}]")
+            if entry_date not in calendar.session_dates:
+                errors.append(f"early_close_date {entry_date!r} is not one of the calendar's session_dates -- an early close cannot apply to a non-session day")
+            if entry_date in seen_early_close_dates:
+                errors.append(f"early_close_date {entry_date!r} appears more than once in early_close_dates (contradictory early closes)")
+            seen_early_close_dates.add(entry_date)
+
+        entry_close_time_parsed = _parse_hh_mm(entry_close_time)
+        if entry_close_time_parsed is None:
+            errors.append(f"early_close_dates close_time is not a valid HH:MM time: {entry_close_time!r}")
+        elif close_time is not None and not (entry_close_time_parsed < close_time):
+            errors.append(f"early_close_date {entry_date!r} close_time={entry_close_time!r} must be earlier than session_close_time={calendar.session_close_time!r}")
 
     return (not errors, tuple(errors))
 
@@ -487,17 +556,39 @@ class EvidenceInputBundle:
     @property
     def all_ok(self) -> bool:
         """Vacuous truth guard: `all()` over an empty/incomplete
-        `cross_check_results` must never read as "all ok". Requires
-        EXACTLY one cross-check result per declared `hypothesis_id`
-        (no missing, no extra, no duplicate) before checking each
-        result's own `.ok`."""
+        `cross_check_results` must never read as "all ok". Requires:
+        (1) `hypothesis_ids` itself has no duplicates -- a declared
+        cohort cannot list the same hypothesis twice (GPT Batch 1 patch
+        review, second round: the old set-based comparison silently
+        collapsed this); (2) `run_registries` has no two entries sharing
+        an `evaluation_run_id` -- two different archived objects
+        claiming the same run id is ambiguous, never valid; (3) EXACTLY
+        one cross-check result per declared `hypothesis_id` (no missing,
+        no extra, no duplicate); (4) every cross-check result's
+        `evaluation_run_id` is actually present in `run_registries` --
+        a result marked `ok=True` whose run was never archived is
+        incomplete evidence, not verified evidence. Multiple hypotheses
+        MAY legitimately share one archived run; no one-to-one
+        relationship between hypotheses and registries is imposed."""
         if not self.hypothesis_ids:
             return False
+        if len(self.hypothesis_ids) != len(set(self.hypothesis_ids)):
+            return False
+
+        registry_ids = [r.evaluation_run_id for r in self.run_registries]
+        if len(registry_ids) != len(set(registry_ids)):
+            return False
+        registry_id_set = set(registry_ids)
+
         covered_ids = [r.hypothesis_id for r in self.cross_check_results]
         if len(covered_ids) != len(set(covered_ids)):
             return False
         if set(covered_ids) != set(self.hypothesis_ids):
             return False
+
+        if any(r.evaluation_run_id not in registry_id_set for r in self.cross_check_results):
+            return False
+
         return all(r.ok for r in self.cross_check_results)
 
 

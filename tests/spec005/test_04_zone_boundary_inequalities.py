@@ -52,6 +52,29 @@ def test_non_iso_date_string_is_rejected_before_any_lexicographic_comparison():
     assert any("not a valid ISO date" in e for e in errors)
 
 
+def test_iso_week_date_overlap_exploit_is_rejected_not_silently_accepted():
+    """GPT Batch 1 review, round 2 (P1 finding): `datetime.date.
+    fromisoformat()` alone accepts ISO week dates -- "2024W011" parses to
+    2024-01-01. Compared as a raw STRING against "2024-12-31"
+    (formation_end), "2024-12-31" < "2024W011" lexically (since '-'
+    sorts before 'W'), so the old check would have "passed" a
+    validation_start that is actually 11+ months BEFORE formation_end --
+    a severe zone overlap. Must be rejected outright as a malformed
+    date, never silently compared."""
+    ok, errors = verify_zone_ordering("2020-01-01", "2024-12-31", "2024W011", "2024-12-31", "2025-01-01")
+    assert not ok
+    assert any("not a valid ISO date" in e for e in errors)
+
+
+def test_unpadded_basic_iso_date_is_also_rejected():
+    """Same loophole, different `fromisoformat()`-accepted non-canonical
+    form: "20240101" (no dashes) also parses successfully but must be
+    rejected -- only strict `YYYY-MM-DD` is accepted."""
+    ok, errors = verify_zone_ordering("2020-01-01", "2024-12-31", "20240101", "2024-12-31", "2025-01-01")
+    assert not ok
+    assert any("not a valid ISO date" in e for e in errors)
+
+
 def test_development_end_equal_to_formation_end_is_allowed():
     ok, errors = verify_evidence_periods(FORMATION_END, VALIDATION_START, (_period(development_start=FORMATION_START, development_end=FORMATION_END),))
     assert ok, errors
@@ -107,6 +130,15 @@ def test_development_start_after_development_end_is_rejected():
 
 def test_non_iso_development_dates_are_rejected():
     ok, errors = verify_evidence_periods(FORMATION_END, VALIDATION_START, (_period(development_start="not-a-date", development_end="also-not-a-date"),))
+    assert not ok
+    assert any("not a valid ISO date" in e for e in errors)
+
+
+def test_iso_week_date_development_end_is_rejected_not_silently_compared():
+    """Same "2024W011" loophole as verify_zone_ordering's, reproduced for
+    an evidence run's own development_end -- must be rejected, never
+    compared as a raw string against formation_end/validation_start."""
+    ok, errors = verify_evidence_periods(FORMATION_END, VALIDATION_START, (_period(development_start=FORMATION_START, development_end="2024W011"),))
     assert not ok
     assert any("not a valid ISO date" in e for e in errors)
 
