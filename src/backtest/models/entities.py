@@ -206,8 +206,8 @@ def verify_calendar_structure(calendar: TradingCalendar) -> tuple[bool, tuple[st
     `session_date` must fall within the declared coverage with no
     duplicates; and every `early_close_dates` entry must name an actual
     session date (never a non-session day), have a close_time strictly
-    before `session_close_time`, and appear at most once (no
-    contradictory early closes for the same date)."""
+    between `session_open_time` and `session_close_time`, and appear at
+    most once (no contradictory early closes for the same date)."""
     errors: list[str] = []
 
     if not _is_valid_timezone(calendar.timezone):
@@ -259,8 +259,11 @@ def verify_calendar_structure(calendar: TradingCalendar) -> tuple[bool, tuple[st
         entry_close_time_parsed = _parse_hh_mm(entry_close_time)
         if entry_close_time_parsed is None:
             errors.append(f"early_close_dates close_time is not a valid HH:MM time: {entry_close_time!r}")
-        elif close_time is not None and not (entry_close_time_parsed < close_time):
-            errors.append(f"early_close_date {entry_date!r} close_time={entry_close_time!r} must be earlier than session_close_time={calendar.session_close_time!r}")
+        else:
+            if close_time is not None and not (entry_close_time_parsed < close_time):
+                errors.append(f"early_close_date {entry_date!r} close_time={entry_close_time!r} must be earlier than session_close_time={calendar.session_close_time!r}")
+            if open_time is not None and not (open_time < entry_close_time_parsed):
+                errors.append(f"early_close_date {entry_date!r} close_time={entry_close_time!r} must be later than session_open_time={calendar.session_open_time!r} -- a session cannot close at or before it opens")
 
     return (not errors, tuple(errors))
 

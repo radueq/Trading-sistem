@@ -175,6 +175,27 @@ def test_verify_calendar_structure_rejects_an_early_close_not_earlier_than_sessi
     assert any("must be earlier than session_close_time" in e for e in errors)
 
 
+def test_verify_calendar_structure_rejects_an_early_close_before_session_open():
+    """GPT Batch 1 review, round 3 (P2 finding): the upper-bound check
+    (close_time < session_close_time) alone let an early close BEFORE
+    the session even opens (09:30 open, "08:00" early close) pass
+    verification, including the formal-run gate."""
+    calendar = _verified_calendar(early_close_dates=(("2024-01-03", "08:00"),))
+    ok, errors = verify_calendar_structure(calendar)
+    assert not ok
+    assert any("must be later than session_open_time" in e for e in errors)
+
+
+def test_verify_calendar_structure_rejects_an_early_close_equal_to_session_open():
+    """Same finding, the exact-equality edge: an early close AT the
+    opening time (09:30 open, "09:30" early close) is not a genuine
+    early close either -- must be rejected, not accepted."""
+    calendar = _verified_calendar(early_close_dates=(("2024-01-03", "09:30"),))
+    ok, errors = verify_calendar_structure(calendar)
+    assert not ok
+    assert any("must be later than session_open_time" in e for e in errors)
+
+
 def test_verify_calendar_structure_accepts_a_genuine_early_close_on_a_session_day():
     calendar = _verified_calendar(early_close_dates=(("2024-01-03", "13:00"),))
     ok, errors = verify_calendar_structure(calendar)
