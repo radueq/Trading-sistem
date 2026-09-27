@@ -8,7 +8,7 @@ embedded comma, versus a list of two separate strings split at that same
 comma -- serialize to the IDENTICAL joined string, so the old fingerprint
 could not tell them apart. `research_plan_fingerprint()`'s
 `exposure_part` had the same collision over `prior_validation_disclosures`.
-The new `_canonical_json()`-based recipes keep each value in its own
+The new `canonical_json()`-based recipes keep each value in its own
 structured JSON array element, so this collision is now impossible.
 """
 from backtest.models.entities import CostAssumptions, ExposureManifest, SelectionFold, SelectionRule, calendar_fingerprint, research_plan_fingerprint

@@ -1,8 +1,12 @@
-"""Spec #005 v1.0 test fixtures (Batch 1: contracts, provenance, calendar).
+"""Spec #005 v1.0 test fixtures (Batch 1: contracts, provenance,
+calendar; Batch 2 adds a small real SQLite-backed PIT universe).
 
-No PIT/ingestion/database is needed here -- Batch 1 tests exercise pure
-functions over hand-built #003/#004-shaped objects, mirroring the
-established convention in tests/spec003 and tests/spec004.
+Batch 1 tests exercise pure functions over hand-built #003/#004-shaped
+objects and need no database, mirroring the established convention in
+tests/spec003 and tests/spec004. Batch 2 (snapshots, bounded PIT access,
+the historical observation cache) genuinely reads through
+`data_foundation.pit.access`, so `pit_universe` below builds a real
+`conn`-backed universe -- see `spec005.fixtures.pit_universe`.
 """
 from __future__ import annotations
 
@@ -11,6 +15,8 @@ import pytest
 from evaluation.models.entities import EvaluationRunRegistry
 from evaluation.registry.runs import build_run_id
 from hypothesis.models.entities import EvidenceProvenance
+
+from spec005.fixtures.pit_universe import insert_price_history, make_security
 
 SIGNATURE_ID = "VOL_COMPRESSION_RS_HIGH"
 SIGNATURE_SET_ID = "sigset_x"
@@ -80,3 +86,47 @@ def run_registry() -> EvaluationRunRegistry:
 @pytest.fixture
 def evidence_provenance(run_registry) -> EvidenceProvenance:
     return build_evidence_provenance(run_registry)
+
+
+# --------------------------------------------------------------------------
+# Batch 2: real SQLite-backed PIT universe (snapshots, bounded access,
+# observation cache, isolation tests). Deliberately unrelated to the
+# DEVELOPMENT_START/END/VALIDATION_START/END/LOCKED_OOS_START constants
+# above -- those describe a #003 evidence run's OWN development window;
+# these describe #005's OWN research-lifecycle zones for the PIT universe.
+# --------------------------------------------------------------------------
+
+PIT_WARMUP_START = "2023-10-02"  # >= discovery's minimum_history_days=60 by PIT_FORMATION_END
+PIT_FORMATION_START = "2024-01-02"
+PIT_FORMATION_END = "2024-01-31"
+PIT_VALIDATION_START = "2024-02-01"
+PIT_VALIDATION_END = "2024-02-29"
+PIT_LOCKED_OOS_START = "2024-03-01"
+PIT_UNIVERSE_END = "2024-03-29"
+
+
+@pytest.fixture
+def pit_universe(conn, now):
+    """Two priced securities + a benchmark, each with price history from
+    PIT_WARMUP_START (well before FORMATION_SELECTION starts, so that by
+    PIT_FORMATION_END they already clear discovery's own
+    `minimum_history_days: 60` eligibility floor -- legitimate warm-up
+    per Spec #005 SS3: "Warm-up data before a zone may be read to
+    compute already-frozen rolling features") through PIT_UNIVERSE_END
+    (spanning FORMATION_SELECTION -> DEVELOPMENT_VALIDATION ->
+    LOCKED_OOS). Plus one security with NO price history at all
+    (deterministic "missing observation" case for the cache tests --
+    `compute_discovery_observations()` skips a security with zero bars
+    unconditionally, never dependent on eligibility-threshold tuning)."""
+    sec_a = make_security(conn, "spec005:SEC_A", now)
+    sec_b = make_security(conn, "spec005:SEC_B", now)
+    sec_nodata = make_security(conn, "spec005:SEC_NODATA", now)
+    benchmark = make_security(conn, "spec005:BENCH", now)
+    insert_price_history(conn, sec_a, now, PIT_WARMUP_START, PIT_UNIVERSE_END, base_price=100.0, daily_drift=0.05)
+    insert_price_history(conn, sec_b, now, PIT_WARMUP_START, PIT_UNIVERSE_END, base_price=50.0, daily_drift=-0.02)
+    insert_price_history(conn, benchmark, now, PIT_WARMUP_START, PIT_UNIVERSE_END, base_price=200.0, daily_drift=0.02)
+    return {
+        "sec_a": sec_a, "sec_b": sec_b, "sec_nodata": sec_nodata, "benchmark_security_id": benchmark,
+        "priced_security_ids": (sec_a, sec_b),
+        "security_ids_with_nodata": (sec_a, sec_b, sec_nodata),
+    }

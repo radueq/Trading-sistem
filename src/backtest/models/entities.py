@@ -1,4 +1,4 @@
-"""Spec #005 v1.0 -- typed contracts owned by #005 (Batch 1).
+"""Spec #005 v1.0 -- typed contracts owned by #005 (Batch 1 + Batch 2).
 
 Every entity here is frozen and content-addressed the same way #003/#004
 already do: an identity field (`*_id`) and a `*_hash` are pure functions
@@ -7,11 +7,16 @@ excluded (Spec #005 SS21: "Exclude created_at and wall-clock performance
 from semantic identity"). Nothing in this module reads #001 data or
 imports evaluation/discovery/hypothesis internals beyond the two
 explicitly-approved reuses (`build_run_id`, `check_provenance_matches_run`)
-that live in `backtest.provenance.evaluation_run`, not here.
+that live in `backtest.provenance.evaluation_run`, not here --
+`HistoricalObservationCache.observations` is typed as a bare `tuple`
+(never `tuple[DiscoveryObservation, ...]`) specifically to keep this
+rule intact; the real type lives only in `backtest.data.cache`.
 
-This module is CONTRACTS ONLY (Batch 1, Spec #005 SS24): no engine, no
-execution, no PIT access. Later batches add the modules that actually
-replay sessions and build trades.
+This module is CONTRACTS ONLY (Spec #005 SS24): no engine, no execution.
+Batch 2 adds `StageAccessBoundary` (the scope contract) but the actual
+PIT-touching facade/snapshot/cache logic lives under `backtest.data.*`,
+never here. Later batches add the modules that actually replay sessions
+and build trades.
 """
 from __future__ import annotations
 
@@ -27,15 +32,19 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from evaluation.models.entities import EvaluationRunRegistry
 
 
-def _canonical_json(value) -> str:
+def canonical_json(value) -> str:
     """Structured, delimiter-free serialization for #005's OWN new
-    fingerprints (GPT review, Batch 1 patch: hand-rolled `"::"`/`","`
-    string-concatenation delimiters can collide -- two structurally
-    different inputs, e.g. differing lists of free-text strings
-    containing commas, can serialize to the identical string). Does NOT
-    apply to the legacy #003 `build_run_id()` or #004
-    `hypothesis_fingerprint()`/`variant_fingerprint()` recipes -- those
-    stay unchanged, out of scope."""
+    fingerprints and canonical records (GPT review, Batch 1 patch:
+    hand-rolled `"::"`/`","` string-concatenation delimiters can collide
+    -- two structurally different inputs, e.g. differing lists of
+    free-text strings containing commas, can serialize to the identical
+    string). Public (no leading underscore) because Batch 2's
+    `backtest.data.snapshot` reuses this SAME recipe for its own
+    streaming content-hash records -- one canonicalization rule, not a
+    second divergent copy. Does NOT apply to the legacy #003
+    `build_run_id()` or #004 `hypothesis_fingerprint()`/
+    `variant_fingerprint()` recipes -- those stay unchanged, out of
+    scope."""
     return json.dumps(value, sort_keys=True, ensure_ascii=True, separators=(",", ":"))
 
 
@@ -165,7 +174,7 @@ def calendar_fingerprint(
         "session_close_time": session_close_time,
         "early_close_dates": sorted([list(pair) for pair in early_close_dates]),
     }
-    return _canonical_json(payload)
+    return canonical_json(payload)
 
 
 def build_calendar_id(fingerprint: str) -> tuple[str, str]:
@@ -322,7 +331,7 @@ def execution_semantics_fingerprint(
         "cap_fill": cap_fill,
         "cap_is_hard": cap_is_hard,
     }
-    return _canonical_json(payload)
+    return canonical_json(payload)
 
 
 def build_execution_semantics_profile_id(fingerprint: str) -> tuple[str, str]:
@@ -681,7 +690,7 @@ def research_plan_fingerprint(
             "declared_unseen": exposure_manifest.declared_unseen,
         },
     }
-    return _canonical_json(payload)
+    return canonical_json(payload)
 
 
 def build_research_plan_id(fingerprint: str) -> tuple[str, str]:
@@ -707,5 +716,250 @@ def verify_research_plan_identity(plan: ResearchPlan) -> tuple[bool, tuple[str, 
             f"research plan content-address mismatch: stored research_plan_id={plan.research_plan_id!r}/"
             f"plan_hash={plan.plan_hash!r} does not match the id/hash recomputed from the plan's own "
             f"fields ({expected_id!r}/{expected_hash!r})",
+        )
+    return True, ()
+
+
+# --------------------------------------------------------------------------
+# Stage access boundary (Spec #005 SS3/SS6, Batch 2): "Selection must not
+# inspect or hash validation/OOS price content. A plan can commit future
+# window boundaries without opening those data." "LOCKED_OOS: No reads,
+# evaluation or release in #005 V1." Because #001's PIT gateway
+# (`get_price_series_as_of`) has no LOWER as_of bound -- it always
+# returns full history up to `as_of` -- bounding the single upper edge
+# (`max_as_of`) is sufficient and necessary to guarantee no fact dated
+# after it can ever be read; warm-up before the zone's own start is
+# unrestricted by design (SS3: "Warm-up data before a zone may be read
+# to compute already-frozen rolling features").
+# --------------------------------------------------------------------------
+
+FORMATION_SELECTION = "FORMATION_SELECTION"
+DEVELOPMENT_VALIDATION = "DEVELOPMENT_VALIDATION"
+LOCKED_OOS = "LOCKED_OOS"
+_STAGE_ZONES_V1 = (FORMATION_SELECTION, DEVELOPMENT_VALIDATION, LOCKED_OOS)
+
+
+class LockedOOSAccessError(ValueError):
+    """Raised the instant a LOCKED_OOS boundary is constructed -- never
+    deferred to a first query. SS3: "No reads, evaluation or release in
+    #005 V1" is not a runtime policy to remember to enforce per-call; it
+    is unconditional, so the object that would permit it cannot exist."""
+    pass
+
+
+class OutOfScopeAccessError(ValueError):
+    """Raised when a query's `as_of` exceeds a `StageAccessBoundary`'s
+    `max_as_of` -- the mechanical enforcement of SS3's "Selection must
+    not inspect or hash validation/OOS price content." """
+    pass
+
+
+@dataclass(frozen=True)
+class StageAccessBoundary:
+    """The zone-scoped upper bound on every #005-initiated PIT/discovery
+    read for one stage. `zone` is `FORMATION_SELECTION` or
+    `DEVELOPMENT_VALIDATION` only -- constructing one for `LOCKED_OOS`
+    raises immediately (see `LockedOOSAccessError`). `max_as_of` is that
+    zone's own end date (`formation_end` or `validation_end`); no query
+    through this boundary may ever use an `as_of` after it."""
+    zone: str
+    max_as_of: str
+
+    def __post_init__(self):
+        if self.zone == LOCKED_OOS:
+            raise LockedOOSAccessError(
+                "LOCKED_OOS: no StageAccessBoundary may ever be constructed for this zone -- "
+                "Spec #005 V1 permits no reads, evaluation or release of Locked OOS data"
+            )
+        if self.zone not in _STAGE_ZONES_V1:
+            raise ValueError(f"zone must be one of {_STAGE_ZONES_V1!r}, got {self.zone!r}")
+        if parse_iso_date(self.max_as_of) is None:
+            raise ValueError(f"max_as_of is not a valid ISO date: {self.max_as_of!r}")
+
+    def require_as_of_in_scope(self, as_of: str) -> None:
+        if parse_iso_date(as_of) is None:
+            raise OutOfScopeAccessError(f"as_of is not a valid ISO date: {as_of!r}")
+        if as_of > self.max_as_of:
+            raise OutOfScopeAccessError(
+                f"OUT_OF_SCOPE_ACCESS: as_of={as_of!r} exceeds this {self.zone} boundary's "
+                f"max_as_of={self.max_as_of!r} -- validation/OOS price content may never be "
+                f"inspected or hashed from this stage (Spec #005 SS3/SS6)"
+            )
+
+
+# --------------------------------------------------------------------------
+# Data snapshot identity (Spec #005 SS5/SS6, Batch 2): "Freeze or open a
+# consistent read snapshot for the entire run. Hash exactly that
+# snapshot... Use streaming SHA-256 over canonical typed records."
+# --------------------------------------------------------------------------
+
+CANONICALIZATION_VERSION_V1 = "canon_v1"
+SNAPSHOT_FACT_CATEGORIES_V1 = ("PRICE_BARS", "CORPORATE_ACTIONS", "LISTING_STATUS", "SYMBOL_HISTORY")
+NOT_REPLAYABLE_FROM_RETAINED_DATA = "NOT_REPLAYABLE_FROM_RETAINED_DATA"
+
+
+@dataclass(frozen=True)
+class DataSnapshotManifest:
+    """Spec #005 SS5: "Scope, table/field manifests, canonicalization
+    version, content digest, replay artifact reference." `content_digest`
+    is the actual streaming SHA-256 over every canonical record read
+    through a `StageAccessBoundary`-bounded facade (SS6) -- the "proof"
+    value. `snapshot_id`/`snapshot_hash` are this MANIFEST's own
+    content-address (SS21 discipline), derived from `content_digest` plus
+    the declared scope, so a `dataclasses.replace()`-tampered manifest
+    (e.g. widening `security_ids` after the fact while keeping the old
+    digest) is detectable the same way as every other #005 entity (see
+    `verify_snapshot_content_address()`). `replayable` is fixed to
+    `NOT_REPLAYABLE_FROM_RETAINED_DATA` in Batch 2 -- no retained-extract
+    storage mechanism exists yet (SS6: "Otherwise label the run
+    NOT_REPLAYABLE_FROM_RETAINED_DATA"); `replay_artifact_reference`
+    stays unset until a later batch builds one."""
+    snapshot_id: str
+    snapshot_hash: str
+
+    stage: str  # FORMATION_SELECTION | DEVELOPMENT_VALIDATION
+    security_ids: tuple[str, ...]  # sorted, deduplicated, benchmark included
+    benchmark_security_id: str
+    max_as_of: str
+    trading_calendar_id: str
+
+    table_field_manifest: tuple[str, ...]
+    canonicalization_version: str
+    content_digest: str
+
+    replayable: str = NOT_REPLAYABLE_FROM_RETAINED_DATA
+    replay_artifact_reference: Optional[str] = None
+
+
+def snapshot_manifest_fingerprint(
+    stage: str, security_ids: tuple[str, ...], benchmark_security_id: str, max_as_of: str,
+    trading_calendar_id: str, table_field_manifest: tuple[str, ...], canonicalization_version: str,
+    content_digest: str, replayable: str, replay_artifact_reference: Optional[str],
+) -> str:
+    payload = {
+        "stage": stage,
+        "security_ids": sorted(security_ids),
+        "benchmark_security_id": benchmark_security_id,
+        "max_as_of": max_as_of,
+        "trading_calendar_id": trading_calendar_id,
+        "table_field_manifest": sorted(table_field_manifest),
+        "canonicalization_version": canonicalization_version,
+        "content_digest": content_digest,
+        "replayable": replayable,
+        "replay_artifact_reference": replay_artifact_reference,
+    }
+    return canonical_json(payload)
+
+
+def build_snapshot_id(fingerprint: str) -> tuple[str, str]:
+    digest = hashlib.sha256(fingerprint.encode()).hexdigest()[:16]
+    return f"snap_{digest}", digest
+
+
+def verify_snapshot_content_address(manifest: DataSnapshotManifest) -> tuple[bool, tuple[str, ...]]:
+    """Recomputes the fingerprint from the manifest's OWN stored fields
+    and compares it to `manifest.snapshot_id`/`manifest.snapshot_hash` --
+    catches a manifest modified after construction (e.g. via
+    `dataclasses.replace()` widening `security_ids` or swapping
+    `content_digest` while keeping the old id), the same bug class
+    PATCH #004-B fixed once for StrategyHypothesis/StrategyVariant."""
+    fp = snapshot_manifest_fingerprint(
+        manifest.stage, manifest.security_ids, manifest.benchmark_security_id, manifest.max_as_of,
+        manifest.trading_calendar_id, manifest.table_field_manifest, manifest.canonicalization_version,
+        manifest.content_digest, manifest.replayable, manifest.replay_artifact_reference,
+    )
+    expected_id, expected_hash = build_snapshot_id(fp)
+    if manifest.snapshot_id != expected_id or manifest.snapshot_hash != expected_hash:
+        return False, (
+            f"snapshot content-address mismatch: stored snapshot_id={manifest.snapshot_id!r}/"
+            f"snapshot_hash={manifest.snapshot_hash!r} does not match the id/hash recomputed from "
+            f"the manifest's own fields ({expected_id!r}/{expected_hash!r})",
+        )
+    return True, ()
+
+
+# --------------------------------------------------------------------------
+# Historical observation cache (Spec #005 SS5/SS7, Batch 2): "Compute
+# compute_discovery_observations once per session/universe/config/
+# snapshot and reuse the PRE-budget output for all relevant variants and
+# invalidation checks." "Cache keys bind stage, session, universe/
+# benchmark, snapshot, discovery code/config and PIT policy."
+# --------------------------------------------------------------------------
+
+PIT_ACCESS_POLICY_V1 = "BOUNDED_PIT_V1"
+
+
+def historical_observation_cache_fingerprint(
+    stage: str, as_of: str, security_ids: tuple[str, ...], benchmark_security_id: str, snapshot_id: str,
+    discovery_engine_version: str, discovery_config_version: str, pit_access_policy: str,
+) -> str:
+    """Key-only fingerprint (mirrors #003's `build_run_id()`'s own
+    key-only recipe, not a full-content hash): these 8 fields fully
+    determine the reproducible `compute_discovery_observations()` output
+    -- SS21's "identical semantic inputs produce identical... content
+    and IDs" guarantee rests on #002's OWN already-accepted determinism,
+    not a second hash over `DiscoveryObservation` internals here."""
+    payload = {
+        "stage": stage,
+        "as_of": as_of,
+        "security_ids": sorted(security_ids),
+        "benchmark_security_id": benchmark_security_id,
+        "snapshot_id": snapshot_id,
+        "discovery_engine_version": discovery_engine_version,
+        "discovery_config_version": discovery_config_version,
+        "pit_access_policy": pit_access_policy,
+    }
+    return canonical_json(payload)
+
+
+def build_historical_observation_cache_id(fingerprint: str) -> tuple[str, str]:
+    digest = hashlib.sha256(fingerprint.encode()).hexdigest()[:16]
+    return f"obscache_{digest}", digest
+
+
+@dataclass(frozen=True)
+class HistoricalObservationCache:
+    """Spec #005 SS5: "Session/security observations and explicit
+    missingness, discovery config/code and snapshot scope."
+    `missing_security_ids` is the explicit-missingness SS7 requires: a
+    security in the requested universe that produced no
+    `DiscoveryObservation` (ineligible, or no price history at all) is
+    named here, never silently absent -- SS7: "A missing observation is
+    UNKNOWN, not automatically a false entry or true invalidation."
+    `observations` is the PRE-budget list exactly as
+    `discovery.engine.compute_discovery_observations()` returned it --
+    this type never accepts `run_discovery()`'s post-budget output."""
+    cache_id: str
+    cache_hash: str
+
+    stage: str
+    as_of: str
+    security_ids: tuple[str, ...]  # the requested universe, sorted
+    benchmark_security_id: str
+    snapshot_id: str
+    discovery_engine_version: str
+    discovery_config_version: str
+    pit_access_policy: str
+
+    observations: tuple  # tuple[discovery.models.entities.DiscoveryObservation, ...]
+    missing_security_ids: tuple[str, ...]
+
+
+def verify_historical_observation_cache_identity(cache: HistoricalObservationCache) -> tuple[bool, tuple[str, ...]]:
+    """Recomputes the key-only fingerprint from the cache entry's OWN
+    stored key fields and compares it to `cache.cache_id`/
+    `cache.cache_hash` -- catches a cache entry modified after
+    construction (e.g. via `dataclasses.replace()` swapping `as_of` or
+    `security_ids` while keeping the old id/observations)."""
+    fp = historical_observation_cache_fingerprint(
+        cache.stage, cache.as_of, cache.security_ids, cache.benchmark_security_id, cache.snapshot_id,
+        cache.discovery_engine_version, cache.discovery_config_version, cache.pit_access_policy,
+    )
+    expected_id, expected_hash = build_historical_observation_cache_id(fp)
+    if cache.cache_id != expected_id or cache.cache_hash != expected_hash:
+        return False, (
+            f"observation cache content-address mismatch: stored cache_id={cache.cache_id!r}/"
+            f"cache_hash={cache.cache_hash!r} does not match the id/hash recomputed from the "
+            f"cache entry's own key fields ({expected_id!r}/{expected_hash!r})",
         )
     return True, ()
