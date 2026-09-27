@@ -32,9 +32,15 @@ horizon_candidates:
 evidence_reference:
   reference_horizon_bars: 3
 
+# STOP_MANAGED_INVALIDATION added by PATCH #004-C / Spec #005 Exit
+# Amendment v1.0 (docs/spec005_exit_amendment_v1.0.md, ACCEPTED) -- additive,
+# TIME_EXIT/SIGNAL_INVALIDATION unchanged. Editing this list changes
+# hypothesis_config_version, as intended: this is a genuine, versioned
+# change to which exit families V1 allows, not a silent parameter tweak.
 exit_families:
   - TIME_EXIT
   - SIGNAL_INVALIDATION
+  - STOP_MANAGED_INVALIDATION
 
 exit_execution_policy: BAR_CLOSE
 

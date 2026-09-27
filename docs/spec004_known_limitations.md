@@ -100,6 +100,15 @@ trading, 4H/1H data ingestion, crypto, options, and any automated GPT/
 Claude API orchestration. All deferred to Spec #005 (backtesting/
 execution) or later specs this one deliberately does not reach into.
 
+**PATCH #004-C partial lift (narrow, not a reopening):** Spec #005 Exit
+Amendment v1.0 (`docs/spec005_exit_amendment_v1.0.md`, ACCEPTED) carries a
+strict derogation from the ATR-stop-optimization limitation above, scoped
+EXCLUSIVELY to `ExitHypothesis.stop_loss`/`partial_profit` on the new
+`STOP_MANAGED_INVALIDATION` family. Take-profit optimization, MAE/MFE,
+position sizing, and every other item in this list remain out of scope;
+`risk_exit.enabled` stays `false`, and `StrategyDefinition` gets no new
+field at all.
+
 ## Test coverage
 
 - All 44 required tests (Spec #004 SS97) plus 8 tests added for Radu's

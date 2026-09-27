@@ -37,11 +37,14 @@ TEST 63.
 """
 from __future__ import annotations
 
+import math
+
 from evaluation.models.entities import EvaluationRunRegistry
 
 from hypothesis.models.entities import (
     Direction,
     ExitFamily,
+    ExitHypothesis,
     HypothesisStatus,
     InvalidationCondition,
     LaneStateCondition,
@@ -83,6 +86,52 @@ def _scan_condition_for_outcome_contamination(
     for lbl in holds_labels:
         if isinstance(lbl, str) and lbl.lower() in FORBIDDEN_OUTCOME_FIELD_NAMES:
             errors.append(f"{where}: holds_labels contains {lbl!r}, forbidden outcome field (SS72)")
+
+
+def _check_stop_managed_invalidation_exit(variant_id: str, ex: ExitHypothesis, errors: list[str]) -> None:
+    """PATCH #004-C / Spec #005 Exit Amendment v1.0 (ACCEPTED, section 1) --
+    structural validation for the additive STOP_MANAGED_INVALIDATION family.
+    No automatic time-based exit (Radu's explicit design decision, distinct
+    from and narrower than SS110-B's own no-unbounded-hold rule for
+    SIGNAL_INVALIDATION): `max_holding_bars`/`time_exit_bars` are forbidden
+    here, never required."""
+    if ex.stop_loss is None:
+        errors.append(f"variant {variant_id!r}: STOP_MANAGED_INVALIDATION requires stop_loss (PATCH #004-C)")
+    else:
+        if ex.stop_loss.basis != "ATR_TRAILING_V1":
+            errors.append(
+                f"variant {variant_id!r}: stop_loss.basis must be 'ATR_TRAILING_V1', got "
+                f"{ex.stop_loss.basis!r} (PATCH #004-C, only allowed value V1)"
+            )
+        if not (math.isfinite(ex.stop_loss.atr_multiple) and ex.stop_loss.atr_multiple > 0):
+            errors.append(
+                f"variant {variant_id!r}: stop_loss.atr_multiple must be a finite number > 0, got "
+                f"{ex.stop_loss.atr_multiple!r}"
+            )
+    if ex.partial_profit is not None:
+        if not (math.isfinite(ex.partial_profit.r_multiple) and ex.partial_profit.r_multiple > 0):
+            errors.append(
+                f"variant {variant_id!r}: partial_profit.r_multiple must be a finite number > 0, got "
+                f"{ex.partial_profit.r_multiple!r}"
+            )
+        if not (math.isfinite(ex.partial_profit.fraction) and 0 < ex.partial_profit.fraction < 1):
+            errors.append(
+                f"variant {variant_id!r}: partial_profit.fraction must satisfy 0 < fraction < 1, got "
+                f"{ex.partial_profit.fraction!r}"
+            )
+    if ex.max_holding_bars is not None:
+        errors.append(
+            f"variant {variant_id!r}: max_holding_bars must be None for STOP_MANAGED_INVALIDATION -- "
+            f"no automatic time-based exit (Radu's explicit design decision, PATCH #004-C)"
+        )
+    if ex.time_exit_bars is not None:
+        errors.append(f"variant {variant_id!r}: time_exit_bars must be None for STOP_MANAGED_INVALIDATION")
+    if not ex.invalidation_conditions:
+        errors.append(
+            f"variant {variant_id!r}: STOP_MANAGED_INVALIDATION requires at least one "
+            f"invalidation_conditions entry, written explicitly at freeze time (PATCH #004-C -- "
+            f"never auto-copied from the entry definition)"
+        )
 
 
 def validate_for_preregistration(
@@ -163,13 +212,27 @@ def validate_for_preregistration(
         _scan_condition_for_outcome_contamination(c, "entry_definition", errors)
 
     for v in variants:
-        if v.exit_hypothesis.exit_family not in (ExitFamily.TIME_EXIT.value, ExitFamily.SIGNAL_INVALIDATION.value):
-            errors.append(f"variant {v.strategy_variant_id!r} has invalid exit_family {v.exit_hypothesis.exit_family!r} (TEST 15)")
-        if v.exit_hypothesis.exit_family == ExitFamily.SIGNAL_INVALIDATION.value and v.exit_hypothesis.max_holding_bars is None:
+        ex = v.exit_hypothesis
+        if ex.exit_family not in (
+            ExitFamily.TIME_EXIT.value, ExitFamily.SIGNAL_INVALIDATION.value,
+            ExitFamily.STOP_MANAGED_INVALIDATION.value,
+        ):
+            errors.append(f"variant {v.strategy_variant_id!r} has invalid exit_family {ex.exit_family!r} (TEST 15)")
+        if ex.exit_family == ExitFamily.SIGNAL_INVALIDATION.value and ex.max_holding_bars is None:
             errors.append(
                 f"variant {v.strategy_variant_id!r}: SIGNAL_INVALIDATION requires max_holding_bars "
                 f"(Radu's SS110-B -- no unbounded holding period)"
             )
+        if ex.exit_family in (ExitFamily.TIME_EXIT.value, ExitFamily.SIGNAL_INVALIDATION.value):
+            if ex.stop_loss is not None or ex.partial_profit is not None:
+                errors.append(
+                    f"variant {v.strategy_variant_id!r}: stop_loss/partial_profit must be None for "
+                    f"{ex.exit_family!r} -- these fields are scoped exclusively to "
+                    f"STOP_MANAGED_INVALIDATION (PATCH #004-C, SS79-81 derogation is strictly "
+                    f"family-conditioned, never a free field on the old families)"
+                )
+        elif ex.exit_family == ExitFamily.STOP_MANAGED_INVALIDATION.value:
+            _check_stop_managed_invalidation_exit(v.strategy_variant_id, ex, errors)
         for ic in v.exit_hypothesis.invalidation_conditions:
             _scan_condition_for_outcome_contamination(ic, f"variant {v.strategy_variant_id}.invalidation_conditions", errors)
 

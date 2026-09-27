@@ -3,12 +3,14 @@
 Run: `PYTHONPATH=src:tests python3 -m pytest tests/spec004/ -v` -- Python
 3.11.15, pytest 9.1.1, pandas 3.0.6, numpy 2.4.6, PyYAML 6.0.1.
 
-Result: **150 passed, 0 failed, 0 pending** (across the 44 required
+Result: **176 passed, 0 failed, 0 pending** (across the 44 required
 tests, TEST 45-52 added per Radu's SS110 A/B/C/D/E/F/H amendments during
 architecture review, TEST 53-61 added for PATCH #004-A -- GPT Review
-#004 Round 1 -- and TEST 62-66 added for PATCH #004-B -- GPT Review #004
-Round 2 -- several have multiple focused sub-tests). Full repo (Spec #001
-+ Spec #002 + Spec #003 + Spec #004): **275 passed, 1 skipped** (Spec
+#004 Round 1 -- TEST 62-66 added for PATCH #004-B -- GPT Review #004
+Round 2 -- and TEST 67-73 added for PATCH #004-C / Spec #005 Exit
+Amendment v1.0 (ACCEPTED) -- the additive `STOP_MANAGED_INVALIDATION`
+exit family -- several have multiple focused sub-tests). Full repo (Spec
+#001-#005, including Batch 1/2 of #005): **501 passed, 1 skipped** (Spec
 #001 TEST 8, `PENDING_LEVEL_2_DATA`, unaffected).
 
 No PIT/ingestion/database is exercised anywhere in this package -- every
@@ -35,7 +37,7 @@ receive already-materialized Evaluation artifacts.
 | 14 | SIGNAL_INVALIDATION exit valid | `test_14_signal_invalidation_exit_valid.py` | **PASS** (2 sub-tests) | Lane-based and reason-code-based invalidation triggers, both with a time cap. |
 | 15 | Unsupported exit family rejected | `test_15_unsupported_exit_family_rejected.py` | **PASS** | `ATR_TRAILING_STOP` rejected. |
 | 16 | Risk exit disabled in V1 | `test_16_risk_exit_disabled_v1.py` | **PASS** (2 sub-tests) | Config default confirmed `false`; a tampered `true` config is rejected by the validator. |
-| 17 | No ATR-multiplier fields | `test_17_no_atr_multiplier_fields.py` | **PASS** (2 sub-tests) | Structural field-name scan on `ExitHypothesis`/`StrategyDefinition`. |
+| 17 | No ATR-multiplier fields, beyond the two PATCH #004-C approved exceptions | `test_17_no_atr_multiplier_fields.py` | **PASS** (3 sub-tests) | Structural field-name scan on `ExitHypothesis`/`StrategyDefinition`; `ExitHypothesis` now exempts exactly `stop_loss`/`partial_profit` (Spec #005 Exit Amendment v1.0, ACCEPTED), and a third sub-test proves the exempted set is exhaustive; `StrategyDefinition` keeps zero exceptions. |
 | 18 | Evidence fields cannot appear in runtime signal | `test_18_evidence_fields_not_in_runtime_signal.py` | **PASS** (2 sub-tests) | `FORBIDDEN_OUTCOME_FIELD_NAMES` covers the spec's examples; a condition using one as a lane is flagged. |
 | 19 | No adjusted-p in entry rule | `test_19_no_adjusted_p_in_entry_rule.py` | **PASS** (2 sub-tests) | The spec's own forbidden example (SS74), as a lane and as a reason code. |
 | 20 | No forward_return in entry/exit conditions | `test_20_no_forward_return_in_conditions.py` | **PASS** (2 sub-tests) | Checked in both an entry condition and an invalidation condition. |
@@ -85,6 +87,13 @@ receive already-materialized Evaluation artifacts.
 | 64 | StrategyVariant fully immutable, including variant_tag | `test_64_variant_fully_immutable_including_tag.py` | **PASS** (3 sub-tests) | PATCH #004-B finding #3. Rewriting `variant_tag` on an already-registered variant (same id, same hash) is rejected; re-registering an identical variant is an idempotent no-op; a different `variant_definition_hash` is still rejected (regression). |
 | 65 | Preregistration persisted as one atomic record | `test_65_preregistration_persisted_as_one_atomic_record.py` | **PASS** (3 sub-tests) | PATCH #004-B finding #4. Exactly one JSONL line (`preregistration_committed`) is appended for a whole commit, carrying the hypothesis and every variant together; replay reconstructs all of it from that one line; no commit line means no hypothesis at all, never a partial one. |
 | 66 | Research Queue rejects duplicate signature_id | `test_66_research_queue_rejects_duplicate_signature.py` | **PASS** (2 sub-tests) | PATCH #004-B finding #5 (minor). `[packet_SIG_A, packet_SIG_A]` is rejected; distinct signature ids are unaffected. |
+| 67 | STOP_MANAGED_INVALIDATION exit valid | `test_67_stop_managed_invalidation_exit_valid.py` | **PASS** (3 sub-tests) | PATCH #004-C. Control (no `partial_profit`) and partial-profit variants both accepted at proposal-validation time; a well-formed variant also passes the pre-preregistration gate. |
+| 68 | STOP_MANAGED_INVALIDATION requires stop_loss | `test_68_stop_managed_invalidation_requires_stop_loss.py` | **PASS** (4 sub-tests) | PATCH #004-C. Missing `stop_loss`, wrong `basis`, and non-positive `atr_multiple` each rejected at proposal stage; missing `stop_loss` also rejected at the pre-preregistration gate. |
+| 69 | STOP_MANAGED_INVALIDATION forbids the time cap | `test_69_stop_managed_invalidation_forbids_time_cap.py` | **PASS** (4 sub-tests) | PATCH #004-C. `max_holding_bars`/`time_exit_bars` each rejected (no automatic time-based exit -- Radu's explicit design decision, distinct from SIGNAL_INVALIDATION's own SS110-B time cap, TEST 46 unchanged); missing `invalidation_conditions` rejected; `max_holding_bars` also rejected at the pre-preregistration gate. |
+| 70 | partial_profit constraints | `test_70_stop_managed_invalidation_partial_profit_constraints.py` | **PASS** (5 sub-tests) | PATCH #004-C. `r_multiple<=0` and `fraction` outside `(0,1)` (both boundaries) rejected; a valid near-boundary fraction accepted; an invalid `partial_profit` also rejected at the pre-preregistration gate. |
+| 71 | stop_loss/partial_profit forbidden on TIME_EXIT/SIGNAL_INVALIDATION | `test_71_stop_loss_forbidden_on_old_exit_families.py` | **PASS** (4 sub-tests) | PATCH #004-C. A `SIGNAL_INVALIDATION` exit carrying `stop_loss` is rejected at both proposal and gate stages; a `TIME_EXIT` exit carrying `stop_loss` is rejected at the gate; a direct fingerprint check proves WHY the validator ban is load-bearing (without it, two `TIME_EXIT` objects differing only by `stop_loss` collide to the same identity). |
+| 72 | _exit_fp() fingerprint backward compatibility | `test_72_exit_fingerprint_backward_compatible.py` | **PASS** (4 sub-tests) | PATCH #004-C / Spec #005 Exit Amendment v1.0 section 13, regressions 1-2. `TIME_EXIT`/`SIGNAL_INVALIDATION` fingerprints match the documented pre-patch formula exactly, byte-for-byte (no new suffix); two `STOP_MANAGED_INVALIDATION` variants differing only by `k` get different ids; the partial-profit suffix distinguishes control vs. partial-profit variants. |
+| 73 | STOP_MANAGED_INVALIDATION end-to-end pipeline | `test_73_stop_managed_invalidation_end_to_end.py` | **PASS** | PATCH #004-C. Full normalize -> validate_proposal -> materialize_variants -> register_variant -> validate_for_preregistration round-trip, the same sequence every other exit family already goes through. |
 
 ## How to reproduce
 

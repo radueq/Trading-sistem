@@ -89,15 +89,44 @@ def build_hypothesis_id(fingerprint: str) -> tuple[str, str]:
 
 
 def _exit_fp(ex: ExitHypothesis) -> str:
+    """PATCH #004-C / Spec #005 Exit Amendment v1.0 (ACCEPTED, section 13):
+    the STOP_MANAGED_INVALIDATION branch below is additive and family-
+    conditioned -- for TIME_EXIT/SIGNAL_INVALIDATION it never executes,
+    so `base` is returned byte-for-byte identical to before this patch
+    (verified by regression: existing frozen fixtures replay to the same
+    variant_id). Without this branch, a `stop_loss`/`partial_profit`
+    populated on an old family would be a parameter silently ignored by
+    the hash -- the validator (validation/rules.py) forbids that
+    combination outright, so this branch never needs to guard against it
+    either, but the family-conditioning keeps the old fingerprint provably
+    unaffected regardless."""
     inv = "&".join(sorted(
         f"LANE:{c.lane}:{','.join(c.holds_labels or ())}" if c.lane is not None
         else f"REASON:{c.reason_code}:{c.triggers_on_presence}"
         for c in ex.invalidation_conditions
     ))
-    return (
+    base = (
         f"{ex.exit_family}::{ex.horizon_reference_point}::{ex.exit_execution_policy}::"
         f"{ex.time_exit_bars}::{inv}::{ex.max_holding_bars}::{ex.parameter_source}"
     )
+    if ex.exit_family == ExitFamily.STOP_MANAGED_INVALIDATION.value:
+        # A well-formed STOP_MANAGED_INVALIDATION ExitHypothesis always has
+        # stop_loss populated (validator-enforced, section 1) -- but this
+        # fingerprint function must still never crash on a structurally
+        # invalid one that reaches it BEFORE validation (e.g. a hand-built
+        # StrategyVariant at the pre-preregistration gate, same defensive
+        # posture the pre-existing max_holding_bars/time_exit_bars fields
+        # already have via plain f-string embedding of None). A missing
+        # stop_loss embeds as "None" here rather than raising, so the
+        # validator -- not an AttributeError -- is what rejects it.
+        base += (
+            f"::{ex.stop_loss.basis}:{ex.stop_loss.atr_multiple}" if ex.stop_loss is not None else "::None"
+        )
+        base += (
+            f"::{ex.partial_profit.r_multiple}:{ex.partial_profit.fraction}"
+            if ex.partial_profit is not None else "::NO_PARTIAL_PROFIT"
+        )
+    return base
 
 
 def variant_fingerprint(parent_definition_hash: str, exit_hypothesis: ExitHypothesis) -> str:

@@ -119,8 +119,20 @@ default every TIME_EXIT variant is `EXPERIMENTAL_VARIANT`; a caller may
 explicitly pre-designate exactly one candidate value as
 `baseline_time_exit_bars`, which must already be one of
 `horizon_candidate_set.values` (`ValueError` otherwise) and is the only
-way a variant becomes `BASELINE_VARIANT` (TEST 59-60). Two enforcement
-points:
+way a variant becomes `BASELINE_VARIANT` (TEST 59-60).
+
+**PATCH #004-C update:** `signal_invalidation_exits` also accepts
+`STOP_MANAGED_INVALIDATION`-family `ExitHypothesis` objects (the parameter
+name is kept as-is -- minimal surface change -- but `build_variant()`/
+`_exit_fp()` are family-agnostic and were already generic over any non-
+TIME_EXIT exit family before this patch). `_exit_fp()` gained one
+additive, family-conditioned branch appending `stop_loss`/`partial_profit`
+to the fingerprint ONLY for the new family; for `TIME_EXIT`/
+`SIGNAL_INVALIDATION` it is byte-for-byte unchanged (TEST 72). See
+`docs/spec005_exit_amendment_v1.0.md` (ACCEPTED) section 13 for the exact
+formula.
+
+Two enforcement points:
 
 - `validation/rules.py:validate_for_preregistration()` rejects a
   hypothesis whose `variant_ids` doesn't exactly match the variants

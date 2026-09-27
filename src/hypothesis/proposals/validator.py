@@ -14,6 +14,7 @@ EXCEEDED status -- never a silent truncation, SS107).
 """
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
 from discovery.candidate.reason_codes import ReasonCode
@@ -146,6 +147,45 @@ def _check_invalidation_condition(ic: InvalidationCondition, lane_vocab: dict[st
             errors.append("invalidation reason_code condition requires triggers_on_presence to be set")
 
 
+def _check_stop_managed_invalidation_exit(
+    ex: ExitHypothesis, lane_vocab: dict[str, set[str]], reason_vocab: set[str], errors: list[str],
+) -> None:
+    """PATCH #004-C / Spec #005 Exit Amendment v1.0 (ACCEPTED, section 1) --
+    proposal-level structural checks for STOP_MANAGED_INVALIDATION, mirrored
+    against `hypothesis/validation/rules.py`'s registry-level gate. No
+    automatic time-based exit (Radu's explicit design decision): max_holding_
+    bars/time_exit_bars are forbidden here, never required."""
+    if ex.stop_loss is None:
+        errors.append("STOP_MANAGED_INVALIDATION requires stop_loss (PATCH #004-C)")
+    else:
+        if ex.stop_loss.basis != "ATR_TRAILING_V1":
+            errors.append(
+                f"stop_loss.basis must be 'ATR_TRAILING_V1', got {ex.stop_loss.basis!r} "
+                f"(PATCH #004-C, only allowed value V1)"
+            )
+        if not (math.isfinite(ex.stop_loss.atr_multiple) and ex.stop_loss.atr_multiple > 0):
+            errors.append(f"stop_loss.atr_multiple must be a finite number > 0, got {ex.stop_loss.atr_multiple!r}")
+    if ex.partial_profit is not None:
+        if not (math.isfinite(ex.partial_profit.r_multiple) and ex.partial_profit.r_multiple > 0):
+            errors.append(f"partial_profit.r_multiple must be a finite number > 0, got {ex.partial_profit.r_multiple!r}")
+        if not (math.isfinite(ex.partial_profit.fraction) and 0 < ex.partial_profit.fraction < 1):
+            errors.append(f"partial_profit.fraction must satisfy 0 < fraction < 1, got {ex.partial_profit.fraction!r}")
+    if ex.max_holding_bars is not None:
+        errors.append(
+            "max_holding_bars must be None for STOP_MANAGED_INVALIDATION -- no automatic "
+            "time-based exit (Radu's explicit design decision, PATCH #004-C)"
+        )
+    if ex.time_exit_bars is not None:
+        errors.append("time_exit_bars must be None for STOP_MANAGED_INVALIDATION")
+    if not ex.invalidation_conditions:
+        errors.append(
+            "STOP_MANAGED_INVALIDATION requires at least one invalidation_conditions entry, "
+            "written explicitly (PATCH #004-C -- never auto-copied from the entry definition)"
+        )
+    for ic in ex.invalidation_conditions:
+        _check_invalidation_condition(ic, lane_vocab, reason_vocab, errors)
+
+
 def _check_exit_hypothesis(ex: ExitHypothesis, cfg: dict, lane_vocab: dict, reason_vocab: set, errors: list[str]) -> None:
     if ex.exit_family not in cfg["exit_families"]:
         errors.append(f"exit_family {ex.exit_family!r} not in configured exit_families={cfg['exit_families']} (TEST 15)")
@@ -166,10 +206,18 @@ def _check_exit_hypothesis(ex: ExitHypothesis, cfg: dict, lane_vocab: dict, reas
             errors.append("SIGNAL_INVALIDATION requires at least one invalidation_conditions entry")
         for ic in ex.invalidation_conditions:
             _check_invalidation_condition(ic, lane_vocab, reason_vocab, errors)
+        if ex.stop_loss is not None or ex.partial_profit is not None:
+            errors.append(
+                "SIGNAL_INVALIDATION must not carry stop_loss/partial_profit -- those fields are "
+                "scoped exclusively to STOP_MANAGED_INVALIDATION (PATCH #004-C)"
+            )
+    elif ex.exit_family == ExitFamily.STOP_MANAGED_INVALIDATION.value:
+        _check_stop_managed_invalidation_exit(ex, lane_vocab, reason_vocab, errors)
     else:
         errors.append(
-            f"HypothesisProposal.exit_hypotheses must only contain SIGNAL_INVALIDATION variants -- "
-            f"TIME_EXIT is always auto-derived from horizon_candidates, got exit_family={ex.exit_family!r}"
+            f"HypothesisProposal.exit_hypotheses must only contain SIGNAL_INVALIDATION or "
+            f"STOP_MANAGED_INVALIDATION variants -- TIME_EXIT is always auto-derived from "
+            f"horizon_candidates, got exit_family={ex.exit_family!r}"
         )
 
     if cfg.get("risk_exit", {}).get("enabled") is not False:

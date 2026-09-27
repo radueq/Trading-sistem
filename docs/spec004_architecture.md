@@ -168,6 +168,17 @@ SS24) and `SIGNAL_INVALIDATION` (optional). Risk exits (ATR/stop-loss/
 take-profit/MAE/MFE) remain entirely out of scope (`risk_exit.enabled:
 false`, structurally enforced -- TEST 16-17).
 
+**PATCH #004-C update:** a third, additive exit family,
+`ExitFamily.STOP_MANAGED_INVALIDATION`, was added under a strict, narrow
+derogation from this SS79-81 boundary -- see `docs/spec005_exit_
+amendment_v1.0.md` (ACCEPTED) for the full contract. `risk_exit.enabled`
+stays `false` and TEST 16 is unchanged; the derogation authorizes exactly
+`ExitHypothesis.stop_loss`/`partial_profit` and the STOP_MANAGED_
+INVALIDATION execution behavior the amendment defines, through the new
+exit_family itself, never by flipping that switch or reinterpreting its
+original scope. `TIME_EXIT`/`SIGNAL_INVALIDATION` and their validator
+rules below are byte-for-byte unchanged.
+
 Radu's SS110-B addendum, ADDED to the original ExitHypothesis model:
 every `SIGNAL_INVALIDATION` variant **must** carry a `max_holding_bars`
 time cap. The executable rule is:

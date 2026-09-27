@@ -47,6 +47,15 @@ class DirectionBasis(str, Enum):
 class ExitFamily(str, Enum):
     TIME_EXIT = "TIME_EXIT"
     SIGNAL_INVALIDATION = "SIGNAL_INVALIDATION"
+    # PATCH #004-C / Spec #005 Exit Amendment v1.0 (docs/spec005_exit_
+    # amendment_v1.0.md, ACCEPTED) -- additive. TIME_EXIT/SIGNAL_
+    # INVALIDATION and their existing validator rules are byte-for-byte
+    # unchanged for every already-frozen hypothesis/variant. Entry
+    # condition and holding condition are deliberately separate (Radu's
+    # explicit design decision): the entry signal's own disappearance
+    # never auto-triggers this family's exit -- only stop_loss/
+    # invalidation_conditions do.
+    STOP_MANAGED_INVALIDATION = "STOP_MANAGED_INVALIDATION"
 
 
 class ParameterSource(str, Enum):
@@ -238,6 +247,32 @@ class InvalidationCondition:
 
 
 @dataclass(frozen=True)
+class StopLossRule:
+    """PATCH #004-C / Spec #005 Exit Amendment v1.0 -- mandatory protective
+    stop for ExitFamily.STOP_MANAGED_INVALIDATION ONLY. `basis` has exactly
+    one allowed value in V1 ("ATR_TRAILING_V1": #002's existing, unmodified
+    ATR_14 -- Wilder method, reused verbatim, no new indicator). `atr_multiple`
+    is `k` in the amendment's formulas (docs/spec005_exit_amendment_v1.0.md
+    section 3): S_initial(long) = F_e - k*ATR_14(s), trailed at each close as
+    S_next(long)(t) = max(S_active, close(t) - k*ATR_14(t)), never loosened."""
+    basis: str  # "ATR_TRAILING_V1" -- only allowed value V1
+    atr_multiple: float  # k, validator-enforced > 0 and finite
+
+
+@dataclass(frozen=True)
+class PartialProfitRule:
+    """PATCH #004-C / Spec #005 Exit Amendment v1.0 -- optional, single-shot
+    partial profit-taking for ExitFamily.STOP_MANAGED_INVALIDATION ONLY.
+    `r_multiple` (R) sets target = F_e +/- R*risc_inițial (a DISTANCE from
+    the fixed initial risk, never a price level itself). `fraction` is the
+    share of the CURRENT active quantity (post any split rescaling, section
+    6 of the amendment) sold once the target is hit; the remainder stays
+    held under the same active stop until invalidation or stop (section 4)."""
+    r_multiple: float  # R, validator-enforced > 0 and finite
+    fraction: float  # validator-enforced 0 < fraction < 1
+
+
+@dataclass(frozen=True)
 class ExitHypothesis:
     """Spec #004 SS21-26, restructured per Radu's SS110 final decision.
     One CONCRETE exit per StrategyVariant -- never a candidate family
@@ -257,7 +292,29 @@ class ExitHypothesis:
     never allowed in the Fast-Swing domain. Anti-lookahead: invalidation
     evaluated at bar close can only produce a fill at or after that same
     close, never earlier (#005's responsibility to enforce at execution
-    time; #004 only freezes the rule)."""
+    time; #004 only freezes the rule).
+
+    `stop_loss`/`partial_profit` (PATCH #004-C / Spec #005 Exit Amendment
+    v1.0, docs/spec005_exit_amendment_v1.0.md -- ACCEPTED): populated ONLY
+    when exit_family == STOP_MANAGED_INVALIDATION, forbidden (validator-
+    enforced None) for TIME_EXIT/SIGNAL_INVALIDATION -- SS110-B's rule
+    above stays untouched, byte-for-byte, for those two families; this is
+    an ADDITIVE third family, never a replacement. `max_holding_bars`/
+    `time_exit_bars` are themselves forbidden (validator-enforced None)
+    for STOP_MANAGED_INVALIDATION: no automatic time-based exit -- the
+    position is held until the stop or an explicit trend-invalidation
+    condition fires, never a time cap (Radu's explicit design decision,
+    separate from and narrower than SS110-B's own no-unbounded-hold
+    requirement, which continues to govern SIGNAL_INVALIDATION alone).
+    `invalidation_conditions` for this family is written explicitly at
+    freeze time -- never auto-copied from the entry definition (entry
+    condition and holding condition are deliberately separate).
+
+    This is a narrow, explicit derogation from Spec #004 SS23/SS79-81
+    (see StrategyDefinition's docstring below): it authorizes exactly
+    these two fields and the STOP_MANAGED_INVALIDATION execution behavior
+    the amendment defines, without flipping `risk_exit.enabled` and
+    without reinterpreting that switch's original scope."""
     exit_family: str  # ExitFamily
     horizon_reference_point: str  # HORIZON_REFERENCE_POINT -- "ENTRY_BAR" only
     exit_execution_policy: str  # EXIT_EXECUTION_POLICY -- "BAR_CLOSE" only
@@ -266,6 +323,8 @@ class ExitHypothesis:
     time_exit_bars: Optional[int] = None
     invalidation_conditions: tuple[InvalidationCondition, ...] = field(default_factory=tuple)
     max_holding_bars: Optional[int] = None
+    stop_loss: Optional[StopLossRule] = None
+    partial_profit: Optional[PartialProfitRule] = None
 
 
 # --------------------------------------------------------------------------
@@ -396,7 +455,15 @@ class StrategyDefinition:
     ticker list (SS64-65: no ticker cherry-picking after seeing outcomes)
     -- it names the Discovery eligibility mechanism instead. Placeholders
     are explicit, not silently omitted (SS23/SS79-81: risk/sizing/execution
-    remain out of scope for #004/#005-v1)."""
+    remain out of scope for #004/#005-v1).
+
+    This SS79-81 boundary is NOT touched by PATCH #004-C: `StrategyDefinition`
+    itself gets no new field, and the ATR-stop/partial-profit derogation
+    (docs/spec005_exit_amendment_v1.0.md, ACCEPTED) is scoped exclusively to
+    `ExitHypothesis.stop_loss`/`partial_profit` (see its docstring above) --
+    never extended here. `risk_exit.enabled` in hypothesis.yaml stays
+    `false`; the new STOP_MANAGED_INVALIDATION family is authorized
+    separately, through its own exit_family, not through that switch."""
     strategy_id: str
     hypothesis_id: str
     strategy_variant_id: str
@@ -439,12 +506,13 @@ class HypothesisProposal:
     entry_execution_policy: str
 
     horizon_candidates: HorizonCandidateSet
-    # SIGNAL_INVALIDATION variants ONLY (Level 1 design choice): the
-    # mandatory TIME_EXIT family (SS24) is always auto-derived from
-    # `horizon_candidates.values` at materialize_variants() time, one
-    # ExitHypothesis per value -- a proposal never needs to enumerate
-    # TIME_EXIT individually, and proposals/validator.py rejects any
-    # entry here whose exit_family != SIGNAL_INVALIDATION.
+    # SIGNAL_INVALIDATION or STOP_MANAGED_INVALIDATION variants ONLY
+    # (Level 1 design choice; STOP_MANAGED_INVALIDATION added by PATCH
+    # #004-C, additive): the mandatory TIME_EXIT family (SS24) is always
+    # auto-derived from `horizon_candidates.values` at materialize_
+    # variants() time, one ExitHypothesis per value -- a proposal never
+    # needs to enumerate TIME_EXIT individually, and proposals/validator.py
+    # rejects any entry here whose exit_family is neither of the two.
     exit_hypotheses: tuple[ExitHypothesis, ...]
 
     facts_from_evidence: tuple[str, ...]

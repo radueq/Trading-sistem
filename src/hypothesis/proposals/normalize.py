@@ -22,7 +22,9 @@ from hypothesis.models.entities import (
     HypothesisProposal,
     InvalidationCondition,
     LaneStateCondition,
+    PartialProfitRule,
     ReasonCodeCondition,
+    StopLossRule,
 )
 
 
@@ -56,7 +58,19 @@ def _normalize_invalidation(raw: dict) -> InvalidationCondition:
     )
 
 
+def _normalize_stop_loss(raw: dict) -> StopLossRule:
+    return StopLossRule(basis=_require(raw, "basis"), atr_multiple=_require(raw, "atr_multiple"))
+
+
+def _normalize_partial_profit(raw: dict) -> PartialProfitRule:
+    return PartialProfitRule(r_multiple=_require(raw, "r_multiple"), fraction=_require(raw, "fraction"))
+
+
 def _normalize_exit_hypothesis(raw: dict) -> ExitHypothesis:
+    """PATCH #004-C: `stop_loss`/`partial_profit` are shape/type-coerced
+    here like every other field -- whether they are ALLOWED for the given
+    exit_family is `proposals/validator.py`'s job, kept deliberately
+    separate (this module's own docstring above)."""
     return ExitHypothesis(
         exit_family=_require(raw, "exit_family"),
         horizon_reference_point=_require(raw, "horizon_reference_point"),
@@ -65,6 +79,8 @@ def _normalize_exit_hypothesis(raw: dict) -> ExitHypothesis:
         time_exit_bars=raw.get("time_exit_bars"),
         invalidation_conditions=tuple(_normalize_invalidation(c) for c in raw.get("invalidation_conditions", ())),
         max_holding_bars=raw.get("max_holding_bars"),
+        stop_loss=_normalize_stop_loss(raw["stop_loss"]) if raw.get("stop_loss") is not None else None,
+        partial_profit=_normalize_partial_profit(raw["partial_profit"]) if raw.get("partial_profit") is not None else None,
     )
 
 
