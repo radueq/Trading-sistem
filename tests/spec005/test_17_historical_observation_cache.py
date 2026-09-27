@@ -35,7 +35,7 @@ from backtest.models.entities import (
     verify_historical_observation_cache_identity,
 )
 
-from spec005.conftest import PIT_FORMATION_END
+from spec005.conftest import PIT_FORMATION_END, PIT_WARMUP_START
 
 
 @pytest.fixture
@@ -47,7 +47,9 @@ def _manifest(conn, pit_universe, pit_calendar, security_ids=None):
     boundary = StageAccessBoundary(zone=FORMATION_SELECTION, max_as_of=PIT_FORMATION_END)
     access = BoundedPITAccess(conn, boundary)
     ids = security_ids if security_ids is not None else pit_universe["priced_security_ids"]
-    return boundary, build_data_snapshot(access, ids, pit_universe["benchmark_security_id"], pit_calendar)
+    return boundary, build_data_snapshot(
+        access, ids, pit_universe["benchmark_security_id"], pit_calendar, PIT_WARMUP_START,
+    )
 
 
 def test_repeated_calls_with_the_same_key_reuse_the_entry_without_recomputing(conn, pit_universe, pit_calendar, discovery_config):
@@ -96,6 +98,25 @@ def test_out_of_scope_as_of_is_rejected_before_any_compute(conn, pit_universe, p
     ids = pit_universe["priced_security_ids"]
     with pytest.raises(OutOfScopeAccessError):
         store.get_or_compute(conn, boundary, manifest, ids, "2024-02-15", discovery_config)
+    assert store.compute_count == 0
+
+
+def test_as_of_before_the_snapshots_own_min_as_of_is_rejected_before_any_compute(
+    conn, pit_universe, pit_calendar, discovery_config,
+):
+    """Batch 2 patch round-4 review, finding #3: nothing previously
+    stopped a request for a date before this run's own declared
+    warm-up/history start -- only the UPPER bound (`max_as_of`) was
+    ever checked. `manifest.min_as_of` (see `backtest.data.snapshot`)
+    now names that lower edge explicitly, and `get_or_compute()` rejects
+    anything earlier than it, symmetric with the existing `max_as_of`
+    check below."""
+    store = _ObservationCacheStore()
+    boundary, manifest = _manifest(conn, pit_universe, pit_calendar)
+    assert manifest.min_as_of == PIT_WARMUP_START
+    ids = pit_universe["priced_security_ids"]
+    with pytest.raises(ValueError, match="min_as_of"):
+        store.get_or_compute(conn, boundary, manifest, ids, "2023-01-01", discovery_config)
     assert store.compute_count == 0
 
 
@@ -198,6 +219,46 @@ def test_a_config_with_tampered_content_under_the_same_version_is_rejected_even_
 
     with pytest.raises(ValueError, match="fresh reload"):
         store.get_or_compute(conn, boundary, manifest, ids, PIT_FORMATION_END, tampered_config)
+
+
+def test_an_archived_config_directory_remains_usable_even_though_it_differs_from_the_live_default(
+    conn, pit_universe, pit_calendar, tmp_path,
+):
+    """P2 (Batch 2 patch round-4 review): the contract is to verify the
+    FROZEN ARTIFACT actually supplied to a run, not whatever the live
+    default config directory happens to be TODAY -- reloading only
+    `discovery.config.loader.load_config()`'s no-argument default (as
+    round-3's fix did) would wrongly reject a validly archived config
+    the moment the live default changes for an unrelated reason. Copies
+    the real config directory, appends a harmless comment (changes the
+    raw-text `config_version` without changing any parsed value), and
+    confirms `get_or_compute()` accepts that archived config when
+    `config_dir` points at the archive it actually came from -- even
+    though the SAME object is rejected against the live default
+    (`config_dir=None`, the implicit default every other test above
+    uses)."""
+    import shutil
+
+    from discovery.config.loader import _CONFIG_DIR
+
+    archive_dir = tmp_path / "archived_config"
+    shutil.copytree(_CONFIG_DIR, archive_dir)
+    eligibility_path = archive_dir / "eligibility.yaml"
+    eligibility_path.write_text(eligibility_path.read_text() + "\n# archived-copy marker\n")
+    archived_config = load_discovery_config(archive_dir)
+    assert archived_config.config_version != load_discovery_config().config_version
+
+    store = _ObservationCacheStore()
+    boundary, manifest = _manifest(conn, pit_universe, pit_calendar)
+    ids = pit_universe["priced_security_ids"]
+
+    with pytest.raises(ValueError, match="fresh reload"):
+        store.get_or_compute(conn, boundary, manifest, ids, PIT_FORMATION_END, archived_config)
+
+    entry = store.get_or_compute(
+        conn, boundary, manifest, ids, PIT_FORMATION_END, archived_config, config_dir=archive_dir,
+    )
+    assert entry.discovery_config_version == archived_config.config_version
 
 
 def test_cache_module_never_imports_the_candidate_selector_or_run_discovery():

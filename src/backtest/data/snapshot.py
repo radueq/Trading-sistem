@@ -42,6 +42,20 @@ Batch 2 patch round-3 review (two more P1 findings closed):
    un-dated identity facts, never presented as PIT-validated history,
    and this read stays confined to `build_data_snapshot()`; nothing
    feeds it into any signal/execution computation.
+
+Batch 2 patch round-4 review (finding #3): checking that the calendar
+covers `[zone_start, max_as_of]` (round-3's fix) never verified it
+covers this run's own WARM-UP window too -- #001's price/action reads
+have no lower bound, so nothing stopped a caller from later asking the
+observation cache about a date the calendar itself never vouched for.
+`build_data_snapshot()` now takes an explicit `min_as_of` -- the
+caller-declared start of the authorized history window (see
+`backtest.data.context.StageReadContext`'s own `warmup_start`) --
+and `SYMBOL_HISTORY`/`LISTING_STATUS` are hashed only for calendar
+session dates inside `[min_as_of, max_as_of]`, stored on the manifest
+so `backtest.data.cache` can reject any `as_of` outside that same
+window: the domain of reads the cache will ever permit now always
+matches the domain this manifest actually attests to.
 """
 from __future__ import annotations
 
@@ -58,6 +72,7 @@ from backtest.models.entities import (
     TradingCalendar,
     build_snapshot_id,
     canonical_json,
+    parse_iso_date,
     snapshot_manifest_fingerprint,
     verify_calendar_content_address,
     verify_calendar_structure,
@@ -130,7 +145,7 @@ def _security_master_record(security_id: str, master) -> dict:
 
 def build_data_snapshot(
     bounded_access: BoundedPITAccess, security_ids: tuple[str, ...], benchmark_security_id: str,
-    trading_calendar: TradingCalendar,
+    trading_calendar: TradingCalendar, min_as_of: str,
 ) -> DataSnapshotManifest:
     """`security_ids` order never affects the result -- the universe and
     benchmark are merged, deduplicated and sorted before anything is
@@ -140,7 +155,17 @@ def build_data_snapshot(
     bind to a calendar reference that doesn't match its own claimed
     identity -- and its `calendar_id` (not a bare caller-supplied
     string) becomes the manifest's `trading_calendar_id`. Every read
-    happens inside one held-open SAVEPOINT (see module docstring)."""
+    happens inside one held-open SAVEPOINT (see module docstring).
+
+    `min_as_of` (Batch 2 patch round-4 review, finding #3) is the
+    caller-declared start of the authorized history window -- typically
+    this run's own warm-up start (see `backtest.data.context.
+    StageReadContext`'s `warmup_start`). It never restricts the actual
+    PRICE_BARS/CORPORATE_ACTIONS reads above (those stay unbounded
+    below, exactly as SS3's warm-up allowance requires); it only bounds
+    which calendar session dates get the per-session SYMBOL_HISTORY/
+    LISTING_STATUS treatment, and is stored on the manifest so
+    `backtest.data.cache` can reject any `as_of` outside it."""
     ok, errors = verify_calendar_content_address(trading_calendar)
     if not ok:
         raise ValueError(f"trading_calendar failed content-address verification: {errors}")
@@ -149,14 +174,24 @@ def build_data_snapshot(
         raise ValueError(f"trading_calendar failed structural verification: {structure_errors}")
 
     max_as_of = bounded_access.boundary.max_as_of
+    if parse_iso_date(min_as_of) is None:
+        raise ValueError(f"min_as_of is not a valid ISO date: {min_as_of!r}")
+    if min_as_of > max_as_of:
+        raise ValueError(f"min_as_of={min_as_of!r} must not be after this stage's own max_as_of={max_as_of!r}")
     if trading_calendar.coverage_end < max_as_of:
         raise ValueError(
             f"trading_calendar's coverage_end={trading_calendar.coverage_end!r} is before this stage's own "
             f"max_as_of={max_as_of!r} -- the calendar does not cover the full authorized window, and the "
             f"observation cache could still be asked about dates this snapshot never hashed"
         )
+    if trading_calendar.coverage_start > min_as_of:
+        raise ValueError(
+            f"trading_calendar's coverage_start={trading_calendar.coverage_start!r} is after this run's own "
+            f"min_as_of={min_as_of!r} -- the calendar never vouched for part of the declared warm-up/history "
+            f"window"
+        )
     all_ids = tuple(sorted(set(security_ids) | {benchmark_security_id}))
-    session_dates_in_scope = tuple(d for d in trading_calendar.session_dates if d <= max_as_of)
+    session_dates_in_scope = tuple(d for d in trading_calendar.session_dates if min_as_of <= d <= max_as_of)
 
     conn = bounded_access.conn
     conn.execute(f"SAVEPOINT {_SAVEPOINT_NAME}")
@@ -217,15 +252,15 @@ def build_data_snapshot(
     conn.execute(f"RELEASE {_SAVEPOINT_NAME}")
 
     fp = snapshot_manifest_fingerprint(
-        bounded_access.boundary.zone, all_ids, benchmark_security_id, max_as_of, trading_calendar.calendar_id,
-        SNAPSHOT_FACT_CATEGORIES_V1, CANONICALIZATION_VERSION_V1, content_digest,
+        bounded_access.boundary.zone, all_ids, benchmark_security_id, min_as_of, max_as_of,
+        trading_calendar.calendar_id, SNAPSHOT_FACT_CATEGORIES_V1, CANONICALIZATION_VERSION_V1, content_digest,
         NOT_REPLAYABLE_FROM_RETAINED_DATA, None,
     )
     snapshot_id, snapshot_hash = build_snapshot_id(fp)
     return DataSnapshotManifest(
         snapshot_id=snapshot_id, snapshot_hash=snapshot_hash, stage=bounded_access.boundary.zone,
-        security_ids=all_ids, benchmark_security_id=benchmark_security_id, max_as_of=max_as_of,
-        trading_calendar_id=trading_calendar.calendar_id, table_field_manifest=SNAPSHOT_FACT_CATEGORIES_V1,
-        canonicalization_version=CANONICALIZATION_VERSION_V1, content_digest=content_digest,
-        replayable=NOT_REPLAYABLE_FROM_RETAINED_DATA, replay_artifact_reference=None,
+        security_ids=all_ids, benchmark_security_id=benchmark_security_id, min_as_of=min_as_of,
+        max_as_of=max_as_of, trading_calendar_id=trading_calendar.calendar_id,
+        table_field_manifest=SNAPSHOT_FACT_CATEGORIES_V1, canonicalization_version=CANONICALIZATION_VERSION_V1,
+        content_digest=content_digest, replayable=NOT_REPLAYABLE_FROM_RETAINED_DATA, replay_artifact_reference=None,
     )

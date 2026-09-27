@@ -33,11 +33,11 @@ from backtest.models.entities import (
 from spec005.conftest import PIT_FORMATION_END, PIT_WARMUP_START
 
 
-def _snapshot(conn, pit_universe, pit_calendar, security_ids=None):
+def _snapshot(conn, pit_universe, pit_calendar, security_ids=None, min_as_of=PIT_WARMUP_START):
     boundary = StageAccessBoundary(zone=FORMATION_SELECTION, max_as_of=PIT_FORMATION_END)
     access = BoundedPITAccess(conn, boundary)
     ids = security_ids or pit_universe["priced_security_ids"]
-    return build_data_snapshot(access, ids, pit_universe["benchmark_security_id"], pit_calendar)
+    return build_data_snapshot(access, ids, pit_universe["benchmark_security_id"], pit_calendar, min_as_of)
 
 
 def test_snapshot_passes_its_own_content_address_verification(conn, pit_universe, pit_calendar):
@@ -57,7 +57,10 @@ def test_snapshot_rejects_a_calendar_that_fails_its_own_content_address(conn, pi
     boundary = StageAccessBoundary(zone=FORMATION_SELECTION, max_as_of=PIT_FORMATION_END)
     access = BoundedPITAccess(conn, boundary)
     with pytest.raises(ValueError, match="content-address"):
-        build_data_snapshot(access, pit_universe["priced_security_ids"], pit_universe["benchmark_security_id"], tampered)
+        build_data_snapshot(
+            access, pit_universe["priced_security_ids"], pit_universe["benchmark_security_id"], tampered,
+            PIT_WARMUP_START,
+        )
 
 
 def test_repeated_snapshots_of_unchanged_data_produce_the_identical_hash(conn, pit_universe, pit_calendar):
@@ -244,6 +247,27 @@ def test_snapshot_rejects_a_structurally_invalid_calendar(conn, pit_universe, pi
         _snapshot(conn, pit_universe, backwards_calendar)
 
 
+def test_snapshot_rejects_a_calendar_covering_the_zone_but_omitting_part_of_the_warmup(conn, pit_universe, pit_calendar):
+    """Batch 2 patch round-4 review, finding #3: `require_calendar_covers_
+    window()` at the context level checks `[warmup_start, max_as_of]`,
+    but `build_data_snapshot()` itself must independently enforce the
+    same thing -- a calendar whose `coverage_start` only reaches back to
+    the ZONE's own start (never as far as the declared `min_as_of`/
+    warm-up start) must be rejected, even though it fully covers
+    `[zone_start, max_as_of]`."""
+    from spec005.conftest import PIT_FORMATION_START
+
+    short_warmup_dates = tuple(d for d in pit_calendar.session_dates if d >= PIT_FORMATION_START)
+    short_warmup_calendar = build_trading_calendar(
+        source=CalendarSource.SYNTHETIC_TEST_FIXTURE.value, calendar_identifier="SHORT_WARMUP_CALENDAR",
+        calendar_version="v1", market=pit_calendar.market, timezone=pit_calendar.timezone,
+        coverage_start=PIT_FORMATION_START, coverage_end=pit_calendar.coverage_end, session_dates=short_warmup_dates,
+        session_open_time=pit_calendar.session_open_time, session_close_time=pit_calendar.session_close_time,
+    )
+    with pytest.raises(ValueError, match="warm-up"):
+        _snapshot(conn, pit_universe, short_warmup_calendar, min_as_of=PIT_WARMUP_START)
+
+
 def test_correcting_the_security_master_changes_the_hash(conn, pit_universe, pit_calendar):
     """Finding #4/Security Master: `security_type`/`primary_exchange`/
     `currency`/`source_provider`/`source_security_id` are now part of
@@ -267,7 +291,10 @@ def test_price_and_corporate_action_reads_use_the_single_max_as_of(conn, pit_uni
     LISTING_STATUS iterate every session date, per finding #2's fix."""
     boundary = StageAccessBoundary(zone=FORMATION_SELECTION, max_as_of=PIT_FORMATION_END)
     access = BoundedPITAccess(conn, boundary)
-    build_data_snapshot(access, pit_universe["priced_security_ids"], pit_universe["benchmark_security_id"], pit_calendar)
+    build_data_snapshot(
+        access, pit_universe["priced_security_ids"], pit_universe["benchmark_security_id"], pit_calendar,
+        PIT_WARMUP_START,
+    )
     price_and_action_as_ofs = {
         as_of for kind, _sid, as_of in access.access_log if kind in ("PRICE_BARS", "CORPORATE_ACTIONS")
     }

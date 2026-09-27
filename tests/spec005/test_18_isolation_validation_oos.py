@@ -18,7 +18,7 @@ from backtest.models.entities import (
     StageAccessBoundary,
 )
 
-from spec005.conftest import PIT_FORMATION_END, PIT_LOCKED_OOS_START, PIT_VALIDATION_END
+from spec005.conftest import PIT_FORMATION_END, PIT_LOCKED_OOS_START, PIT_VALIDATION_END, PIT_WARMUP_START
 
 
 def _mutate_price(conn, security_id: str, date: str, value: float) -> None:
@@ -32,7 +32,10 @@ def _mutate_price(conn, security_id: str, date: str, value: float) -> None:
 def _formation_selection_snapshot(conn, pit_universe, pit_calendar):
     boundary = StageAccessBoundary(zone=FORMATION_SELECTION, max_as_of=PIT_FORMATION_END)
     access = BoundedPITAccess(conn, boundary)
-    return build_data_snapshot(access, pit_universe["priced_security_ids"], pit_universe["benchmark_security_id"], pit_calendar)
+    return build_data_snapshot(
+        access, pit_universe["priced_security_ids"], pit_universe["benchmark_security_id"], pit_calendar,
+        PIT_WARMUP_START,
+    )
 
 
 def test_mutating_validation_range_data_does_not_alter_a_formation_selection_snapshot(conn, pit_universe, pit_calendar):
@@ -56,12 +59,18 @@ def test_mutating_locked_oos_range_data_does_not_alter_a_development_validation_
     equally unaffected by a Locked-OOS-range mutation."""
     boundary = StageAccessBoundary(zone=DEVELOPMENT_VALIDATION, max_as_of=PIT_VALIDATION_END)
     access = BoundedPITAccess(conn, boundary)
-    before = build_data_snapshot(access, pit_universe["priced_security_ids"], pit_universe["benchmark_security_id"], pit_calendar)
+    before = build_data_snapshot(
+        access, pit_universe["priced_security_ids"], pit_universe["benchmark_security_id"], pit_calendar,
+        PIT_WARMUP_START,
+    )
 
     _mutate_price(conn, pit_universe["sec_a"], PIT_LOCKED_OOS_START, 88888.0)
 
     access_after = BoundedPITAccess(conn, boundary)
-    after = build_data_snapshot(access_after, pit_universe["priced_security_ids"], pit_universe["benchmark_security_id"], pit_calendar)
+    after = build_data_snapshot(
+        access_after, pit_universe["priced_security_ids"], pit_universe["benchmark_security_id"], pit_calendar,
+        PIT_WARMUP_START,
+    )
     assert before.snapshot_id == after.snapshot_id
 
 

@@ -1,17 +1,14 @@
 """TEST 20 -- StageReadContext (Spec #005 v1.0 SS3/SS5/SS6/SS7, Batch 2
-patch round 2).
+patch round 4).
 
-Closes P1 findings #1 and #3 from the round-2 review: (1) a snapshot
-built from successive unprotected reads can mix pre- and post-write
-state across two connections; (3) a cache call taking a bare `(conn,
-snapshot_id)` pair has nothing tying that string to `conn`'s actual live
-state. `StageReadContext` holds one open SAVEPOINT across the snapshot
-build AND every subsequent observation-cache call, and is the only way
-to reach `ObservationCacheStore.get_or_compute()` at all.
+`StageReadContext` extracts a strictly-authorized, read-only subset from
+its source connection at `__enter__()` time and is the only way to reach
+`_ObservationCacheStore.get_or_compute()` at all -- `ctx.conn` IS that
+subset, for the entire time the context is open, never the source
+connection (see `backtest.data.context`'s module docstring for the full
+round-4 redesign).
 """
 import sqlite3
-import threading
-import time
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -50,11 +47,13 @@ from spec005.fixtures.pit_universe import insert_price_history, make_security
 def test_context_opens_and_builds_a_manifest(conn, pit_universe, pit_calendar, pit_research_plan):
     with StageReadContext(
         conn, pit_research_plan, FORMATION_SELECTION, pit_universe["priced_security_ids"],
-        pit_universe["benchmark_security_id"], pit_calendar,
+        pit_universe["benchmark_security_id"], pit_calendar, PIT_WARMUP_START,
     ) as ctx:
         assert ctx.manifest is not None
         assert ctx.manifest.max_as_of == PIT_FORMATION_END
+        assert ctx.manifest.min_as_of == PIT_WARMUP_START
         assert ctx.boundary.zone == FORMATION_SELECTION
+        assert ctx.conn is not None
 
 
 def test_context_rejects_a_calendar_not_matching_the_plans_own_calendar_id(conn, pit_universe, pit_calendar, pit_research_plan):
@@ -68,7 +67,7 @@ def test_context_rejects_a_calendar_not_matching_the_plans_own_calendar_id(conn,
     with pytest.raises(ValueError, match="does not match"):
         StageReadContext(
             conn, pit_research_plan, FORMATION_SELECTION, pit_universe["priced_security_ids"],
-            pit_universe["benchmark_security_id"], other_calendar,
+            pit_universe["benchmark_security_id"], other_calendar, PIT_WARMUP_START,
         )
 
 
@@ -76,14 +75,38 @@ def test_context_rejects_a_benchmark_not_matching_the_plan(conn, pit_universe, p
     with pytest.raises(ValueError, match="does not match"):
         StageReadContext(
             conn, pit_research_plan, FORMATION_SELECTION, pit_universe["priced_security_ids"],
-            pit_universe["sec_a"], pit_calendar,
+            pit_universe["sec_a"], pit_calendar, PIT_WARMUP_START,
+        )
+
+
+def test_context_rejects_a_warmup_start_after_the_zones_own_start(conn, pit_universe, pit_calendar, pit_research_plan):
+    """Batch 2 patch round-4 review, finding #3: warm-up, by definition,
+    precedes (or coincides with) the zone it prepares."""
+    with pytest.raises(ValueError, match="must not be after"):
+        StageReadContext(
+            conn, pit_research_plan, FORMATION_SELECTION, pit_universe["priced_security_ids"],
+            pit_universe["benchmark_security_id"], pit_calendar, "2024-01-15",
+        )
+
+
+def test_context_rejects_a_warmup_start_the_calendar_never_covers(conn, pit_universe, pit_calendar, pit_research_plan):
+    """Finding #3: the calendar must cover `[warmup_start, max_as_of]`,
+    not merely `[zone_start, max_as_of]` -- a `warmup_start` earlier than
+    the calendar's own declared `coverage_start` must be rejected before
+    anything is read."""
+    from backtest.models.entities import CalendarCoverageIncompleteError
+
+    with pytest.raises(CalendarCoverageIncompleteError):
+        StageReadContext(
+            conn, pit_research_plan, FORMATION_SELECTION, pit_universe["priced_security_ids"],
+            pit_universe["benchmark_security_id"], pit_calendar, "2023-01-01",
         )
 
 
 def test_get_or_compute_observations_outside_the_with_block_raises(conn, pit_universe, pit_calendar, pit_research_plan):
     ctx = StageReadContext(
         conn, pit_research_plan, FORMATION_SELECTION, pit_universe["priced_security_ids"],
-        pit_universe["benchmark_security_id"], pit_calendar,
+        pit_universe["benchmark_security_id"], pit_calendar, PIT_WARMUP_START,
     )
     from discovery.config.loader import load_config
     with pytest.raises(RuntimeError, match="not open"):
@@ -95,7 +118,7 @@ def test_get_or_compute_observations_reuses_across_repeated_calls(conn, pit_univ
     config = load_config()
     with StageReadContext(
         conn, pit_research_plan, FORMATION_SELECTION, pit_universe["priced_security_ids"],
-        pit_universe["benchmark_security_id"], pit_calendar,
+        pit_universe["benchmark_security_id"], pit_calendar, PIT_WARMUP_START,
     ) as ctx:
         entry_a = ctx.get_or_compute_observations(pit_universe["priced_security_ids"], PIT_FORMATION_END, config)
         entry_b = ctx.get_or_compute_observations(pit_universe["priced_security_ids"], PIT_FORMATION_END, config)
@@ -112,7 +135,7 @@ def test_discovery_returning_a_mismatched_as_of_is_caught(conn, pit_universe, pi
     config = load_config()
     with StageReadContext(
         conn, pit_research_plan, FORMATION_SELECTION, pit_universe["priced_security_ids"],
-        pit_universe["benchmark_security_id"], pit_calendar,
+        pit_universe["benchmark_security_id"], pit_calendar, PIT_WARMUP_START,
     ) as ctx:
         bad_observation = SimpleNamespace(security_id=pit_universe["sec_a"], as_of="1999-01-01")
         with patch("backtest.data.cache.compute_discovery_observations", return_value=[bad_observation]):
@@ -121,15 +144,14 @@ def test_discovery_returning_a_mismatched_as_of_is_caught(conn, pit_universe, pi
 
 
 def test_writing_via_the_context_own_connection_is_blocked_while_open(conn, pit_universe, pit_calendar, pit_research_plan):
-    """Round-3 finding #2: a SAVEPOINT only isolates against OTHER
-    connections' writes -- a write on the SAME connection is visible
-    INSIDE its own still-open SAVEPOINT, silently invalidating the
-    manifest's own hash. `PRAGMA query_only = ON` closes this for the
-    rest of the context's open lifetime."""
+    """`ctx.conn` is the authorized subset, read-only for the whole time
+    the context is open (round-4 review, finding #2's first half: the
+    round-3 patch protected the SOURCE connection but left the connection
+    actually handed to Discovery -- the subset -- writable)."""
     sid = pit_universe["sec_a"]
     with StageReadContext(
         conn, pit_research_plan, FORMATION_SELECTION, pit_universe["priced_security_ids"],
-        pit_universe["benchmark_security_id"], pit_calendar,
+        pit_universe["benchmark_security_id"], pit_calendar, PIT_WARMUP_START,
     ) as ctx:
         with pytest.raises(sqlite3.OperationalError, match="readonly"):
             ctx.conn.execute(
@@ -138,8 +160,11 @@ def test_writing_via_the_context_own_connection_is_blocked_while_open(conn, pit_
                 (sid, PIT_FORMATION_END),
             )
 
-    # Restored once the context has closed -- a write through the same
-    # connection now succeeds again.
+    # The SOURCE connection was only ever forced read-only during the
+    # brief extraction step inside __enter__() -- restored immediately
+    # after, long before this write, regardless of the context's own
+    # open/closed state (round-4 review, finding #2's second half: never
+    # unconditionally forced OFF, but restored to whatever it was).
     conn.execute(
         "UPDATE price_history SET raw_close = 12345.0 WHERE security_id = ? AND date = ? "
         "AND source_provider = 'manual'",
@@ -151,13 +176,13 @@ def test_writing_via_the_context_own_connection_is_blocked_while_open(conn, pit_
 def test_context_hands_discovery_a_connection_with_out_of_scope_prices_physically_absent(
     conn, pit_universe, pit_calendar, pit_research_plan,
 ):
-    """Round-3 finding #3: supervising Discovery's own indirect PIT reads
-    by checking only the RETURNED as_of label cannot catch a substitute
-    that reads out-of-scope data internally and reports an honest label
-    anyway. `get_or_compute_observations()` must hand Discovery a
-    connection where rows beyond `boundary.max_as_of` are not merely
-    unqueried but PHYSICALLY ABSENT -- so even a hostile substitute has
-    nothing to read, regardless of what label it would report."""
+    """Supervising Discovery's own indirect PIT reads by checking only
+    the RETURNED as_of label cannot catch a substitute that reads
+    out-of-scope data internally and reports an honest label anyway.
+    `get_or_compute_observations()` must hand Discovery a connection
+    where rows beyond `boundary.max_as_of` are not merely unqueried but
+    PHYSICALLY ABSENT -- so even a hostile substitute has nothing to
+    read, regardless of what label it would report."""
     from discovery.config.loader import load_config
 
     captured = {}
@@ -168,13 +193,14 @@ def test_context_hands_discovery_a_connection_with_out_of_scope_prices_physicall
 
     with StageReadContext(
         conn, pit_research_plan, FORMATION_SELECTION, pit_universe["priced_security_ids"],
-        pit_universe["benchmark_security_id"], pit_calendar,
+        pit_universe["benchmark_security_id"], pit_calendar, PIT_WARMUP_START,
     ) as ctx:
         with patch("backtest.data.cache.compute_discovery_observations", side_effect=fake_compute):
             ctx.get_or_compute_observations(pit_universe["priced_security_ids"], PIT_FORMATION_END, load_config())
 
         subset_conn = captured["conn"]
         assert subset_conn is not conn  # never the raw stage connection
+        assert subset_conn is ctx.conn
         cur = subset_conn.execute(
             "SELECT COUNT(*) FROM price_history WHERE security_id = ? AND date > ?",
             (pit_universe["sec_a"], PIT_FORMATION_END),
@@ -192,16 +218,60 @@ def test_context_hands_discovery_a_connection_with_out_of_scope_prices_physicall
     assert cur.fetchone()[0] > 0
 
 
-def test_stage_read_context_holds_one_consistent_transaction_across_two_real_connections(tmp_path):
-    """The genuine multi-connection version of "concurrent ingestion
-    cannot mix states" (SS23): a SECOND, independent connection to the
-    SAME file attempts to commit a write while this context's SAVEPOINT
-    is still open. Verified empirically before writing this fix (see
-    patch notes): SQLite blocks that writer's COMMIT until our SAVEPOINT
-    releases, so every read taken through this context -- both the
-    snapshot built at __enter__ and a second snapshot built later, still
-    inside the same `with` block -- observes the identical, unchanging
-    database state."""
+def test_subset_excludes_a_security_outside_the_authorized_universe(conn, pit_universe, pit_calendar, pit_research_plan):
+    """Round-4 review, finding #1 (concrete probe: "Prețurile unui
+    security din afara universului rămân prezente"): only rows for the
+    declared universe + benchmark are ever copied into the subset --
+    `sec_nodata` (never passed to the context) must be entirely absent,
+    not merely unreachable through some other filter."""
+    with StageReadContext(
+        conn, pit_research_plan, FORMATION_SELECTION, pit_universe["priced_security_ids"],
+        pit_universe["benchmark_security_id"], pit_calendar, PIT_WARMUP_START,
+    ) as ctx:
+        cur = ctx.conn.execute(
+            "SELECT COUNT(*) FROM security_master WHERE security_id = ?", (pit_universe["sec_nodata"],),
+        )
+        assert cur.fetchone()[0] == 0
+
+
+def test_subset_excludes_a_corporate_action_not_yet_knowable_by_max_as_of(
+    conn, pit_universe, pit_calendar, pit_research_plan,
+):
+    """Round-4 review, finding #1 (concrete probe: "O acțiune corporativă
+    cu `available_at` ulterior limitei rămâne prezentă"): the subset's
+    own `corporate_actions` table must exclude a row whose knowledge-time
+    signal is after `max_as_of`, not merely rely on #001's own PIT
+    function to filter it out downstream."""
+    from spec005.fixtures.pit_universe import insert_corporate_action
+
+    sid = pit_universe["sec_a"]
+    insert_corporate_action(
+        conn, sid, action_id="future_split", action_type="SPLIT", effective_date=PIT_FORMATION_END,
+        value=2.0, now="2026-09-27T00:00:00Z", available_at="2024-06-01",  # well after PIT_FORMATION_END
+    )
+    with StageReadContext(
+        conn, pit_research_plan, FORMATION_SELECTION, pit_universe["priced_security_ids"],
+        pit_universe["benchmark_security_id"], pit_calendar, PIT_WARMUP_START,
+    ) as ctx:
+        cur = ctx.conn.execute("SELECT COUNT(*) FROM corporate_actions WHERE action_id = ?", ("future_split",))
+        assert cur.fetchone()[0] == 0
+
+    cur = conn.execute("SELECT COUNT(*) FROM corporate_actions WHERE action_id = ?", ("future_split",))
+    assert cur.fetchone()[0] == 1  # genuinely present in the source -- proves this isn't vacuous
+
+
+def test_a_write_on_the_source_after_entry_never_reaches_the_context(tmp_path):
+    """Round-4 redesign: `StageReadContext` no longer holds the SOURCE
+    connection's SAVEPOINT open for its whole lifetime -- extraction into
+    an authorized subset is a one-shot, bounded step (see
+    `backtest.data.context`'s module docstring). The relevant guarantee
+    is not "the source's SAVEPOINT blocks a concurrent writer for as long
+    as the context is open" (GPT's own round-2 correction: the relevant
+    guarantee is read STABILITY, never mandatory writer-blocking) -- it
+    is that a write to the SOURCE, on a SEPARATE connection, made AFTER
+    `__enter__()` has already returned, has NO EFFECT WHATSOEVER on this
+    context, because everything from that point on reads exclusively
+    from the isolated subset copy, never the source again."""
     db_path = str(tmp_path / "spec005_isolation.db")
     conn = connect_and_init(db_path)
     now = "2026-09-27T00:00:00Z"
@@ -237,43 +307,38 @@ def test_stage_read_context_holds_one_consistent_transaction_across_two_real_con
     plan_id, plan_hash = build_research_plan_id(fp)
     plan = ResearchPlan(research_plan_id=plan_id, plan_hash=plan_hash, created_at=now, created_by="test", **fields)
 
-    ctx = StageReadContext(conn, plan, FORMATION_SELECTION, (sec_a,), benchmark, calendar)
+    ctx = StageReadContext(conn, plan, FORMATION_SELECTION, (sec_a,), benchmark, calendar, PIT_WARMUP_START)
     ctx.__enter__()
     try:
-        writer_result = {}
+        manifest_before = ctx.manifest
 
-        def writer():
-            # A generous busy-timeout: the writer should simply wait,
-            # retrying, for as long as our SAVEPOINT stays open, and
-            # succeed once we release it -- not give up early.
-            writer_conn = sqlite3.connect(db_path, timeout=10.0)
-            try:
-                writer_conn.execute(
-                    "UPDATE price_history SET raw_close = 999999.0 WHERE security_id = ? "
-                    "AND date = ? AND source_provider = 'manual'",
-                    (sec_a, PIT_FORMATION_END),
-                )
-                writer_conn.commit()
-                writer_result["status"] = "committed"
-            except sqlite3.OperationalError as e:
-                writer_result["status"] = f"blocked: {e}"
-            writer_conn.close()
+        # A write on a SEPARATE connection to the SAME source file,
+        # after entry has already completed, succeeds immediately --
+        # nothing holds the source's SAVEPOINT open any more.
+        writer_conn = sqlite3.connect(db_path, timeout=10.0)
+        writer_conn.execute(
+            "UPDATE price_history SET raw_close = 999999.0 WHERE security_id = ? "
+            "AND date = ? AND source_provider = 'manual'",
+            (sec_a, PIT_FORMATION_END),
+        )
+        writer_conn.commit()
+        writer_conn.close()
 
-        t = threading.Thread(target=writer)
-        t.start()
-        time.sleep(0.3)
-        assert t.is_alive(), "the concurrent writer should still be blocked by our open SAVEPOINT"
-
+        # ...and it has NO effect on this context: re-building the
+        # snapshot from ctx.conn (the subset, never the source) is
+        # identical, because ctx.conn never saw that write at all.
+        from backtest.data.pit_access import BoundedPITAccess
         from backtest.data.snapshot import build_data_snapshot
-        second_manifest = build_data_snapshot(ctx._bounded_access, (sec_a,), benchmark, calendar)
-        assert second_manifest.snapshot_id == ctx.manifest.snapshot_id
+        second_manifest = build_data_snapshot(
+            BoundedPITAccess(ctx.conn, ctx.boundary), (sec_a,), benchmark, calendar, PIT_WARMUP_START,
+        )
+        assert second_manifest.snapshot_id == manifest_before.snapshot_id
 
-        # Still holding the SAVEPOINT -- the writer must still be
-        # waiting, never having slipped a change in.
-        assert t.is_alive(), "the writer must still be blocked while our SAVEPOINT is open"
+        cur = ctx.conn.execute(
+            "SELECT raw_close FROM price_history WHERE security_id = ? AND date = ? AND source_provider = 'manual'",
+            (sec_a, PIT_FORMATION_END),
+        )
+        assert cur.fetchone()[0] != 999999.0
     finally:
         ctx.__exit__(None, None, None)
-
-    t.join(timeout=5)
-    assert writer_result["status"] == "committed"
     conn.close()

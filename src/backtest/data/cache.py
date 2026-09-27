@@ -25,30 +25,43 @@ docstring) and holds the read transaction the cache's own key is
 implicitly trusting; calling this store directly, with an arbitrary
 `conn`, defeats every guarantee `StageReadContext` exists to provide.
 
-Batch 2 patch round-3 review (two more P1 findings closed here):
+Batch 2 patch round-3 review (two more P1 findings closed then):
 
 1. A changed `discovery_config` served under an UNCHANGED claimed
    `config_version` string used to pass straight through, including on
-   what would otherwise be a cache hit (the stale cached entry was
-   returned without ever re-checking the config that supposedly
-   produced it). `get_or_compute()` now reloads the config fresh from
-   disk and requires it to `==` the supplied `discovery_config` --
-   covering BOTH a stale version (the reload's own `config_version`
-   differs) and content tampered under an unchanged version (the
-   reload's parsed dicts differ) -- BEFORE any cache-key lookup, not
-   after.
+   what would otherwise be a cache hit.
 2. Supervising Discovery's own indirect PIT reads by checking the
    returned `as_of` label alone (still done below) cannot catch a
    caller that reads out-of-scope data internally and then reports an
-   honest label anyway. `StageReadContext` now passes this function an
+   honest label anyway. `StageReadContext` passes this function an
    AUTHORIZED SUBSET connection (see `backtest.data.pit_access.
-   build_authorized_price_subset_connection()`) with every price_history
-   row beyond the stage's own boundary physically absent -- so even a
-   substitute that ignores its own `as_of` parameter and reads with a
-   larger one internally still cannot reach that data, regardless of
-   what label it reports.
+   build_authorized_subset_connection()`).
+
+Batch 2 patch round-4 review (finding #3 and the P2 config finding):
+
+3. `as_of` was only checked against `manifest.max_as_of` -- nothing
+   stopped a request for a date before this run's own declared
+   warm-up/history start, a domain the manifest's own `min_as_of` field
+   now names explicitly (see `backtest.data.snapshot`). `get_or_compute()`
+   now rejects `as_of < manifest.min_as_of` too.
+4. (P2) `_require_fresh_discovery_config()` used to always reload from
+   the CURRENT DEFAULT config directory (`discovery.config.loader.
+   load_config()` with no argument) -- this ties every run to whatever
+   the live default happens to be TODAY, when the contract is to verify
+   the FROZEN ARTIFACT actually supplied to THIS run. A validly archived
+   config (its own genuinely-computed `config_version`, loaded from a
+   directory that is no longer the live default) must remain usable
+   even after the default has since changed. `get_or_compute()` now
+   takes an optional `config_dir` -- the directory `discovery_config`
+   itself was loaded from -- and reloads from THAT path; `None` (the
+   default for every caller today, since Batch 2 has no ResearchPlan-
+   level archived-config-directory field yet) reloads the current
+   default directory, preserving prior behavior for the common case.
 """
 from __future__ import annotations
+
+from pathlib import Path
+from typing import Optional
 
 from discovery.config.loader import DiscoveryConfig, load_config as load_discovery_config
 from discovery.engine import DISCOVERY_ENGINE_VERSION, compute_discovery_observations
@@ -66,14 +79,15 @@ from backtest.models.entities import (
 )
 
 
-def _require_fresh_discovery_config(discovery_config: DiscoveryConfig) -> None:
-    fresh = load_discovery_config()
+def _require_fresh_discovery_config(discovery_config: DiscoveryConfig, config_dir: Optional[Path]) -> None:
+    fresh = load_discovery_config(config_dir)
     if fresh != discovery_config:
         raise ValueError(
             f"discovery_config (config_version={discovery_config.config_version!r}) does not match a "
-            f"fresh reload from disk (config_version={fresh.config_version!r}) -- either the claimed "
-            f"version is stale, or the config content was changed while keeping the same claimed "
-            f"version; both must be rejected before any cache lookup (Spec #005 SS7/SS21)"
+            f"fresh reload from {config_dir or 'the default config directory'!r} "
+            f"(config_version={fresh.config_version!r}) -- either the claimed version is stale, or the "
+            f"content was changed while keeping the same claimed version; both must be rejected before "
+            f"any cache lookup, against the artifact actually supplied to this run (Spec #005 SS7/SS21)"
         )
 
 
@@ -91,8 +105,9 @@ class _ObservationCacheStore:
     def get_or_compute(
         self, conn, boundary: StageAccessBoundary, manifest: DataSnapshotManifest,
         security_ids: tuple[str, ...], as_of: str, discovery_config: DiscoveryConfig,
+        config_dir: Optional[Path] = None,
     ) -> HistoricalObservationCache:
-        _require_fresh_discovery_config(discovery_config)
+        _require_fresh_discovery_config(discovery_config, config_dir)
 
         ok, errors = verify_snapshot_content_address(manifest)
         if not ok:
@@ -107,6 +122,11 @@ class _ObservationCacheStore:
         boundary.require_as_of_in_scope(as_of)
         if as_of > manifest.max_as_of:
             raise ValueError(f"as_of={as_of!r} exceeds this snapshot's own max_as_of={manifest.max_as_of!r}")
+        if as_of < manifest.min_as_of:
+            raise ValueError(
+                f"as_of={as_of!r} is before this snapshot's own min_as_of={manifest.min_as_of!r} -- the "
+                f"calendar never vouched for anything earlier, and this snapshot never hashed it"
+            )
 
         sorted_ids = tuple(sorted(security_ids))
         if not set(sorted_ids) <= set(manifest.security_ids):

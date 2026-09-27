@@ -829,13 +829,21 @@ class DataSnapshotManifest:
     `NOT_REPLAYABLE_FROM_RETAINED_DATA` in Batch 2 -- no retained-extract
     storage mechanism exists yet (SS6: "Otherwise label the run
     NOT_REPLAYABLE_FROM_RETAINED_DATA"); `replay_artifact_reference`
-    stays unset until a later batch builds one."""
+    stays unset until a later batch builds one. `min_as_of` (Batch 2
+    patch round-4 review, finding #3) is the explicit, caller-declared
+    start of the authorized history window (typically the run's own
+    warm-up start) -- SYMBOL_HISTORY/LISTING_STATUS are only hashed for
+    calendar session dates inside `[min_as_of, max_as_of]`, and the
+    observation cache (`backtest.data.cache`) rejects any `as_of`
+    outside that same declared window, so the domain of permitted reads
+    always matches the domain this manifest actually attests to."""
     snapshot_id: str
     snapshot_hash: str
 
     stage: str  # FORMATION_SELECTION | DEVELOPMENT_VALIDATION
     security_ids: tuple[str, ...]  # sorted, deduplicated, benchmark included
     benchmark_security_id: str
+    min_as_of: str
     max_as_of: str
     trading_calendar_id: str
 
@@ -848,7 +856,7 @@ class DataSnapshotManifest:
 
 
 def snapshot_manifest_fingerprint(
-    stage: str, security_ids: tuple[str, ...], benchmark_security_id: str, max_as_of: str,
+    stage: str, security_ids: tuple[str, ...], benchmark_security_id: str, min_as_of: str, max_as_of: str,
     trading_calendar_id: str, table_field_manifest: tuple[str, ...], canonicalization_version: str,
     content_digest: str, replayable: str, replay_artifact_reference: Optional[str],
 ) -> str:
@@ -856,6 +864,7 @@ def snapshot_manifest_fingerprint(
         "stage": stage,
         "security_ids": sorted(security_ids),
         "benchmark_security_id": benchmark_security_id,
+        "min_as_of": min_as_of,
         "max_as_of": max_as_of,
         "trading_calendar_id": trading_calendar_id,
         "table_field_manifest": sorted(table_field_manifest),
@@ -880,9 +889,10 @@ def verify_snapshot_content_address(manifest: DataSnapshotManifest) -> tuple[boo
     `content_digest` while keeping the old id), the same bug class
     PATCH #004-B fixed once for StrategyHypothesis/StrategyVariant."""
     fp = snapshot_manifest_fingerprint(
-        manifest.stage, manifest.security_ids, manifest.benchmark_security_id, manifest.max_as_of,
-        manifest.trading_calendar_id, manifest.table_field_manifest, manifest.canonicalization_version,
-        manifest.content_digest, manifest.replayable, manifest.replay_artifact_reference,
+        manifest.stage, manifest.security_ids, manifest.benchmark_security_id, manifest.min_as_of,
+        manifest.max_as_of, manifest.trading_calendar_id, manifest.table_field_manifest,
+        manifest.canonicalization_version, manifest.content_digest, manifest.replayable,
+        manifest.replay_artifact_reference,
     )
     expected_id, expected_hash = build_snapshot_id(fp)
     if manifest.snapshot_id != expected_id or manifest.snapshot_hash != expected_hash:
