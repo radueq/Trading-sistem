@@ -29,39 +29,39 @@ def _mutate_price(conn, security_id: str, date: str, value: float) -> None:
     conn.commit()
 
 
-def _formation_selection_snapshot(conn, pit_universe):
+def _formation_selection_snapshot(conn, pit_universe, pit_calendar):
     boundary = StageAccessBoundary(zone=FORMATION_SELECTION, max_as_of=PIT_FORMATION_END)
     access = BoundedPITAccess(conn, boundary)
-    return build_data_snapshot(access, pit_universe["priced_security_ids"], pit_universe["benchmark_security_id"], "cal_test")
+    return build_data_snapshot(access, pit_universe["priced_security_ids"], pit_universe["benchmark_security_id"], pit_calendar)
 
 
-def test_mutating_validation_range_data_does_not_alter_a_formation_selection_snapshot(conn, pit_universe):
-    before = _formation_selection_snapshot(conn, pit_universe)
+def test_mutating_validation_range_data_does_not_alter_a_formation_selection_snapshot(conn, pit_universe, pit_calendar):
+    before = _formation_selection_snapshot(conn, pit_universe, pit_calendar)
     _mutate_price(conn, pit_universe["sec_a"], PIT_VALIDATION_END, 12345.0)
-    after = _formation_selection_snapshot(conn, pit_universe)
+    after = _formation_selection_snapshot(conn, pit_universe, pit_calendar)
     assert before.snapshot_id == after.snapshot_id
     assert before.content_digest == after.content_digest
 
 
-def test_mutating_locked_oos_range_data_does_not_alter_a_formation_selection_snapshot(conn, pit_universe):
-    before = _formation_selection_snapshot(conn, pit_universe)
+def test_mutating_locked_oos_range_data_does_not_alter_a_formation_selection_snapshot(conn, pit_universe, pit_calendar):
+    before = _formation_selection_snapshot(conn, pit_universe, pit_calendar)
     _mutate_price(conn, pit_universe["sec_a"], PIT_LOCKED_OOS_START, 99999.0)
-    after = _formation_selection_snapshot(conn, pit_universe)
+    after = _formation_selection_snapshot(conn, pit_universe, pit_calendar)
     assert before.snapshot_id == after.snapshot_id
 
 
-def test_mutating_locked_oos_range_data_does_not_alter_a_development_validation_snapshot(conn, pit_universe):
+def test_mutating_locked_oos_range_data_does_not_alter_a_development_validation_snapshot(conn, pit_universe, pit_calendar):
     """The same guarantee generalizes one zone forward: a
     DEVELOPMENT_VALIDATION snapshot (bounded at validation_end) is
     equally unaffected by a Locked-OOS-range mutation."""
     boundary = StageAccessBoundary(zone=DEVELOPMENT_VALIDATION, max_as_of=PIT_VALIDATION_END)
     access = BoundedPITAccess(conn, boundary)
-    before = build_data_snapshot(access, pit_universe["priced_security_ids"], pit_universe["benchmark_security_id"], "cal_test")
+    before = build_data_snapshot(access, pit_universe["priced_security_ids"], pit_universe["benchmark_security_id"], pit_calendar)
 
     _mutate_price(conn, pit_universe["sec_a"], PIT_LOCKED_OOS_START, 88888.0)
 
     access_after = BoundedPITAccess(conn, boundary)
-    after = build_data_snapshot(access_after, pit_universe["priced_security_ids"], pit_universe["benchmark_security_id"], "cal_test")
+    after = build_data_snapshot(access_after, pit_universe["priced_security_ids"], pit_universe["benchmark_security_id"], pit_calendar)
     assert before.snapshot_id == after.snapshot_id
 
 

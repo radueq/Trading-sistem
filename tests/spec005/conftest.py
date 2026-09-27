@@ -16,6 +16,20 @@ from evaluation.models.entities import EvaluationRunRegistry
 from evaluation.registry.runs import build_run_id
 from hypothesis.models.entities import EvidenceProvenance
 
+from backtest.data.calendar import build_trading_calendar
+from backtest.models.entities import (
+    CalendarSource,
+    CostAssumptions,
+    ExposureManifest,
+    ResearchPlan,
+    SelectionFold,
+    SelectionRule,
+    build_execution_semantics_profile_v1,
+    build_research_plan_id,
+    research_plan_fingerprint,
+)
+from fixtures.market_data import business_days
+
 from spec005.fixtures.pit_universe import insert_price_history, make_security
 
 SIGNATURE_ID = "VOL_COMPRESSION_RS_HIGH"
@@ -130,3 +144,53 @@ def pit_universe(conn, now):
         "priced_security_ids": (sec_a, sec_b),
         "security_ids_with_nodata": (sec_a, sec_b, sec_nodata),
     }
+
+
+@pytest.fixture
+def pit_calendar():
+    """A real, verified, content-addressed TradingCalendar whose
+    session_dates match exactly the business-day range `pit_universe`'s
+    price history is built over (both use `fixtures.market_data`'s own
+    `business_days()`) -- required so `build_data_snapshot()`'s
+    per-session ticker/listing history loop has real session dates to
+    iterate over."""
+    session_dates = tuple(business_days(PIT_WARMUP_START, PIT_UNIVERSE_END))
+    return build_trading_calendar(
+        source=CalendarSource.OFFICIAL_VERIFIED.value, calendar_identifier="SPEC005_TEST_CALENDAR",
+        calendar_version="v1", market="US_EQUITIES", timezone="America/New_York",
+        coverage_start=PIT_WARMUP_START, coverage_end=PIT_UNIVERSE_END, session_dates=session_dates,
+        session_open_time="09:30", session_close_time="16:00",
+        verified_by="test", verified_at="2026-09-27T00:00:00Z",
+    )
+
+
+@pytest.fixture
+def pit_research_plan(pit_universe, pit_calendar) -> ResearchPlan:
+    """A genuinely self-consistent, content-addressed ResearchPlan
+    binding PIT_FORMATION_END/PIT_VALIDATION_END/PIT_LOCKED_OOS_START to
+    `pit_calendar`'s own calendar_id and `pit_universe`'s own benchmark
+    -- the one plan `build_stage_access_boundary_from_plan()` and
+    `StageReadContext` are tested against."""
+    profile = build_execution_semantics_profile_v1()
+    rule = SelectionRule(minimum_executed_trades=1, minimum_evaluable_trades=1, minimum_evaluable_ratio=0.5)
+    costs = CostAssumptions(
+        commission_entry_rate=0.0005, commission_exit_rate=0.0005,
+        slippage_entry_bps=5.0, slippage_exit_bps=5.0, borrow_annual_rate=0.0,
+    )
+    exposure = ExposureManifest(declared_unseen=True)
+    folds = (SelectionFold("fold_1", PIT_FORMATION_START, PIT_FORMATION_END),)
+    fields = dict(
+        formation_start=PIT_FORMATION_START, formation_end=PIT_FORMATION_END,
+        validation_start=PIT_VALIDATION_START, validation_end=PIT_VALIDATION_END,
+        locked_oos_start=PIT_LOCKED_OOS_START, selection_folds=folds,
+        hypothesis_cohort_ids=("hyp_a",), trading_calendar_id=pit_calendar.calendar_id,
+        benchmark_security_id=pit_universe["benchmark_security_id"],
+        execution_semantics_profile_id=profile.profile_id, selection_rule=rule,
+        cost_assumptions=costs, exposure_manifest=exposure,
+    )
+    fp = research_plan_fingerprint(**fields)
+    plan_id, plan_hash = build_research_plan_id(fp)
+    return ResearchPlan(
+        research_plan_id=plan_id, plan_hash=plan_hash,
+        created_at="2026-09-27T00:00:00Z", created_by="test", **fields,
+    )

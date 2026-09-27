@@ -23,7 +23,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import date, time
 from enum import Enum
 from typing import Optional
@@ -787,6 +787,45 @@ class StageAccessBoundary:
             )
 
 
+class StageBoundaryPlanMismatchError(ValueError):
+    """Raised by `build_stage_access_boundary_from_plan()` when `zone`
+    is not one this function derives a boundary for, or the plan itself
+    fails identity re-verification."""
+    pass
+
+
+def build_stage_access_boundary_from_plan(plan: ResearchPlan, zone: str) -> StageAccessBoundary:
+    """Batch 2 patch review (P1 finding): a bare `StageAccessBoundary(
+    FORMATION_SELECTION, "2099-12-31")` was accepted with no check
+    against anything -- the LOCKED_OOS zone label was forbidden, but
+    nothing stopped a FORMATION_SELECTION- or DEVELOPMENT_VALIDATION-
+    labeled boundary from reaching straight into the Locked OOS date
+    range under a different label. `max_as_of` must come from the
+    frozen plan's OWN already-validated zone dates -- `formation_end`
+    for FORMATION_SELECTION, `validation_end` for DEVELOPMENT_VALIDATION
+    -- never a caller-supplied string. `plan` is re-verified against its
+    own content address first (a tampered plan must never anchor a
+    boundary), and `verify_zone_ordering()`'s own guarantee
+    (`validation_end < locked_oos_start`) transitively makes the
+    DEVELOPMENT_VALIDATION boundary safe as long as the plan itself
+    passed that check when it was built."""
+    ok, errors = verify_research_plan_identity(plan)
+    if not ok:
+        raise StageBoundaryPlanMismatchError(
+            f"cannot derive a StageAccessBoundary from a plan that fails identity verification: {errors}"
+        )
+    if zone == FORMATION_SELECTION:
+        max_as_of = plan.formation_end
+    elif zone == DEVELOPMENT_VALIDATION:
+        max_as_of = plan.validation_end
+    else:
+        raise StageBoundaryPlanMismatchError(
+            f"build_stage_access_boundary_from_plan() only derives {FORMATION_SELECTION!r} or "
+            f"{DEVELOPMENT_VALIDATION!r} boundaries, got zone={zone!r}"
+        )
+    return StageAccessBoundary(zone=zone, max_as_of=max_as_of)
+
+
 # --------------------------------------------------------------------------
 # Data snapshot identity (Spec #005 SS5/SS6, Batch 2): "Freeze or open a
 # consistent read snapshot for the entire run. Hash exactly that
@@ -943,14 +982,20 @@ class HistoricalObservationCache:
 
     observations: tuple  # tuple[discovery.models.entities.DiscoveryObservation, ...]
     missing_security_ids: tuple[str, ...]
+    observations_content_hash: str
 
 
 def verify_historical_observation_cache_identity(cache: HistoricalObservationCache) -> tuple[bool, tuple[str, ...]]:
-    """Recomputes the key-only fingerprint from the cache entry's OWN
+    """Recomputes the KEY-ONLY fingerprint from the cache entry's OWN
     stored key fields and compares it to `cache.cache_id`/
     `cache.cache_hash` -- catches a cache entry modified after
     construction (e.g. via `dataclasses.replace()` swapping `as_of` or
-    `security_ids` while keeping the old id/observations)."""
+    `security_ids`). This does NOT verify `observations`/
+    `missing_security_ids` content -- deleting or replacing those while
+    keeping the key fields unchanged still passes this check (Batch 2
+    patch round-2 review, explicit caution: never present this as a
+    content-integrity check). See
+    `verify_historical_observation_cache_content()` for that."""
     fp = historical_observation_cache_fingerprint(
         cache.stage, cache.as_of, cache.security_ids, cache.benchmark_security_id, cache.snapshot_id,
         cache.discovery_engine_version, cache.discovery_config_version, cache.pit_access_policy,
@@ -961,5 +1006,38 @@ def verify_historical_observation_cache_identity(cache: HistoricalObservationCac
             f"observation cache content-address mismatch: stored cache_id={cache.cache_id!r}/"
             f"cache_hash={cache.cache_hash!r} does not match the id/hash recomputed from the "
             f"cache entry's own key fields ({expected_id!r}/{expected_hash!r})",
+        )
+    return True, ()
+
+
+def historical_observation_cache_content_fingerprint(observations: tuple, missing_security_ids: tuple[str, ...]) -> str:
+    """A SEPARATE, genuine content hash over the actual payload --
+    `historical_observation_cache_fingerprint()` above is deliberately
+    key-only (mirrors #003's `build_run_id()` recipe) and must never be
+    presented as verifying `observations`/`missing_security_ids`
+    content; this is the function that actually does. Uses
+    `dataclasses.asdict()` to canonicalize each `DiscoveryObservation`
+    (including its nested `DescriptiveMetrics`/`TransitionEntry`
+    dataclasses) generically, without importing the discovery package's
+    types into this module."""
+    records = [asdict(obs) for obs in observations]
+    records.sort(key=lambda r: r["security_id"])
+    payload = {"observations": records, "missing_security_ids": sorted(missing_security_ids)}
+    return canonical_json(payload)
+
+
+def verify_historical_observation_cache_content(cache: HistoricalObservationCache) -> tuple[bool, tuple[str, ...]]:
+    """Recomputes the content hash from `cache.observations`/
+    `cache.missing_security_ids` and compares it to
+    `cache.observations_content_hash` -- unlike
+    `verify_historical_observation_cache_identity()` (key-only), THIS
+    catches a tampered `observations`/`missing_security_ids` payload
+    served under otherwise-identical key fields."""
+    expected = historical_observation_cache_content_fingerprint(cache.observations, cache.missing_security_ids)
+    if cache.observations_content_hash != expected:
+        return False, (
+            f"observation cache content mismatch: stored observations_content_hash="
+            f"{cache.observations_content_hash!r} does not match the hash recomputed from "
+            f"cache.observations/cache.missing_security_ids ({expected!r})",
         )
     return True, ()

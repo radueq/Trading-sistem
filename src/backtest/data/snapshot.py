@@ -7,15 +7,48 @@ canonical typed records... stable primary-key ordering... no ambiguous
 concatenation. Reject NaN/infinite prices and inconsistent duplicate
 keys."
 
-`build_data_snapshot()` reads every security ONCE, at the single
-`as_of = bounded_access.boundary.max_as_of` -- never a moving window
-across sessions. Because #001's PIT gateway always returns full history
-up to `as_of`, this ONE read at the stage's own upper bound already
-captures everything any later, smaller-`as_of` session read within the
-same stage could see (warm-up included); it is what SS6 means by "a
-separate read-only fingerprint/snapshot operation", distinct from the
-session-scoped decision-time reads later batches perform through the
-same `BoundedPITAccess` object.
+Batch 2 patch round-2 review (two P1 findings closed here):
+
+1. The whole read+hash loop now runs inside one SQLite SAVEPOINT, held
+   open for its entire duration. Verified empirically (two real file-
+   backed connections): once this connection's SAVEPOINT has done its
+   first read, a concurrent writer's COMMIT on another connection
+   BLOCKS until this SAVEPOINT is released -- so every read inside this
+   function observes one single, unchanging database state, never a
+   mix of pre- and post-write facts across different reads. A bare
+   shared `as_of` bounds WHICH INFORMATION DATE is visible, not WHICH
+   VERSION of the database is read -- those are different guarantees,
+   and only the SAVEPOINT provides the second one.
+2. `security/symbol history` and `listing status` are no longer hashed
+   as a single "current answer" at `max_as_of` -- that missed any
+   distinct answer a later, session-level read (at an EARLIER as_of
+   within the same stage) could have gotten, so a correction to
+   historical ticker/listing data could go completely undetected as
+   long as the CURRENT-as-of-max_as_of answer happened to stay the
+   same. `build_data_snapshot()` now takes the real, VERIFIED
+   `TradingCalendar` object (not a bare id string) and re-derives the
+   ticker/listing answer at EVERY one of that calendar's own session
+   dates up to `max_as_of`, using only #001's existing single-answer
+   PIT functions -- no new #001 function needed for this part.
+
+A genuine remaining gap, NOT fixed here and reported as an
+IMPLEMENTATION BLOCKER rather than silently patched: `security_master`
+(security_type/primary_exchange/currency/source_provider/
+source_security_id) has no knowledge-time field and no #001 PIT-gateway
+accessor at all -- `data_foundation.pit.access` exposes no
+`get_security_master_as_of()`-shaped function, only
+`data_foundation.model.repository.get_security_by_id()`, which this
+module -- and every #005 module -- is not permitted to call directly
+(Spec #001 SS10-11: the PIT gateway is the sole entry point). Including
+these facts in the snapshot without a #001 change would mean either (a)
+reading `repository` directly, breaking that boundary, or (b)
+duplicating the read logic outside the gateway, the exact
+two-sources-of-truth anti-pattern this codebase already rejects
+elsewhere. Minimal proposed correction: add `get_security_master_as_of`
+(or an un-dated `get_security_master`, since the fields are immutable
+once ingested) to `data_foundation.pit.access`, mirroring
+`get_ticker_as_of()`'s shape. Left for explicit approval before
+implementation, not applied silently.
 """
 from __future__ import annotations
 
@@ -27,12 +60,15 @@ from backtest.models.entities import (
     NOT_REPLAYABLE_FROM_RETAINED_DATA,
     SNAPSHOT_FACT_CATEGORIES_V1,
     DataSnapshotManifest,
+    TradingCalendar,
     build_snapshot_id,
     canonical_json,
     snapshot_manifest_fingerprint,
+    verify_calendar_content_address,
 )
 
 _NON_FINITE = (float("inf"), float("-inf"))
+_SAVEPOINT_NAME = "backtest_snapshot_read"
 
 
 def _require_finite_or_none(value, label: str) -> None:
@@ -70,69 +106,92 @@ def _corporate_action_record(security_id: str, pit_action) -> dict:
     }
 
 
-def _listing_status_record(security_id: str, pit_listing) -> dict:
+def _listing_status_record(security_id: str, as_of: str, pit_listing) -> dict:
     if pit_listing is None:
-        return {"kind": "LISTING_STATUS", "security_id": security_id, "status": None}
+        return {"kind": "LISTING_STATUS", "security_id": security_id, "as_of": as_of, "status": None}
     e = pit_listing.entry
     return {
-        "kind": "LISTING_STATUS", "security_id": security_id, "status": e.status,
+        "kind": "LISTING_STATUS", "security_id": security_id, "as_of": as_of, "status": e.status,
         "effective_from": e.effective_from, "effective_to": e.effective_to,
         "source_provider": e.source_provider, "delisting_reason": e.delisting_reason,
         "available_at": e.available_at, "knowledge_time_status": pit_listing.knowledge_time_status,
     }
 
 
-def _symbol_record(security_id: str, ticker) -> dict:
-    return {"kind": "SYMBOL", "security_id": security_id, "ticker_as_of": ticker}
+def _symbol_record(security_id: str, as_of: str, ticker) -> dict:
+    return {"kind": "SYMBOL", "security_id": security_id, "as_of": as_of, "ticker_as_of": ticker}
 
 
 def build_data_snapshot(
     bounded_access: BoundedPITAccess, security_ids: tuple[str, ...], benchmark_security_id: str,
-    trading_calendar_id: str,
+    trading_calendar: TradingCalendar,
 ) -> DataSnapshotManifest:
     """`security_ids` order never affects the result -- the universe and
     benchmark are merged, deduplicated and sorted before anything is
     read or hashed (SS23 Snapshot family: "input order does not
-    [change the hash]"). Every security is read at the SAME single
-    `as_of`, in one synchronous pass, which is what rules out mixing a
-    partially-ingested state for one security with a different state
-    for another (SS23: "concurrent ingestion cannot mix states")."""
+    [change the hash]"). `trading_calendar` is verified against its own
+    content address first (SS11/SS21 discipline) -- a snapshot may not
+    bind to a calendar reference that doesn't match its own claimed
+    identity -- and its `calendar_id` (not a bare caller-supplied
+    string) becomes the manifest's `trading_calendar_id`. Every read
+    happens inside one held-open SAVEPOINT (see module docstring)."""
+    ok, errors = verify_calendar_content_address(trading_calendar)
+    if not ok:
+        raise ValueError(f"trading_calendar failed content-address verification: {errors}")
+
     max_as_of = bounded_access.boundary.max_as_of
     all_ids = tuple(sorted(set(security_ids) | {benchmark_security_id}))
+    session_dates_in_scope = tuple(d for d in trading_calendar.session_dates if d <= max_as_of)
 
-    hasher = hashlib.sha256()
-    for sid in all_ids:
-        bars = bounded_access.get_price_series_as_of(sid, max_as_of)
-        seen_dates: set[str] = set()
-        for bar in sorted(bars, key=lambda b: b.date):
-            # price_history's actual primary key is (security_id, date,
-            # source_provider) -- get_price_history() returns every
-            # provider's row for a date, never deduplicated across
-            # providers. Two rows for the same (security_id, date) from
-            # different providers is exactly the "inconsistent duplicate
-            # keys" SS6 says to reject, not a theoretical case.
-            if bar.date in seen_dates:
-                raise ValueError(f"{sid}: duplicate price bar date in snapshot scope: {bar.date!r}")
-            seen_dates.add(bar.date)
-            hasher.update(canonical_json(_price_bar_record(sid, bar)).encode("utf-8"))
-            hasher.update(b"\n")
+    conn = bounded_access.conn
+    conn.execute(f"SAVEPOINT {_SAVEPOINT_NAME}")
+    try:
+        hasher = hashlib.sha256()
+        for sid in all_ids:
+            bars = bounded_access.get_price_series_as_of(sid, max_as_of)
+            seen_dates: set[str] = set()
+            for bar in sorted(bars, key=lambda b: b.date):
+                # price_history's actual primary key is (security_id,
+                # date, source_provider) -- get_price_history() returns
+                # every provider's row for a date, never deduplicated
+                # across providers. Two rows for the same (security_id,
+                # date) from different providers is exactly the
+                # "inconsistent duplicate keys" SS6 says to reject, not
+                # a theoretical case.
+                if bar.date in seen_dates:
+                    raise ValueError(f"{sid}: duplicate price bar date in snapshot scope: {bar.date!r}")
+                seen_dates.add(bar.date)
+                hasher.update(canonical_json(_price_bar_record(sid, bar)).encode("utf-8"))
+                hasher.update(b"\n")
 
-        actions = bounded_access.get_corporate_actions_as_of(sid, max_as_of)
-        for pit_action in sorted(actions, key=lambda a: a.action.action_id):
-            hasher.update(canonical_json(_corporate_action_record(sid, pit_action)).encode("utf-8"))
-            hasher.update(b"\n")
+            actions = bounded_access.get_corporate_actions_as_of(sid, max_as_of)
+            for pit_action in sorted(actions, key=lambda a: a.action.action_id):
+                hasher.update(canonical_json(_corporate_action_record(sid, pit_action)).encode("utf-8"))
+                hasher.update(b"\n")
 
-        listing = bounded_access.get_listing_status_as_of(sid, max_as_of)
-        hasher.update(canonical_json(_listing_status_record(sid, listing)).encode("utf-8"))
-        hasher.update(b"\n")
+            # Full PIT-safe history across every session in scope, not
+            # just the answer at max_as_of (see module docstring, point
+            # 2) -- a later, session-level read can query ANY of these
+            # dates, so the snapshot must be sensitive to every one of
+            # them.
+            for d in session_dates_in_scope:
+                listing = bounded_access.get_listing_status_as_of(sid, d)
+                hasher.update(canonical_json(_listing_status_record(sid, d, listing)).encode("utf-8"))
+                hasher.update(b"\n")
 
-        ticker = bounded_access.get_ticker_as_of(sid, max_as_of)
-        hasher.update(canonical_json(_symbol_record(sid, ticker)).encode("utf-8"))
-        hasher.update(b"\n")
+                ticker = bounded_access.get_ticker_as_of(sid, d)
+                hasher.update(canonical_json(_symbol_record(sid, d, ticker)).encode("utf-8"))
+                hasher.update(b"\n")
 
-    content_digest = hasher.hexdigest()
+        content_digest = hasher.hexdigest()
+    except Exception:
+        conn.execute(f"ROLLBACK TO {_SAVEPOINT_NAME}")
+        conn.execute(f"RELEASE {_SAVEPOINT_NAME}")
+        raise
+    conn.execute(f"RELEASE {_SAVEPOINT_NAME}")
+
     fp = snapshot_manifest_fingerprint(
-        bounded_access.boundary.zone, all_ids, benchmark_security_id, max_as_of, trading_calendar_id,
+        bounded_access.boundary.zone, all_ids, benchmark_security_id, max_as_of, trading_calendar.calendar_id,
         SNAPSHOT_FACT_CATEGORIES_V1, CANONICALIZATION_VERSION_V1, content_digest,
         NOT_REPLAYABLE_FROM_RETAINED_DATA, None,
     )
@@ -140,7 +199,7 @@ def build_data_snapshot(
     return DataSnapshotManifest(
         snapshot_id=snapshot_id, snapshot_hash=snapshot_hash, stage=bounded_access.boundary.zone,
         security_ids=all_ids, benchmark_security_id=benchmark_security_id, max_as_of=max_as_of,
-        trading_calendar_id=trading_calendar_id, table_field_manifest=SNAPSHOT_FACT_CATEGORIES_V1,
+        trading_calendar_id=trading_calendar.calendar_id, table_field_manifest=SNAPSHOT_FACT_CATEGORIES_V1,
         canonicalization_version=CANONICALIZATION_VERSION_V1, content_digest=content_digest,
         replayable=NOT_REPLAYABLE_FROM_RETAINED_DATA, replay_artifact_reference=None,
     )

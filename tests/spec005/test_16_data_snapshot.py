@@ -1,18 +1,23 @@
 """TEST 16 -- canonical scoped data snapshot (Spec #005 v1.0 SS5/SS6,
-Batch 2).
+Batch 2, patched round 2).
 
 "Freeze or open a consistent read snapshot for the entire run. Hash
 exactly that snapshot." "Reject NaN/infinite prices and inconsistent
 duplicate keys." Covers the SS23 Snapshot acceptance family: "one
 relevant fact correction changes hash; input order does not; concurrent
-ingestion cannot mix states."
+ingestion cannot mix states." The genuine multi-connection version of
+the "concurrent ingestion" guarantee lives in
+`test_19_stage_read_context.py` -- this file covers the calendar
+binding, full ticker/listing history sensitivity, and everything else
+`build_data_snapshot()` itself is responsible for.
 """
+import dataclasses
 from types import SimpleNamespace
 
 import pytest
 
 from data_foundation.model import repository as repo
-from data_foundation.model.entities import PriceBar
+from data_foundation.model.entities import ListingStatusEntry, PriceBar, SymbolHistoryEntry
 
 from backtest.data.pit_access import BoundedPITAccess
 from backtest.data.snapshot import _price_bar_record, build_data_snapshot
@@ -23,74 +28,142 @@ from backtest.models.entities import (
     verify_snapshot_content_address,
 )
 
-from spec005.conftest import PIT_FORMATION_END
+from spec005.conftest import PIT_FORMATION_END, PIT_WARMUP_START
 
 
-def _snapshot(conn, pit_universe, security_ids=None):
+def _snapshot(conn, pit_universe, pit_calendar, security_ids=None):
     boundary = StageAccessBoundary(zone=FORMATION_SELECTION, max_as_of=PIT_FORMATION_END)
     access = BoundedPITAccess(conn, boundary)
     ids = security_ids or pit_universe["priced_security_ids"]
-    return build_data_snapshot(access, ids, pit_universe["benchmark_security_id"], trading_calendar_id="cal_test")
+    return build_data_snapshot(access, ids, pit_universe["benchmark_security_id"], pit_calendar)
 
 
-def test_snapshot_passes_its_own_content_address_verification(conn, pit_universe):
-    manifest = _snapshot(conn, pit_universe)
+def test_snapshot_passes_its_own_content_address_verification(conn, pit_universe, pit_calendar):
+    manifest = _snapshot(conn, pit_universe, pit_calendar)
     ok, errors = verify_snapshot_content_address(manifest)
     assert ok, errors
     assert manifest.replayable == NOT_REPLAYABLE_FROM_RETAINED_DATA
     assert manifest.replay_artifact_reference is None
+    assert manifest.trading_calendar_id == pit_calendar.calendar_id
 
 
-def test_repeated_snapshots_of_unchanged_data_produce_the_identical_hash(conn, pit_universe):
-    a = _snapshot(conn, pit_universe)
-    b = _snapshot(conn, pit_universe)
+def test_snapshot_rejects_a_calendar_that_fails_its_own_content_address(conn, pit_universe, pit_calendar):
+    """SS11/SS21: a snapshot may not bind to a calendar reference that
+    doesn't match its own claimed identity -- Batch 2 patch round-2
+    review, finding #2."""
+    tampered = dataclasses.replace(pit_calendar, session_dates=pit_calendar.session_dates[:-1])
+    boundary = StageAccessBoundary(zone=FORMATION_SELECTION, max_as_of=PIT_FORMATION_END)
+    access = BoundedPITAccess(conn, boundary)
+    with pytest.raises(ValueError, match="content-address"):
+        build_data_snapshot(access, pit_universe["priced_security_ids"], pit_universe["benchmark_security_id"], tampered)
+
+
+def test_repeated_snapshots_of_unchanged_data_produce_the_identical_hash(conn, pit_universe, pit_calendar):
+    a = _snapshot(conn, pit_universe, pit_calendar)
+    b = _snapshot(conn, pit_universe, pit_calendar)
     assert a.snapshot_id == b.snapshot_id
     assert a.content_digest == b.content_digest
 
 
-def test_input_order_does_not_affect_the_snapshot_hash(conn, pit_universe):
+def test_input_order_does_not_affect_the_snapshot_hash(conn, pit_universe, pit_calendar):
     """SS23 Snapshot family: "input order does not [change the hash]." """
     ids = pit_universe["priced_security_ids"]
-    a = _snapshot(conn, pit_universe, security_ids=ids)
-    b = _snapshot(conn, pit_universe, security_ids=tuple(reversed(ids)))
+    a = _snapshot(conn, pit_universe, pit_calendar, security_ids=ids)
+    b = _snapshot(conn, pit_universe, pit_calendar, security_ids=tuple(reversed(ids)))
     assert a.snapshot_id == b.snapshot_id
     assert a.security_ids == b.security_ids  # sorted identically regardless of input order
 
 
-def test_one_relevant_fact_correction_changes_the_hash(conn, pit_universe):
+def test_one_relevant_fact_correction_changes_the_hash(conn, pit_universe, pit_calendar):
     """SS23 Snapshot family: "one relevant fact correction changes
     hash." `insert_price_bar`'s INSERT OR IGNORE would silently no-op on
     an existing (security_id, date, source_provider) key, so the
     correction is applied via a direct UPDATE -- exactly what "a
     correction" means at the storage level."""
-    before = _snapshot(conn, pit_universe)
+    before = _snapshot(conn, pit_universe, pit_calendar)
     sid = pit_universe["sec_a"]
     conn.execute(
         "UPDATE price_history SET raw_close = ? WHERE security_id = ? AND date = ? AND source_provider = 'manual'",
         (999.0, sid, PIT_FORMATION_END),
     )
     conn.commit()
-    after = _snapshot(conn, pit_universe)
+    after = _snapshot(conn, pit_universe, pit_calendar)
     assert before.snapshot_id != after.snapshot_id
     assert before.content_digest != after.content_digest
 
 
-def test_correcting_a_fact_outside_the_universe_does_not_affect_the_hash(conn, pit_universe):
+def test_correcting_a_fact_outside_the_universe_does_not_affect_the_hash(conn, pit_universe, pit_calendar):
     """Sanity check for the fact-sensitivity test above: a change to a
     security NOT included in this snapshot's own scope must not affect
     its hash -- isolation is scoped by `security_ids`, not by "any DB
     write happened.\""""
-    before = _snapshot(conn, pit_universe, security_ids=(pit_universe["sec_a"],))
+    before = _snapshot(conn, pit_universe, pit_calendar, security_ids=(pit_universe["sec_a"],))
     conn.execute(
         "UPDATE price_history SET raw_close = ? WHERE security_id = ? AND date = ? AND source_provider = 'manual'",
         (999.0, pit_universe["sec_b"], PIT_FORMATION_END),
     )
     conn.commit()
-    after = _snapshot(conn, pit_universe, security_ids=(pit_universe["sec_a"],))
+    after = _snapshot(conn, pit_universe, pit_calendar, security_ids=(pit_universe["sec_a"],))
     assert before.snapshot_id == after.snapshot_id
 
 
-def test_two_providers_reporting_the_same_date_is_rejected_as_an_inconsistent_duplicate_key(conn, pit_universe, now):
+def test_a_historical_ticker_change_invisible_at_max_as_of_still_changes_the_hash(conn, pit_universe, pit_calendar, now):
+    """Batch 2 patch round-2 review, finding #2 (the exact case
+    reproduced): the CURRENT ticker as of max_as_of can stay the same
+    while an EARLIER era's ticker changes -- a later, session-level read
+    at that earlier date would see a different answer. The snapshot
+    must be sensitive to that even though its own single `max_as_of`
+    answer is unaffected."""
+    sid = pit_universe["sec_a"]
+    repo.insert_symbol_history(conn, SymbolHistoryEntry(
+        security_id=sid, ticker="OLDTICK", exchange=None, valid_from=PIT_WARMUP_START,
+        valid_to="2024-01-01", source_provider="manual",
+    ))
+    repo.insert_symbol_history(conn, SymbolHistoryEntry(
+        security_id=sid, ticker="NEWTICK", exchange=None, valid_from="2024-01-01",
+        valid_to=None, source_provider="manual",
+    ))
+    before = _snapshot(conn, pit_universe, pit_calendar)
+
+    # Correct the EARLIER era's ticker only -- the max_as_of (current)
+    # answer for `sid` is still "NEWTICK", completely unaffected. A raw
+    # UPDATE (not close_symbol_history(), which only ever touches an
+    # OPEN row where valid_to IS NULL) mirrors the same "correction"
+    # pattern already used for price_history/listing_status_history.
+    conn.execute(
+        "UPDATE symbol_history SET ticker = ? WHERE security_id = ? AND valid_from = ?",
+        ("CORRECTEDTICK", sid, PIT_WARMUP_START),
+    )
+    conn.commit()
+    after = _snapshot(conn, pit_universe, pit_calendar)
+    assert before.snapshot_id != after.snapshot_id
+
+
+def test_a_historical_listing_status_change_invisible_at_max_as_of_still_changes_the_hash(conn, pit_universe, pit_calendar, now):
+    sid = pit_universe["sec_b"]
+    repo.upsert_listing_status(conn, ListingStatusEntry(
+        security_id=sid, status="HALTED", effective_from="2023-11-01", effective_to="2023-11-05",
+        source_provider="manual", delisting_reason=None, available_at=None, last_updated_timestamp=now,
+    ))
+    repo.upsert_listing_status(conn, ListingStatusEntry(
+        security_id=sid, status="ACTIVE", effective_from="2023-11-05", effective_to=None,
+        source_provider="manual", delisting_reason=None, available_at=None, last_updated_timestamp=now,
+    ))
+    before = _snapshot(conn, pit_universe, pit_calendar)
+
+    # Correct only the now-closed HALTED entry's window -- the current
+    # (max_as_of) status is still "ACTIVE", unaffected.
+    conn.execute(
+        "UPDATE listing_status_history SET effective_to = '2023-11-06' "
+        "WHERE security_id = ? AND effective_from = '2023-11-01'",
+        (sid,),
+    )
+    conn.commit()
+    after = _snapshot(conn, pit_universe, pit_calendar)
+    assert before.snapshot_id != after.snapshot_id
+
+
+def test_two_providers_reporting_the_same_date_is_rejected_as_an_inconsistent_duplicate_key(conn, pit_universe, pit_calendar, now):
     """SS6: "Reject... inconsistent duplicate keys." `price_history`'s
     actual primary key is (security_id, date, source_provider) --
     get_price_history() returns every provider's row for a date, never
@@ -103,10 +176,10 @@ def test_two_providers_reporting_the_same_date_is_rejected_as_an_inconsistent_du
         raw_volume=1, source_provider="other_provider", ingestion_timestamp=now,
     )])
     with pytest.raises(ValueError, match="duplicate price bar date"):
-        _snapshot(conn, pit_universe)
+        _snapshot(conn, pit_universe, pit_calendar)
 
 
-def test_infinite_price_is_rejected(conn, pit_universe):
+def test_infinite_price_is_rejected(conn, pit_universe, pit_calendar):
     """SS6: "Reject NaN/infinite prices" -- `inf` round-trips through
     SQLite's REAL storage unchanged (unlike NaN, which SQLite's driver
     silently coerces to NULL on write -- see
@@ -119,7 +192,7 @@ def test_infinite_price_is_rejected(conn, pit_universe):
     )
     conn.commit()
     with pytest.raises(ValueError, match="infinite"):
-        _snapshot(conn, pit_universe)
+        _snapshot(conn, pit_universe, pit_calendar)
 
 
 def test_nan_value_is_rejected_at_the_record_builder_level():
@@ -134,14 +207,18 @@ def test_nan_value_is_rejected_at_the_record_builder_level():
         _price_bar_record("sec_x", bar)
 
 
-def test_a_single_synchronous_pass_reads_every_security_at_the_identical_as_of(conn, pit_universe):
-    """Proxy for SS23's "concurrent ingestion cannot mix states": every
-    logged access shares the SAME as_of, proving there is no moving
-    window across which a partial ingestion for one security could be
-    picked up while another security reflects an earlier or later
-    state."""
+def test_price_and_corporate_action_reads_use_the_single_max_as_of(conn, pit_universe, pit_calendar):
+    """PRICE_BARS/CORPORATE_ACTIONS still use the single `max_as_of`
+    (SS6's snapshot-at-the-boundary reading) -- only SYMBOL_HISTORY/
+    LISTING_STATUS iterate every session date, per finding #2's fix."""
     boundary = StageAccessBoundary(zone=FORMATION_SELECTION, max_as_of=PIT_FORMATION_END)
     access = BoundedPITAccess(conn, boundary)
-    build_data_snapshot(access, pit_universe["priced_security_ids"], pit_universe["benchmark_security_id"], "cal_test")
-    as_of_values = {as_of for _kind, _sid, as_of in access.access_log}
-    assert as_of_values == {PIT_FORMATION_END}
+    build_data_snapshot(access, pit_universe["priced_security_ids"], pit_universe["benchmark_security_id"], pit_calendar)
+    price_and_action_as_ofs = {
+        as_of for kind, _sid, as_of in access.access_log if kind in ("PRICE_BARS", "CORPORATE_ACTIONS")
+    }
+    assert price_and_action_as_ofs == {PIT_FORMATION_END}
+    history_as_ofs = {
+        as_of for kind, _sid, as_of in access.access_log if kind in ("SYMBOL_HISTORY", "LISTING_STATUS")
+    }
+    assert len(history_as_ofs) > 1  # spans many session dates, not just max_as_of
