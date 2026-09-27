@@ -788,42 +788,19 @@ class StageAccessBoundary:
 
 
 class StageBoundaryPlanMismatchError(ValueError):
-    """Raised by `build_stage_access_boundary_from_plan()` when `zone`
-    is not one this function derives a boundary for, or the plan itself
-    fails identity re-verification."""
+    """Raised by `backtest.zones.boundaries.build_stage_access_boundary_from_plan()`
+    when `zone` is not one that function derives a boundary for, the
+    plan fails identity re-verification, or the plan's own zone dates
+    fail `verify_zone_ordering()` (Batch 2 patch round-3 review: a plan
+    with a self-consistent hash can still have overlapping/invalid zone
+    dates -- identity alone was never a substitute for checking that).
+    Lives here, not in `zones.boundaries`, purely so
+    `StageAccessBoundary`'s own docstring can reference the one error
+    type it and its plan-derived factory share; the factory function
+    itself lives in `zones.boundaries` because it must call
+    `verify_zone_ordering()`, and `boundaries` already imports from
+    this module -- importing the other way around would be circular."""
     pass
-
-
-def build_stage_access_boundary_from_plan(plan: ResearchPlan, zone: str) -> StageAccessBoundary:
-    """Batch 2 patch review (P1 finding): a bare `StageAccessBoundary(
-    FORMATION_SELECTION, "2099-12-31")` was accepted with no check
-    against anything -- the LOCKED_OOS zone label was forbidden, but
-    nothing stopped a FORMATION_SELECTION- or DEVELOPMENT_VALIDATION-
-    labeled boundary from reaching straight into the Locked OOS date
-    range under a different label. `max_as_of` must come from the
-    frozen plan's OWN already-validated zone dates -- `formation_end`
-    for FORMATION_SELECTION, `validation_end` for DEVELOPMENT_VALIDATION
-    -- never a caller-supplied string. `plan` is re-verified against its
-    own content address first (a tampered plan must never anchor a
-    boundary), and `verify_zone_ordering()`'s own guarantee
-    (`validation_end < locked_oos_start`) transitively makes the
-    DEVELOPMENT_VALIDATION boundary safe as long as the plan itself
-    passed that check when it was built."""
-    ok, errors = verify_research_plan_identity(plan)
-    if not ok:
-        raise StageBoundaryPlanMismatchError(
-            f"cannot derive a StageAccessBoundary from a plan that fails identity verification: {errors}"
-        )
-    if zone == FORMATION_SELECTION:
-        max_as_of = plan.formation_end
-    elif zone == DEVELOPMENT_VALIDATION:
-        max_as_of = plan.validation_end
-    else:
-        raise StageBoundaryPlanMismatchError(
-            f"build_stage_access_boundary_from_plan() only derives {FORMATION_SELECTION!r} or "
-            f"{DEVELOPMENT_VALIDATION!r} boundaries, got zone={zone!r}"
-        )
-    return StageAccessBoundary(zone=zone, max_as_of=max_as_of)
 
 
 # --------------------------------------------------------------------------
@@ -833,7 +810,7 @@ def build_stage_access_boundary_from_plan(plan: ResearchPlan, zone: str) -> Stag
 # --------------------------------------------------------------------------
 
 CANONICALIZATION_VERSION_V1 = "canon_v1"
-SNAPSHOT_FACT_CATEGORIES_V1 = ("PRICE_BARS", "CORPORATE_ACTIONS", "LISTING_STATUS", "SYMBOL_HISTORY")
+SNAPSHOT_FACT_CATEGORIES_V1 = ("PRICE_BARS", "CORPORATE_ACTIONS", "LISTING_STATUS", "SYMBOL_HISTORY", "SECURITY_MASTER")
 NOT_REPLAYABLE_FROM_RETAINED_DATA = "NOT_REPLAYABLE_FROM_RETAINED_DATA"
 
 
@@ -1026,6 +1003,19 @@ def historical_observation_cache_content_fingerprint(observations: tuple, missin
     return canonical_json(payload)
 
 
+def build_historical_observation_cache_content_hash(fingerprint: str) -> str:
+    """Batch 2 patch round-3 review (naming/implementation bug):
+    `observations_content_hash` previously stored the raw canonical-
+    JSON FINGERPRINT string directly -- functionally still caught
+    tampering (comparing two canonical serializations for equality
+    works), but a field named `_hash` holding un-hashed JSON text is
+    misleading and needlessly large. This actually hashes it, mirroring
+    every other `build_xxx_id()` function in this module (fingerprint
+    string in, `sha256` hex digest out) -- full-length, since this is a
+    comparison value, never truncated into a short id."""
+    return hashlib.sha256(fingerprint.encode()).hexdigest()
+
+
 def verify_historical_observation_cache_content(cache: HistoricalObservationCache) -> tuple[bool, tuple[str, ...]]:
     """Recomputes the content hash from `cache.observations`/
     `cache.missing_security_ids` and compares it to
@@ -1033,7 +1023,8 @@ def verify_historical_observation_cache_content(cache: HistoricalObservationCach
     `verify_historical_observation_cache_identity()` (key-only), THIS
     catches a tampered `observations`/`missing_security_ids` payload
     served under otherwise-identical key fields."""
-    expected = historical_observation_cache_content_fingerprint(cache.observations, cache.missing_security_ids)
+    fp = historical_observation_cache_content_fingerprint(cache.observations, cache.missing_security_ids)
+    expected = build_historical_observation_cache_content_hash(fp)
     if cache.observations_content_hash != expected:
         return False, (
             f"observation cache content mismatch: stored observations_content_hash="

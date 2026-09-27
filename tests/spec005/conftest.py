@@ -153,10 +153,15 @@ def pit_calendar():
     price history is built over (both use `fixtures.market_data`'s own
     `business_days()`) -- required so `build_data_snapshot()`'s
     per-session ticker/listing history loop has real session dates to
-    iterate over."""
+    iterate over. Batch 2 patch round-3 review (minor fix): this
+    calendar is built from a bare `business_days()` range, not real
+    verified market data -- it must be labeled `SYNTHETIC_TEST_FIXTURE`,
+    never `OFFICIAL_VERIFIED` (see `backtest.data.calendar.
+    require_verified_calendar_for_formal_run()`'s own docstring: "a
+    synthetic test fixture can never satisfy this")."""
     session_dates = tuple(business_days(PIT_WARMUP_START, PIT_UNIVERSE_END))
     return build_trading_calendar(
-        source=CalendarSource.OFFICIAL_VERIFIED.value, calendar_identifier="SPEC005_TEST_CALENDAR",
+        source=CalendarSource.SYNTHETIC_TEST_FIXTURE.value, calendar_identifier="SPEC005_TEST_CALENDAR",
         calendar_version="v1", market="US_EQUITIES", timezone="America/New_York",
         coverage_start=PIT_WARMUP_START, coverage_end=PIT_UNIVERSE_END, session_dates=session_dates,
         session_open_time="09:30", session_close_time="16:00",

@@ -19,11 +19,13 @@ import pytest
 from data_foundation.model import repository as repo
 from data_foundation.model.entities import ListingStatusEntry, PriceBar, SymbolHistoryEntry
 
+from backtest.data.calendar import build_trading_calendar
 from backtest.data.pit_access import BoundedPITAccess
 from backtest.data.snapshot import _price_bar_record, build_data_snapshot
 from backtest.models.entities import (
     FORMATION_SELECTION,
     NOT_REPLAYABLE_FROM_RETAINED_DATA,
+    CalendarSource,
     StageAccessBoundary,
     verify_snapshot_content_address,
 )
@@ -205,6 +207,58 @@ def test_nan_value_is_rejected_at_the_record_builder_level():
     bar = SimpleNamespace(date="2024-01-15", raw_open=1.0, raw_high=1.0, raw_low=1.0, raw_close=float("nan"), raw_volume=100)
     with pytest.raises(ValueError, match="NaN"):
         _price_bar_record("sec_x", bar)
+
+
+def test_snapshot_rejects_a_calendar_whose_coverage_end_is_before_max_as_of(conn, pit_universe, pit_calendar):
+    """Batch 2 patch round-3 review, finding #4: a calendar too SHORT at
+    the top end would silently omit real session dates from the
+    ticker/listing history loop while the observation cache could still
+    be asked about dates in that omitted range -- a genuinely
+    self-consistent (content-addressed) calendar whose own declared
+    `coverage_end` falls before this stage's `max_as_of` must be
+    rejected outright, never silently truncated."""
+    short_dates = tuple(d for d in pit_calendar.session_dates if d <= "2024-01-15")
+    short_calendar = build_trading_calendar(
+        source=CalendarSource.SYNTHETIC_TEST_FIXTURE.value, calendar_identifier="TOO_SHORT_CALENDAR",
+        calendar_version="v1", market=pit_calendar.market, timezone=pit_calendar.timezone,
+        coverage_start=pit_calendar.coverage_start, coverage_end="2024-01-15", session_dates=short_dates,
+        session_open_time=pit_calendar.session_open_time, session_close_time=pit_calendar.session_close_time,
+    )
+    with pytest.raises(ValueError, match="coverage_end"):
+        _snapshot(conn, pit_universe, short_calendar)
+
+
+def test_snapshot_rejects_a_structurally_invalid_calendar(conn, pit_universe, pit_calendar):
+    """Finding #4: content-address verification alone only proves the
+    calendar's fields match its OWN claimed hash -- a calendar with
+    `session_open_time` after `session_close_time` can still be
+    perfectly self-consistent. `verify_calendar_structure()` must run
+    too, before anything is read."""
+    backwards_calendar = build_trading_calendar(
+        source=CalendarSource.SYNTHETIC_TEST_FIXTURE.value, calendar_identifier="BACKWARDS_TIMES_CALENDAR",
+        calendar_version="v1", market=pit_calendar.market, timezone=pit_calendar.timezone,
+        coverage_start=pit_calendar.coverage_start, coverage_end=pit_calendar.coverage_end,
+        session_dates=pit_calendar.session_dates, session_open_time="16:00", session_close_time="09:30",
+    )
+    with pytest.raises(ValueError, match="structural verification"):
+        _snapshot(conn, pit_universe, backwards_calendar)
+
+
+def test_correcting_the_security_master_changes_the_hash(conn, pit_universe, pit_calendar):
+    """Finding #4/Security Master: `security_type`/`primary_exchange`/
+    `currency`/`source_provider`/`source_security_id` are now part of
+    the fingerprint via the licensed direct read (Spec #005 SS6) -- a
+    correction to any of them must change the snapshot's own digest,
+    exactly like a price or corporate-action correction does."""
+    before = _snapshot(conn, pit_universe, pit_calendar)
+    sid = pit_universe["sec_a"]
+    # `insert_security_master()` is INSERT OR IGNORE (same gotcha as
+    # price_history/listing_status_history above) -- a correction to an
+    # EXISTING row is a direct UPDATE, mirroring those tests' pattern.
+    conn.execute("UPDATE security_master SET currency = 'EUR' WHERE security_id = ?", (sid,))
+    conn.commit()
+    after = _snapshot(conn, pit_universe, pit_calendar)
+    assert before.snapshot_id != after.snapshot_id
 
 
 def test_price_and_corporate_action_reads_use_the_single_max_as_of(conn, pit_universe, pit_calendar):

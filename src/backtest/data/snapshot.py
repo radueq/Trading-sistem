@@ -7,52 +7,47 @@ canonical typed records... stable primary-key ordering... no ambiguous
 concatenation. Reject NaN/infinite prices and inconsistent duplicate
 keys."
 
-Batch 2 patch round-2 review (two P1 findings closed here):
+Batch 2 patch round-2 review (two P1 findings closed): (1) the whole
+read+hash loop runs inside one SQLite SAVEPOINT, held open for its
+entire duration -- verified empirically (two real file-backed
+connections): once this connection's SAVEPOINT has done its first read,
+a concurrent writer's COMMIT on another connection BLOCKS until this
+SAVEPOINT is released, so every read inside this function observes one
+single, unchanging database state; (2) `security/symbol history` and
+`listing status` are hashed at EVERY one of the verified
+`TradingCalendar`'s own session dates up to `max_as_of`, not just the
+"current" answer -- a correction to historical ticker/listing data now
+changes the digest even if the CURRENT-as-of-max_as_of answer is
+unaffected.
 
-1. The whole read+hash loop now runs inside one SQLite SAVEPOINT, held
-   open for its entire duration. Verified empirically (two real file-
-   backed connections): once this connection's SAVEPOINT has done its
-   first read, a concurrent writer's COMMIT on another connection
-   BLOCKS until this SAVEPOINT is released -- so every read inside this
-   function observes one single, unchanging database state, never a
-   mix of pre- and post-write facts across different reads. A bare
-   shared `as_of` bounds WHICH INFORMATION DATE is visible, not WHICH
-   VERSION of the database is read -- those are different guarantees,
-   and only the SAVEPOINT provides the second one.
-2. `security/symbol history` and `listing status` are no longer hashed
-   as a single "current answer" at `max_as_of` -- that missed any
-   distinct answer a later, session-level read (at an EARLIER as_of
-   within the same stage) could have gotten, so a correction to
-   historical ticker/listing data could go completely undetected as
-   long as the CURRENT-as-of-max_as_of answer happened to stay the
-   same. `build_data_snapshot()` now takes the real, VERIFIED
-   `TradingCalendar` object (not a bare id string) and re-derives the
-   ticker/listing answer at EVERY one of that calendar's own session
-   dates up to `max_as_of`, using only #001's existing single-answer
-   PIT functions -- no new #001 function needed for this part.
+Batch 2 patch round-3 review (two more P1 findings closed):
 
-A genuine remaining gap, NOT fixed here and reported as an
-IMPLEMENTATION BLOCKER rather than silently patched: `security_master`
-(security_type/primary_exchange/currency/source_provider/
-source_security_id) has no knowledge-time field and no #001 PIT-gateway
-accessor at all -- `data_foundation.pit.access` exposes no
-`get_security_master_as_of()`-shaped function, only
-`data_foundation.model.repository.get_security_by_id()`, which this
-module -- and every #005 module -- is not permitted to call directly
-(Spec #001 SS10-11: the PIT gateway is the sole entry point). Including
-these facts in the snapshot without a #001 change would mean either (a)
-reading `repository` directly, breaking that boundary, or (b)
-duplicating the read logic outside the gateway, the exact
-two-sources-of-truth anti-pattern this codebase already rejects
-elsewhere. Minimal proposed correction: add `get_security_master_as_of`
-(or an un-dated `get_security_master`, since the fields are immutable
-once ingested) to `data_foundation.pit.access`, mirroring
-`get_ticker_as_of()`'s shape. Left for explicit approval before
-implementation, not applied silently.
+3. `trading_calendar` was verified for content-address only, never
+   structure or coverage -- a calendar too SHORT at the top end (its
+   own `coverage_end` before `max_as_of`) would silently omit real
+   session dates from the ticker/listing history loop above, while the
+   observation cache could still be asked about dates in that omitted
+   range. Both `verify_calendar_structure()` and an explicit
+   `coverage_end >= max_as_of` check now run before anything is read.
+4. Security Master (`security_type`/`primary_exchange`/`currency`/
+   `source_provider`/`source_security_id`) is now included in the
+   fingerprint via a DIRECT `data_foundation.model.repository.
+   get_security_by_id()` read -- confirmed as the exact case Spec #005
+   SS6 already licenses: "A separate read-only fingerprint/snapshot
+   operation may read underlying facts inside the stage's authorized
+   scope" (distinct from "never query raw tables as an alternative
+   feature/fill engine", which is about decision/signal computations,
+   not this operation). This table has no knowledge-time field at all
+   in the Spec #001 schema -- these facts are recorded as plain,
+   un-dated identity facts, never presented as PIT-validated history,
+   and this read stays confined to `build_data_snapshot()`; nothing
+   feeds it into any signal/execution computation.
 """
 from __future__ import annotations
 
 import hashlib
+
+from data_foundation.model import repository as repo
 
 from backtest.data.pit_access import BoundedPITAccess
 from backtest.models.entities import (
@@ -65,6 +60,7 @@ from backtest.models.entities import (
     canonical_json,
     snapshot_manifest_fingerprint,
     verify_calendar_content_address,
+    verify_calendar_structure,
 )
 
 _NON_FINITE = (float("inf"), float("-inf"))
@@ -122,6 +118,16 @@ def _symbol_record(security_id: str, as_of: str, ticker) -> dict:
     return {"kind": "SYMBOL", "security_id": security_id, "as_of": as_of, "ticker_as_of": ticker}
 
 
+def _security_master_record(security_id: str, master) -> dict:
+    if master is None:
+        return {"kind": "SECURITY_MASTER", "security_id": security_id, "security_type": None}
+    return {
+        "kind": "SECURITY_MASTER", "security_id": security_id, "security_type": master.security_type,
+        "primary_exchange": master.primary_exchange, "currency": master.currency,
+        "source_provider": master.source_provider, "source_security_id": master.source_security_id,
+    }
+
+
 def build_data_snapshot(
     bounded_access: BoundedPITAccess, security_ids: tuple[str, ...], benchmark_security_id: str,
     trading_calendar: TradingCalendar,
@@ -138,8 +144,17 @@ def build_data_snapshot(
     ok, errors = verify_calendar_content_address(trading_calendar)
     if not ok:
         raise ValueError(f"trading_calendar failed content-address verification: {errors}")
+    structure_ok, structure_errors = verify_calendar_structure(trading_calendar)
+    if not structure_ok:
+        raise ValueError(f"trading_calendar failed structural verification: {structure_errors}")
 
     max_as_of = bounded_access.boundary.max_as_of
+    if trading_calendar.coverage_end < max_as_of:
+        raise ValueError(
+            f"trading_calendar's coverage_end={trading_calendar.coverage_end!r} is before this stage's own "
+            f"max_as_of={max_as_of!r} -- the calendar does not cover the full authorized window, and the "
+            f"observation cache could still be asked about dates this snapshot never hashed"
+        )
     all_ids = tuple(sorted(set(security_ids) | {benchmark_security_id}))
     session_dates_in_scope = tuple(d for d in trading_calendar.session_dates if d <= max_as_of)
 
@@ -168,6 +183,17 @@ def build_data_snapshot(
             for pit_action in sorted(actions, key=lambda a: a.action.action_id):
                 hasher.update(canonical_json(_corporate_action_record(sid, pit_action)).encode("utf-8"))
                 hasher.update(b"\n")
+
+            # Security Master has no knowledge-time field in the #001
+            # schema at all -- there is no "as_of" to bound here. This
+            # is the licensed "separate read-only fingerprint operation"
+            # (SS6, see module docstring point 4), reading through
+            # `conn` directly rather than through `bounded_access` --
+            # still inside the same held-open SAVEPOINT, so it observes
+            # the identical consistent state as every other read above.
+            master = repo.get_security_by_id(conn, sid)
+            hasher.update(canonical_json(_security_master_record(sid, master)).encode("utf-8"))
+            hasher.update(b"\n")
 
             # Full PIT-safe history across every session in scope, not
             # just the answer at max_as_of (see module docstring, point

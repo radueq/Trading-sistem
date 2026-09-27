@@ -120,6 +120,78 @@ def test_discovery_returning_a_mismatched_as_of_is_caught(conn, pit_universe, pi
                 ctx.get_or_compute_observations(pit_universe["priced_security_ids"], PIT_FORMATION_END, config)
 
 
+def test_writing_via_the_context_own_connection_is_blocked_while_open(conn, pit_universe, pit_calendar, pit_research_plan):
+    """Round-3 finding #2: a SAVEPOINT only isolates against OTHER
+    connections' writes -- a write on the SAME connection is visible
+    INSIDE its own still-open SAVEPOINT, silently invalidating the
+    manifest's own hash. `PRAGMA query_only = ON` closes this for the
+    rest of the context's open lifetime."""
+    sid = pit_universe["sec_a"]
+    with StageReadContext(
+        conn, pit_research_plan, FORMATION_SELECTION, pit_universe["priced_security_ids"],
+        pit_universe["benchmark_security_id"], pit_calendar,
+    ) as ctx:
+        with pytest.raises(sqlite3.OperationalError, match="readonly"):
+            ctx.conn.execute(
+                "UPDATE price_history SET raw_close = 12345.0 WHERE security_id = ? AND date = ? "
+                "AND source_provider = 'manual'",
+                (sid, PIT_FORMATION_END),
+            )
+
+    # Restored once the context has closed -- a write through the same
+    # connection now succeeds again.
+    conn.execute(
+        "UPDATE price_history SET raw_close = 12345.0 WHERE security_id = ? AND date = ? "
+        "AND source_provider = 'manual'",
+        (sid, PIT_FORMATION_END),
+    )
+    conn.commit()
+
+
+def test_context_hands_discovery_a_connection_with_out_of_scope_prices_physically_absent(
+    conn, pit_universe, pit_calendar, pit_research_plan,
+):
+    """Round-3 finding #3: supervising Discovery's own indirect PIT reads
+    by checking only the RETURNED as_of label cannot catch a substitute
+    that reads out-of-scope data internally and reports an honest label
+    anyway. `get_or_compute_observations()` must hand Discovery a
+    connection where rows beyond `boundary.max_as_of` are not merely
+    unqueried but PHYSICALLY ABSENT -- so even a hostile substitute has
+    nothing to read, regardless of what label it would report."""
+    from discovery.config.loader import load_config
+
+    captured = {}
+
+    def fake_compute(conn_arg, security_ids, as_of, benchmark_security_id, discovery_config):
+        captured["conn"] = conn_arg
+        return []
+
+    with StageReadContext(
+        conn, pit_research_plan, FORMATION_SELECTION, pit_universe["priced_security_ids"],
+        pit_universe["benchmark_security_id"], pit_calendar,
+    ) as ctx:
+        with patch("backtest.data.cache.compute_discovery_observations", side_effect=fake_compute):
+            ctx.get_or_compute_observations(pit_universe["priced_security_ids"], PIT_FORMATION_END, load_config())
+
+        subset_conn = captured["conn"]
+        assert subset_conn is not conn  # never the raw stage connection
+        cur = subset_conn.execute(
+            "SELECT COUNT(*) FROM price_history WHERE security_id = ? AND date > ?",
+            (pit_universe["sec_a"], PIT_FORMATION_END),
+        )
+        assert cur.fetchone()[0] == 0
+
+    # The same rows are genuinely present in the raw stage connection --
+    # this is real physical isolation, not an artifact of empty fixture
+    # data (pit_universe's price history runs through PIT_UNIVERSE_END,
+    # well past PIT_FORMATION_END).
+    cur = conn.execute(
+        "SELECT COUNT(*) FROM price_history WHERE security_id = ? AND date > ?",
+        (pit_universe["sec_a"], PIT_FORMATION_END),
+    )
+    assert cur.fetchone()[0] > 0
+
+
 def test_stage_read_context_holds_one_consistent_transaction_across_two_real_connections(tmp_path):
     """The genuine multi-connection version of "concurrent ingestion
     cannot mix states" (SS23): a SECOND, independent connection to the

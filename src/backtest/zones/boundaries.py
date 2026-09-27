@@ -19,7 +19,15 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Optional
 
-from backtest.models.entities import parse_iso_date
+from backtest.models.entities import (
+    DEVELOPMENT_VALIDATION,
+    FORMATION_SELECTION,
+    ResearchPlan,
+    StageAccessBoundary,
+    StageBoundaryPlanMismatchError,
+    parse_iso_date,
+    verify_research_plan_identity,
+)
 
 
 @dataclass(frozen=True)
@@ -138,3 +146,52 @@ def verify_zone_boundaries(
     periods_ok, periods_errors = verify_evidence_periods(formation_end, validation_start, evidence_periods)
     errors.extend(periods_errors)
     return (not errors, tuple(errors))
+
+
+def build_stage_access_boundary_from_plan(plan: ResearchPlan, zone: str) -> StageAccessBoundary:
+    """Spec #005 SS3, Batch 2 patch (round 2, then round 3): a bare
+    `StageAccessBoundary(FORMATION_SELECTION, "2099-12-31")` was
+    accepted with no check against anything -- the LOCKED_OOS zone
+    label was forbidden, but nothing stopped a FORMATION_SELECTION- or
+    DEVELOPMENT_VALIDATION-labeled boundary from reaching straight into
+    the Locked OOS date range under a different label. `max_as_of` must
+    come from the frozen plan's OWN already-validated zone dates --
+    `formation_end` for FORMATION_SELECTION, `validation_end` for
+    DEVELOPMENT_VALIDATION -- never a caller-supplied string.
+
+    Round-3 review (still-open gap): identity re-verification alone
+    (`verify_research_plan_identity()`) only proves the plan's fields
+    match its OWN claimed hash -- it says nothing about whether those
+    fields are economically SANE. A plan can have a perfectly
+    self-consistent hash over OVERLAPPING zone dates (e.g.
+    validation_start before formation_end), which would let a boundary
+    derived from it reach data it was never supposed to. `verify_
+    zone_ordering()` is now called here too, on the plan's own 5 zone
+    dates, closing that gap. This function lives here rather than in
+    `backtest.models.entities` specifically so it CAN call
+    `verify_zone_ordering()` -- `entities.py` cannot import this module
+    without creating a cycle (this module already imports from
+    `entities`)."""
+    ok, errors = verify_research_plan_identity(plan)
+    if not ok:
+        raise StageBoundaryPlanMismatchError(
+            f"cannot derive a StageAccessBoundary from a plan that fails identity verification: {errors}"
+        )
+    ordering_ok, ordering_errors = verify_zone_ordering(
+        plan.formation_start, plan.formation_end, plan.validation_start, plan.validation_end, plan.locked_oos_start,
+    )
+    if not ordering_ok:
+        raise StageBoundaryPlanMismatchError(
+            f"cannot derive a StageAccessBoundary from a plan whose own zone dates fail "
+            f"verify_zone_ordering(): {ordering_errors}"
+        )
+    if zone == FORMATION_SELECTION:
+        max_as_of = plan.formation_end
+    elif zone == DEVELOPMENT_VALIDATION:
+        max_as_of = plan.validation_end
+    else:
+        raise StageBoundaryPlanMismatchError(
+            f"build_stage_access_boundary_from_plan() only derives {FORMATION_SELECTION!r} or "
+            f"{DEVELOPMENT_VALIDATION!r} boundaries, got zone={zone!r}"
+        )
+    return StageAccessBoundary(zone=zone, max_as_of=max_as_of)

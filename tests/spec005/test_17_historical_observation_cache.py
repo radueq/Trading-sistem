@@ -23,7 +23,7 @@ import pytest
 from discovery.config.loader import load_config as load_discovery_config
 from discovery.engine import DISCOVERY_ENGINE_VERSION
 
-from backtest.data.cache import ObservationCacheStore
+from backtest.data.cache import _ObservationCacheStore
 from backtest.data.pit_access import BoundedPITAccess
 from backtest.data.snapshot import build_data_snapshot
 from backtest.models.entities import (
@@ -51,7 +51,7 @@ def _manifest(conn, pit_universe, pit_calendar, security_ids=None):
 
 
 def test_repeated_calls_with_the_same_key_reuse_the_entry_without_recomputing(conn, pit_universe, pit_calendar, discovery_config):
-    store = ObservationCacheStore()
+    store = _ObservationCacheStore()
     boundary, manifest = _manifest(conn, pit_universe, pit_calendar)
     ids = pit_universe["priced_security_ids"]
     entry_a = store.get_or_compute(conn, boundary, manifest, ids, PIT_FORMATION_END, discovery_config)
@@ -61,7 +61,7 @@ def test_repeated_calls_with_the_same_key_reuse_the_entry_without_recomputing(co
 
 
 def test_a_different_as_of_computes_a_separate_entry(conn, pit_universe, pit_calendar, discovery_config):
-    store = ObservationCacheStore()
+    store = _ObservationCacheStore()
     boundary, manifest = _manifest(conn, pit_universe, pit_calendar)
     ids = pit_universe["priced_security_ids"]
     store.get_or_compute(conn, boundary, manifest, ids, "2024-01-15", discovery_config)
@@ -70,7 +70,7 @@ def test_a_different_as_of_computes_a_separate_entry(conn, pit_universe, pit_cal
 
 
 def test_a_different_snapshot_computes_a_separate_entry(conn, pit_universe, pit_calendar, discovery_config):
-    store = ObservationCacheStore()
+    store = _ObservationCacheStore()
     boundary, manifest_x = _manifest(conn, pit_universe, pit_calendar, security_ids=pit_universe["priced_security_ids"])
     _, manifest_y = _manifest(conn, pit_universe, pit_calendar, security_ids=pit_universe["security_ids_with_nodata"])
     assert manifest_x.snapshot_id != manifest_y.snapshot_id
@@ -81,7 +81,7 @@ def test_a_different_snapshot_computes_a_separate_entry(conn, pit_universe, pit_
 
 
 def test_universe_order_does_not_affect_the_cache_key(conn, pit_universe, pit_calendar, discovery_config):
-    store = ObservationCacheStore()
+    store = _ObservationCacheStore()
     boundary, manifest = _manifest(conn, pit_universe, pit_calendar)
     ids = pit_universe["priced_security_ids"]
     entry_a = store.get_or_compute(conn, boundary, manifest, ids, PIT_FORMATION_END, discovery_config)
@@ -91,7 +91,7 @@ def test_universe_order_does_not_affect_the_cache_key(conn, pit_universe, pit_ca
 
 
 def test_out_of_scope_as_of_is_rejected_before_any_compute(conn, pit_universe, pit_calendar, discovery_config):
-    store = ObservationCacheStore()
+    store = _ObservationCacheStore()
     boundary, manifest = _manifest(conn, pit_universe, pit_calendar)
     ids = pit_universe["priced_security_ids"]
     with pytest.raises(OutOfScopeAccessError):
@@ -104,7 +104,7 @@ def test_a_security_outside_the_snapshots_own_scope_is_rejected(conn, pit_univer
     must be a subset of what the snapshot actually covered -- a request
     for `sec_nodata` against a manifest that never included it must be
     rejected outright, not silently computed anyway."""
-    store = ObservationCacheStore()
+    store = _ObservationCacheStore()
     boundary, manifest = _manifest(conn, pit_universe, pit_calendar, security_ids=pit_universe["priced_security_ids"])
     with pytest.raises(ValueError, match="not a subset"):
         store.get_or_compute(conn, boundary, manifest, pit_universe["security_ids_with_nodata"], PIT_FORMATION_END, discovery_config)
@@ -113,7 +113,7 @@ def test_a_security_outside_the_snapshots_own_scope_is_rejected(conn, pit_univer
 def test_a_manifest_failing_its_own_content_address_is_rejected(conn, pit_universe, pit_calendar, discovery_config):
     """A tampered manifest (e.g. via dataclasses.replace()) must never
     anchor a cache computation."""
-    store = ObservationCacheStore()
+    store = _ObservationCacheStore()
     boundary, manifest = _manifest(conn, pit_universe, pit_calendar)
     tampered = dataclasses.replace(manifest, content_digest="deadbeef" * 8)
     with pytest.raises(ValueError, match="content-address"):
@@ -121,7 +121,7 @@ def test_a_manifest_failing_its_own_content_address_is_rejected(conn, pit_univer
 
 
 def test_a_security_with_no_price_history_is_explicitly_named_as_missing(conn, pit_universe, pit_calendar, discovery_config):
-    store = ObservationCacheStore()
+    store = _ObservationCacheStore()
     boundary, manifest = _manifest(conn, pit_universe, pit_calendar, security_ids=pit_universe["security_ids_with_nodata"])
     entry = store.get_or_compute(conn, boundary, manifest, pit_universe["security_ids_with_nodata"], PIT_FORMATION_END, discovery_config)
     assert pit_universe["sec_nodata"] in entry.missing_security_ids
@@ -133,7 +133,7 @@ def test_priced_and_eligible_securities_produce_real_pre_budget_observations(con
     """Confirms the fixture's warm-up history actually clears discovery's
     own `minimum_history_days: 60` eligibility floor by PIT_FORMATION_END
     -- both securities produce a real observation, not an empty list."""
-    store = ObservationCacheStore()
+    store = _ObservationCacheStore()
     boundary, manifest = _manifest(conn, pit_universe, pit_calendar)
     ids = pit_universe["priced_security_ids"]
     entry = store.get_or_compute(conn, boundary, manifest, ids, PIT_FORMATION_END, discovery_config)
@@ -145,7 +145,7 @@ def test_priced_and_eligible_securities_produce_real_pre_budget_observations(con
 
 
 def test_cache_entry_passes_its_own_identity_and_content_re_verification(conn, pit_universe, pit_calendar, discovery_config):
-    store = ObservationCacheStore()
+    store = _ObservationCacheStore()
     boundary, manifest = _manifest(conn, pit_universe, pit_calendar)
     ids = pit_universe["priced_security_ids"]
     entry = store.get_or_compute(conn, boundary, manifest, ids, PIT_FORMATION_END, discovery_config)
@@ -161,7 +161,7 @@ def test_identity_verification_alone_does_not_catch_tampered_observations(conn, 
     deleting `observations`/`missing_security_ids` still passes it.
     `verify_historical_observation_cache_content()` is what catches
     this (Batch 2 patch round-2 review, supplementary note)."""
-    store = ObservationCacheStore()
+    store = _ObservationCacheStore()
     boundary, manifest = _manifest(conn, pit_universe, pit_calendar)
     ids = pit_universe["priced_security_ids"]
     entry = store.get_or_compute(conn, boundary, manifest, ids, PIT_FORMATION_END, discovery_config)
@@ -172,6 +172,32 @@ def test_identity_verification_alone_does_not_catch_tampered_observations(conn, 
 
     content_ok, errors = verify_historical_observation_cache_content(tampered)
     assert not content_ok, errors  # the content check does
+
+
+def test_a_config_with_tampered_content_under_the_same_version_is_rejected_even_on_a_would_be_cache_hit(
+    conn, pit_universe, pit_calendar, discovery_config,
+):
+    """Round-3 finding #5: `get_or_compute()` used to key its cache ONLY
+    on `discovery_config.config_version` -- on what would otherwise be a
+    cache hit, it never called Discovery again, so a config object with
+    the SAME claimed version but DIFFERENT actual content (e.g. its
+    dict fields quietly mutated) would still return the stale cached
+    result. `_require_fresh_discovery_config()` now reloads from disk
+    and compares full equality BEFORE any cache-key lookup, on every
+    call -- not just the first."""
+    store = _ObservationCacheStore()
+    boundary, manifest = _manifest(conn, pit_universe, pit_calendar)
+    ids = pit_universe["priced_security_ids"]
+    store.get_or_compute(conn, boundary, manifest, ids, PIT_FORMATION_END, discovery_config)
+    assert store.compute_count == 1
+
+    tampered_config = dataclasses.replace(
+        discovery_config, discovery={**discovery_config.discovery, "__tampered__": True},
+    )
+    assert tampered_config.config_version == discovery_config.config_version  # same claimed version
+
+    with pytest.raises(ValueError, match="fresh reload"):
+        store.get_or_compute(conn, boundary, manifest, ids, PIT_FORMATION_END, tampered_config)
 
 
 def test_cache_module_never_imports_the_candidate_selector_or_run_discovery():

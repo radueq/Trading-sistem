@@ -16,24 +16,41 @@ for invalidation checks (see `tests/spec005/test_17...`'s AST import
 guard, mirroring the discipline in `tests/spec002/test_24_pre_budget_
 observation_isolation.py`).
 
-Batch 2 patch round-2 review (P1 finding): `get_or_compute()` used to
-take a bare `snapshot_id: str` and a `benchmark_security_id` supplied
-separately from `conn` -- nothing tied the string to the connection's
-ACTUAL live state, so a caller could compute against changed data while
-still labeling the result under a stale snapshot's identity.
-`get_or_compute()` now takes the real `DataSnapshotManifest` object,
-re-verifies its own content-address first, and derives
-`benchmark_security_id` and the allowed `security_ids` FROM it -- a
-request for a security outside the snapshot's own scope is rejected.
-The connection itself still must be the SAME one, held in the SAME open
-transaction, the snapshot was built from -- `backtest.data.context.
-StageReadContext` is what actually guarantees that; this module cannot
-verify a connection's "freshness" on its own without re-hashing
-everything, which would defeat the purpose of caching.
+`_ObservationCacheStore` (module-private) is reached ONLY through
+`backtest.data.context.StageReadContext.get_or_compute_observations()`
+-- never construct or call it directly outside a test exercising this
+exact mechanism. `StageReadContext` is what supplies a connection
+already narrowed to this stage's authorized data (see its own
+docstring) and holds the read transaction the cache's own key is
+implicitly trusting; calling this store directly, with an arbitrary
+`conn`, defeats every guarantee `StageReadContext` exists to provide.
+
+Batch 2 patch round-3 review (two more P1 findings closed here):
+
+1. A changed `discovery_config` served under an UNCHANGED claimed
+   `config_version` string used to pass straight through, including on
+   what would otherwise be a cache hit (the stale cached entry was
+   returned without ever re-checking the config that supposedly
+   produced it). `get_or_compute()` now reloads the config fresh from
+   disk and requires it to `==` the supplied `discovery_config` --
+   covering BOTH a stale version (the reload's own `config_version`
+   differs) and content tampered under an unchanged version (the
+   reload's parsed dicts differ) -- BEFORE any cache-key lookup, not
+   after.
+2. Supervising Discovery's own indirect PIT reads by checking the
+   returned `as_of` label alone (still done below) cannot catch a
+   caller that reads out-of-scope data internally and then reports an
+   honest label anyway. `StageReadContext` now passes this function an
+   AUTHORIZED SUBSET connection (see `backtest.data.pit_access.
+   build_authorized_price_subset_connection()`) with every price_history
+   row beyond the stage's own boundary physically absent -- so even a
+   substitute that ignores its own `as_of` parameter and reads with a
+   larger one internally still cannot reach that data, regardless of
+   what label it reports.
 """
 from __future__ import annotations
 
-from discovery.config.loader import DiscoveryConfig
+from discovery.config.loader import DiscoveryConfig, load_config as load_discovery_config
 from discovery.engine import DISCOVERY_ENGINE_VERSION, compute_discovery_observations
 
 from backtest.models.entities import (
@@ -41,6 +58,7 @@ from backtest.models.entities import (
     DataSnapshotManifest,
     HistoricalObservationCache,
     StageAccessBoundary,
+    build_historical_observation_cache_content_hash,
     build_historical_observation_cache_id,
     historical_observation_cache_content_fingerprint,
     historical_observation_cache_fingerprint,
@@ -48,7 +66,18 @@ from backtest.models.entities import (
 )
 
 
-class ObservationCacheStore:
+def _require_fresh_discovery_config(discovery_config: DiscoveryConfig) -> None:
+    fresh = load_discovery_config()
+    if fresh != discovery_config:
+        raise ValueError(
+            f"discovery_config (config_version={discovery_config.config_version!r}) does not match a "
+            f"fresh reload from disk (config_version={fresh.config_version!r}) -- either the claimed "
+            f"version is stale, or the config content was changed while keeping the same claimed "
+            f"version; both must be rejected before any cache lookup (Spec #005 SS7/SS21)"
+        )
+
+
+class _ObservationCacheStore:
     """In-memory reuse across variants within ONE #005 stage run.
     `compute_count` is a test/audit hook: how many times
     `compute_discovery_observations()` was actually invoked -- repeated
@@ -63,6 +92,8 @@ class ObservationCacheStore:
         self, conn, boundary: StageAccessBoundary, manifest: DataSnapshotManifest,
         security_ids: tuple[str, ...], as_of: str, discovery_config: DiscoveryConfig,
     ) -> HistoricalObservationCache:
+        _require_fresh_discovery_config(discovery_config)
+
         ok, errors = verify_snapshot_content_address(manifest)
         if not ok:
             raise ValueError(
@@ -100,9 +131,11 @@ class ObservationCacheStore:
         # Supervises Discovery's own indirect PIT reads (SS7): a cheap,
         # fail-loud sanity check on compute_discovery_observations()'s
         # own as_of contract, mirroring discovery/engine.py's own
-        # _assert_no_future_leakage precedent -- not a substitute for
-        # it, since #005 cannot intercept #002's internal pit.access
-        # calls without patching #002.
+        # _assert_no_future_leakage precedent. This alone cannot catch a
+        # caller that reads out-of-scope data and reports an honest
+        # label anyway -- `conn` itself must already be the authorized
+        # subset connection `StageReadContext` builds for exactly that
+        # reason (see module docstring, point 2).
         for obs in observations:
             if obs.as_of != as_of:
                 raise AssertionError(
@@ -122,7 +155,8 @@ class ObservationCacheStore:
             DISCOVERY_ENGINE_VERSION, discovery_config.config_version, PIT_ACCESS_POLICY_V1,
         )
         cache_id, cache_hash = build_historical_observation_cache_id(fp)
-        content_hash = historical_observation_cache_content_fingerprint(tuple(observations), missing)
+        content_fp = historical_observation_cache_content_fingerprint(tuple(observations), missing)
+        content_hash = build_historical_observation_cache_content_hash(content_fp)
         entry = HistoricalObservationCache(
             cache_id=cache_id, cache_hash=cache_hash, stage=boundary.zone, as_of=as_of,
             security_ids=sorted_ids, benchmark_security_id=benchmark_security_id, snapshot_id=manifest.snapshot_id,
