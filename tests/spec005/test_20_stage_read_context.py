@@ -260,6 +260,103 @@ def test_subset_excludes_a_corporate_action_not_yet_knowable_by_max_as_of(
     assert cur.fetchone()[0] == 1  # genuinely present in the source -- proves this isn't vacuous
 
 
+def _pit_status_for_action(conn, security_id: str, action_id: str, as_of: str):
+    from data_foundation.pit.access import get_corporate_actions_as_of
+    for pit_action in get_corporate_actions_as_of(conn, security_id, as_of):
+        if pit_action.action.action_id == action_id:
+            return pit_action.pit_status, pit_action.knowledge_time_status
+    return None
+
+
+def test_subset_retains_a_cancellation_known_via_source_status_date_alone(
+    conn, pit_universe, pit_calendar, pit_research_plan,
+):
+    """Batch 2 patch round-5 review (P1 finding): in #001,
+    `derive_corporate_action_pit_status()` reports CANCELLED the moment
+    `source_status_date <= as_of`, INDEPENDENTLY of `available_at` -- the
+    round-4 subset filter checked only `available_at`/`effective_date`
+    and dropped this row entirely, even though #001 itself would have
+    reported it CANCELLED/KNOWN. `available_at` is NULL here and
+    `effective_date` is still in the future -- only the CANCELLED branch
+    keeps this row in the subset."""
+    from spec005.fixtures.pit_universe import insert_corporate_action
+
+    sid = pit_universe["sec_a"]
+    insert_corporate_action(
+        conn, sid, action_id="cancelled_split_1", action_type="SPLIT", effective_date="2024-02-15",
+        value=2.0, now="2026-09-27T00:00:00Z", available_at=None,
+        source_status="CANCELLED", source_status_date="2024-01-20",
+    )
+    expected = _pit_status_for_action(conn, sid, "cancelled_split_1", PIT_FORMATION_END)
+    assert expected == ("CANCELLED", "KNOWN")
+
+    with StageReadContext(
+        conn, pit_research_plan, FORMATION_SELECTION, pit_universe["priced_security_ids"],
+        pit_universe["benchmark_security_id"], pit_calendar, PIT_WARMUP_START,
+    ) as ctx:
+        cur = ctx.conn.execute("SELECT COUNT(*) FROM corporate_actions WHERE action_id = ?", ("cancelled_split_1",))
+        assert cur.fetchone()[0] == 1
+        actual = _pit_status_for_action(ctx.conn, sid, "cancelled_split_1", PIT_FORMATION_END)
+        assert actual == expected
+
+
+def test_subset_retains_a_cancellation_known_via_source_status_date_with_available_at_set(
+    conn, pit_universe, pit_calendar, pit_research_plan,
+):
+    """Same case, but `available_at` is also set (to a date AFTER
+    `max_as_of`) -- #001's own CANCELLED check runs BEFORE its
+    `available_at` check, so the result is unchanged; the subset filter
+    must reach the same answer via its OR branch, not the `available_at`
+    fallback (which alone would have excluded this row)."""
+    from spec005.fixtures.pit_universe import insert_corporate_action
+
+    sid = pit_universe["sec_a"]
+    insert_corporate_action(
+        conn, sid, action_id="cancelled_split_2", action_type="SPLIT", effective_date="2024-02-15",
+        value=2.0, now="2026-09-27T00:00:00Z", available_at="2024-02-01",
+        source_status="CANCELLED", source_status_date="2024-01-20",
+    )
+    expected = _pit_status_for_action(conn, sid, "cancelled_split_2", PIT_FORMATION_END)
+    assert expected == ("CANCELLED", "KNOWN")
+
+    with StageReadContext(
+        conn, pit_research_plan, FORMATION_SELECTION, pit_universe["priced_security_ids"],
+        pit_universe["benchmark_security_id"], pit_calendar, PIT_WARMUP_START,
+    ) as ctx:
+        cur = ctx.conn.execute("SELECT COUNT(*) FROM corporate_actions WHERE action_id = ?", ("cancelled_split_2",))
+        assert cur.fetchone()[0] == 1
+        actual = _pit_status_for_action(ctx.conn, sid, "cancelled_split_2", PIT_FORMATION_END)
+        assert actual == expected
+
+
+def test_subset_still_excludes_a_cancellation_not_yet_knowable(conn, pit_universe, pit_calendar, pit_research_plan):
+    """The new OR branch must not turn into a blanket pass-through:
+    a cancellation whose OWN `source_status_date` is still in the
+    future (and whose `available_at`/`effective_date` are too) must
+    remain excluded -- #001 itself would report NOT_KNOWN for it."""
+    from spec005.fixtures.pit_universe import insert_corporate_action
+
+    sid = pit_universe["sec_a"]
+    insert_corporate_action(
+        conn, sid, action_id="not_yet_known_cancellation", action_type="SPLIT", effective_date="2024-02-15",
+        value=2.0, now="2026-09-27T00:00:00Z", available_at=None,
+        source_status="CANCELLED", source_status_date="2024-06-01",
+    )
+    assert _pit_status_for_action(conn, sid, "not_yet_known_cancellation", PIT_FORMATION_END) is None
+
+    with StageReadContext(
+        conn, pit_research_plan, FORMATION_SELECTION, pit_universe["priced_security_ids"],
+        pit_universe["benchmark_security_id"], pit_calendar, PIT_WARMUP_START,
+    ) as ctx:
+        cur = ctx.conn.execute(
+            "SELECT COUNT(*) FROM corporate_actions WHERE action_id = ?", ("not_yet_known_cancellation",),
+        )
+        assert cur.fetchone()[0] == 0
+
+    cur = conn.execute("SELECT COUNT(*) FROM corporate_actions WHERE action_id = ?", ("not_yet_known_cancellation",))
+    assert cur.fetchone()[0] == 1  # genuinely present in the source -- proves this isn't vacuous
+
+
 def test_a_write_on_the_source_after_entry_never_reaches_the_context(tmp_path):
     """Round-4 redesign: `StageReadContext` no longer holds the SOURCE
     connection's SAVEPOINT open for its whole lifetime -- extraction into

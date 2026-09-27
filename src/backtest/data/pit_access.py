@@ -120,12 +120,22 @@ def build_authorized_subset_connection(
       physically present.
     - `price_history`: `security_id` scope, `date <= max_as_of`.
     - `corporate_actions`: `security_id` scope, and knowable-by-
-      `max_as_of` (`available_at` when set, else falling back to
-      `effective_date` -- mirroring `derive_corporate_action_pit_status`/
-      `_is_action_known_for_adjustment`'s own knowledge-time policy in
-      `data_foundation.pit.access`, so nothing physically present here
-      could ever change what those functions already compute correctly
-      -- this is defense in depth, not a second, independent PIT model).
+      `max_as_of` -- `available_at` when set, else falling back to
+      `effective_date`, OR its own `CANCELLED` status already knowable
+      by `max_as_of` (`source_status = 'CANCELLED'` AND
+      `source_status_date <= max_as_of`) -- mirroring
+      `derive_corporate_action_pit_status`/`_is_action_known_for_
+      adjustment`'s own knowledge-time policy in `data_foundation.pit.access`
+      EXACTLY, so nothing physically present here could ever change what
+      those functions already compute correctly (defense in depth, not
+      a second, independent PIT model). Batch 2 patch round-5 review (P1
+      finding): the first version of this filter checked only
+      `available_at`/`effective_date` and omitted this OR branch
+      entirely -- a cancellation known via `source_status_date`
+      independently of `available_at` (#001's own CANCELLED branch in
+      `derive_corporate_action_pit_status()`) was dropped from the
+      subset even though #001 itself would have reported it as
+      `CANCELLED`/`KNOWN`.
     - `listing_status_history`: same knowledge-time pattern, falling
       back to `effective_from` when `available_at` is NULL.
 
@@ -160,9 +170,11 @@ def build_authorized_subset_connection(
     subset.executemany("INSERT INTO price_history VALUES (?,?,?,?,?,?,?,?,?)", [tuple(r) for r in rows])
 
     rows = conn.execute(
-        f"SELECT * FROM corporate_actions WHERE security_id IN ({placeholders}) AND "
-        f"(CASE WHEN available_at IS NOT NULL THEN available_at ELSE effective_date END) <= ?",
-        (*ids, max_as_of),
+        f"SELECT * FROM corporate_actions WHERE security_id IN ({placeholders}) AND ("
+        f"(CASE WHEN available_at IS NOT NULL THEN available_at ELSE effective_date END) <= ? "
+        f"OR (source_status = 'CANCELLED' AND source_status_date IS NOT NULL AND source_status_date <= ?)"
+        f")",
+        (*ids, max_as_of, max_as_of),
     ).fetchall()
     subset.executemany("INSERT INTO corporate_actions VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", [tuple(r) for r in rows])
 
