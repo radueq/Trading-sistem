@@ -73,9 +73,19 @@ def compute_tranche_mae_mfe(
     included as an excursion, regardless of whether a bar for `exit_date`
     was present -- previously, an exit day absent from `bars` silently
     dropped the exit fill from consideration entirely, understating the
-    true MAE/MFE whenever the fill itself was the most extreme point."""
+    true MAE/MFE whenever the fill itself was the most extreme point.
+
+    GPT review round 3, finding #4: the excursion AT ENTRY is always
+    KNOWN -- by definition, price == entry_fill at that moment, so its
+    excursion is exactly 0.0 -- and this is included UNCONDITIONALLY,
+    regardless of `bars`. Without it, an empty-bars tranche with a
+    favorable exit (e.g. entry 100, exit 110, no bars) wrongly reported
+    MAE == MFE == +10% instead of the correct MAE=0%/MFE=+10% (the price
+    never actually traded below entry -- 0% IS the true worst point
+    observed); symmetrically, a pure-loss tranche must never report a
+    positive MFE from this alone."""
     d = _direction_sign(direction)
-    excursions: list[float] = []
+    excursions: list[float] = [0.0]  # the entry moment itself: always a known, zero excursion.
     coverage = COVERAGE_FULL
     exit_day_bar_present = False
 

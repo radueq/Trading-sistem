@@ -45,6 +45,44 @@ def _open_position(entry_date="2024-01-11", **overrides) -> StopManagedPosition:
     return StopManagedPosition(**fields)
 
 
+def test_split_effective_before_entry_is_never_pas0s_concern(conn, now):
+    """GPT review round 3, finding #1: a split effective BEFORE the
+    position's own entry_date was already fully reflected in the
+    position's opening basis (section 5) -- Pas 0 must never re-encounter
+    it as "new" on some later session and wrongly mark the position
+    incomplete. The position must remain fully evaluable."""
+    sec = make_security(conn, "spec005:SPLIT_PREENTRY", now)
+    _insert_flat_bars(conn, sec, now, ["2024-01-11", "2024-01-15"])
+    insert_corporate_action(
+        conn, sec, "act_preentry", "SPLIT", effective_date="2024-01-09", value=2.0, now=now, available_at="2024-01-09",
+    )
+    pos = _open_position(security_id=sec, entry_date="2024-01-11")
+    pit = _UnboundedAccess(conn)
+
+    new_pos = reconcile_split_for_open_position(pit, pos, "2024-01-15")
+    assert new_pos == pos  # completely untouched
+    assert new_pos.split_reconciliation_incomplete is False
+    assert "act_preentry" not in new_pos.processed_split_action_ids
+
+
+def test_split_effective_exactly_on_entry_day_is_never_pas0s_concern(conn, now):
+    """Same as above, for a split effective ON the entry day itself
+    (section 5: "Pozițiile nou deschise azi pornesc DIRECT pe baza
+    intrării... post orice split cunoscut") -- also never Pas 0's concern."""
+    sec = make_security(conn, "spec005:SPLIT_ENTRYDAY", now)
+    _insert_flat_bars(conn, sec, now, ["2024-01-11", "2024-01-15"])
+    insert_corporate_action(
+        conn, sec, "act_entryday", "SPLIT", effective_date="2024-01-11", value=2.0, now=now, available_at="2024-01-11",
+    )
+    pos = _open_position(security_id=sec, entry_date="2024-01-11")
+    pit = _UnboundedAccess(conn)
+
+    new_pos = reconcile_split_for_open_position(pit, pos, "2024-01-15")
+    assert new_pos == pos
+    assert new_pos.split_reconciliation_incomplete is False
+    assert "act_entryday" not in new_pos.processed_split_action_ids
+
+
 def test_announcement_only_produces_zero_change(conn, now):
     """(a): available_at known, effective_date not yet reached -> not
     even known-for-adjustment yet -- nothing changes."""

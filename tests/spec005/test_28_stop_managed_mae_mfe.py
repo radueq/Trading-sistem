@@ -53,12 +53,24 @@ def test_stop_intraday_exit_day_also_gets_the_exclusion():
     assert result.mfe == pytest.approx(0.0)
 
 
-def test_empty_bars_still_reports_the_exit_fill_as_a_degenerate_observation():
-    """No bars supplied at all -- the exit fill is STILL a valid
-    observation on its own, so this never returns None; both MAE and MFE
-    collapse to the single exit-fill excursion, correctly labeled
-    PARTIAL_EXIT_DAY_EXCLUDED."""
+def test_empty_bars_still_includes_the_known_zero_excursion_at_entry():
+    """GPT review round 3, finding #4: the excursion AT ENTRY is always
+    known to be exactly 0.0 (price == entry_fill at that moment), included
+    unconditionally regardless of `bars`. A favorable exit (100 -> 110)
+    with no bars at all must report MAE=0%/MFE=+10% -- NOT both +10%,
+    which would falsely claim the position was never below entry by less
+    than its final gain (0% is the true worst point actually observed:
+    the entry moment itself)."""
     result = compute_tranche_mae_mfe("LONG", 100.0, [], exit_date="d1", exit_fill=110.0)
-    assert result.mae == pytest.approx(0.10)
+    assert result.mae == pytest.approx(0.0)
     assert result.mfe == pytest.approx(0.10)
     assert result.coverage == COVERAGE_PARTIAL_EXIT_DAY_EXCLUDED
+
+
+def test_empty_bars_pure_loss_never_reports_a_positive_mfe():
+    """Symmetric case: a pure loss (100 -> 90) with no bars must report
+    MFE=0% (the entry moment), never a positive MFE fabricated from
+    nothing -- the position was never observed above its own entry."""
+    result = compute_tranche_mae_mfe("LONG", 100.0, [], exit_date="d1", exit_fill=90.0)
+    assert result.mae == pytest.approx(-0.10)
+    assert result.mfe == pytest.approx(0.0)

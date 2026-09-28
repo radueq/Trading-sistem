@@ -63,7 +63,21 @@ def reconcile_split_for_open_position(
     necessarily simulated on the stale, unreconciled basis (regardless of
     whether that was itself PIT-correct at the time). `split_
     reconciliation_incomplete` is set permanently in that case too, even
-    though the ratio catch-up still corrects the position going forward."""
+    though the ratio catch-up still corrects the position going forward.
+
+    GPT review round 3, finding #1: a split with `effective_date <=
+    position.entry_date` is NEVER Pas 0's concern, regardless of
+    `session_date` -- it was already fully reflected in the position's
+    OWN opening basis the moment it was created (section 5: "Pozițiile
+    nou deschise azi pornesc DIRECT pe baza intrării... post orice split
+    cunoscut"), and `compute_factors()`'s own condition (`effective_date
+    > d`) structurally cannot rescale a date at or after the split's own
+    effective date. Treating such a split as "newly encountered" on some
+    later session wrongly marked the position `split_reconciliation_
+    incomplete` even though nothing was ever stale -- the entry's own
+    factor was already, correctly, 1.0. These actions are skipped here
+    entirely: never authorization-checked, never recorded as processed,
+    never counted toward lateness."""
     if position.closed or position.remaining_quantity <= 0:
         return position
 
@@ -77,6 +91,8 @@ def reconcile_split_for_open_position(
         a = pca.action
         if a.action_type not in (ActionType.SPLIT.value, ActionType.REVERSE_SPLIT.value):
             continue
+        if a.effective_date <= pos.entry_date:
+            continue  # already fully reflected in the position's own opening basis -- not Pas 0's concern.
         if not _is_action_known_for_adjustment(a, session_date):
             continue
         known_split_actions.append(a)

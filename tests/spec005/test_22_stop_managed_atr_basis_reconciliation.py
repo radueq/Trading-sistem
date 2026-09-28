@@ -165,7 +165,7 @@ def test_available_at_before_effective_date_same_day_auto_authorizes(conn, now):
         available_at="2024-01-10",  # known a day BEFORE the effective/entry date
     )
     pit = _UnboundedAccess(conn)
-    authorized, blocking = check_new_splits_authorized_at_open(pit, sec, signal_date, entry_date, same_day_evidence=frozenset())
+    authorized, blocking = check_new_splits_authorized_at_open(pit, sec, entry_date, same_day_evidence=frozenset())
     assert authorized, blocking
 
 
@@ -182,11 +182,11 @@ def test_effective_earlier_but_available_same_day_requires_evidence(conn, now):
     )
     pit = _UnboundedAccess(conn)
 
-    without_evidence, blocking = check_new_splits_authorized_at_open(pit, sec, signal_date, entry_date, same_day_evidence=frozenset())
+    without_evidence, blocking = check_new_splits_authorized_at_open(pit, sec, entry_date, same_day_evidence=frozenset())
     assert not without_evidence
     assert "act_know_b" in blocking
 
-    with_evidence, blocking2 = check_new_splits_authorized_at_open(pit, sec, signal_date, entry_date, same_day_evidence=frozenset({"act_know_b"}))
+    with_evidence, blocking2 = check_new_splits_authorized_at_open(pit, sec, entry_date, same_day_evidence=frozenset({"act_know_b"}))
     assert with_evidence, blocking2
 
 
@@ -242,3 +242,71 @@ def test_dividend_within_the_atr_window_is_never_treated_as_an_adjustment():
     raw_only_bars = [_bar(b.date, b.raw_high, b.raw_low, b.raw_close, b.raw_high, b.raw_low, b.raw_close) for b in bars]
     atr_raw_basis = compute_atr_from_bars(raw_only_bars, volatility_config=_VOL_CFG)
     assert atr_adjusted_basis == pytest.approx(atr_raw_basis)
+
+
+def _insert_exact_bars(conn, security_id, now, rows):
+    """`rows`: iterable of (date, high, low, close) -- open is set equal
+    to close (irrelevant to ATR)."""
+    repo.insert_price_bars(conn, [
+        PriceBar(
+            security_id=security_id, date=d, raw_open=c, raw_high=h, raw_low=l, raw_close=c,
+            raw_volume=1000, source_provider="manual", ingestion_timestamp=now,
+        )
+        for d, h, l, c in rows
+    ])
+
+
+def test_split_within_window_disclosed_between_signal_and_entry_end_to_end(conn, now):
+    """GPT review round 3, finding #2, the exact scenario the previous
+    ratio-only shortcut could not reach: a 2-for-1 split effective WITHIN
+    the ATR window (d2, strictly before signal_date=d3) whose knowledge
+    (`available_at`) only arrives on entry_date -- AFTER signal_date, so
+    a signal_date-frozen window could never reflect it, and the old ratio
+    (computed from signal_date's own bar, never rescaled by a split
+    effective at or before it) was always 1.0 regardless. Fetching the
+    window as-of entry_date directly picks it up correctly."""
+    sec = make_security(conn, "spec005:ATR_NONUNIFORM_A", now)
+    _insert_exact_bars(conn, sec, now, [
+        ("2024-01-08", 204.0, 196.0, 200.0),  # d1: pre-split raw level (~200)
+        ("2024-01-09", 102.0, 98.0, 100.0),   # d2: split effective day (post-split raw level ~100)
+        ("2024-01-10", 103.0, 99.0, 101.0),   # d3 = signal_date
+    ])
+    signal_date, entry_date = "2024-01-10", "2024-01-11"
+    insert_corporate_action(
+        conn, sec, "act_nonuniform_a", "SPLIT", effective_date="2024-01-09", value=2.0, now=now,
+        available_at=entry_date,  # NOT known as of signal_date -- only as of entry_date
+    )
+    pit = _UnboundedAccess(conn)
+
+    atr, diagnostics = compute_atr_basis_reconciliation(
+        pit, sec, signal_date, entry_date, same_day_evidence=frozenset({"act_nonuniform_a"}), volatility_config=_VOL_CFG,
+    )
+    # Coherent (split-adjusted-as-of-entry) basis: d1 rescales to ~100,
+    # matching d2/d3 -- a clean, flat 4-point range throughout, ATR=4.
+    # (The old signal_date-frozen + ratio approach would have returned
+    # atr_s=38 * ratio=1.0 = 38, from the raw ~200->~100 discontinuity.)
+    assert atr == pytest.approx(4.0), diagnostics
+
+
+def test_split_within_window_disclosed_late_without_evidence_is_rejected(conn, now):
+    """Same configuration, but the split's knowledge arrives exactly on
+    entry_date with NO same-day evidence -- must be rejected via
+    NO_VALID_STOP_BASIS, never silently computed on an incoherent basis."""
+    sec = make_security(conn, "spec005:ATR_NONUNIFORM_B", now)
+    _insert_exact_bars(conn, sec, now, [
+        ("2024-01-08", 204.0, 196.0, 200.0),
+        ("2024-01-09", 102.0, 98.0, 100.0),
+        ("2024-01-10", 103.0, 99.0, 101.0),
+    ])
+    signal_date, entry_date = "2024-01-10", "2024-01-11"
+    insert_corporate_action(
+        conn, sec, "act_nonuniform_b", "SPLIT", effective_date="2024-01-09", value=2.0, now=now,
+        available_at=entry_date,
+    )
+    pit = _UnboundedAccess(conn)
+
+    atr, diagnostics = compute_atr_basis_reconciliation(
+        pit, sec, signal_date, entry_date, same_day_evidence=frozenset(), volatility_config=_VOL_CFG,
+    )
+    assert atr is None
+    assert "act_nonuniform_b" in diagnostics

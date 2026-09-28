@@ -668,7 +668,7 @@ class ResearchPlan:
     # family-conditioned (GPT review round 2, finding #7): required
     # whenever the plan's hypothesis cohort includes STOP_MANAGED_
     # INVALIDATION variants (see `backtest.exits.plan_integration.
-    # validate_stop_managed_plan_requirements()`), left `None` for a plan
+    # accept_research_plan()`), left `None` for a plan
     # built exclusively from old families -- and excluded from the
     # fingerprint payload in exactly that case (`research_plan_
     # fingerprint()` below), so an existing plan's identity is

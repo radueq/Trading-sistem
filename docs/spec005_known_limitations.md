@@ -3,12 +3,16 @@
 Scope: `src/backtest/exits/` -- the STOP_MANAGED_INVALIDATION exit engine
 implementing `docs/spec005_exit_amendment_v1.0.md` (ACCEPTED).
 
-**Status: Batch 3 underwent a correction round (GPT review round 2,
-CHANGES REQUIRED) after the initial delivery (`cb9d67f`). All 7 findings
-from that round are fixed in the follow-up commit; this document reflects
-the corrected state and, per that review's explicit instruction, tracks
-what remains OUTSTANDING as concrete obligations mapped to the next
-delivery -- not as a closed scope boundary.**
+**Status: Batch 3 underwent two correction rounds (GPT review round 2 and
+round 3, both CHANGES REQUIRED) after the initial delivery (`cb9d67f`).
+The round-2 fixes were themselves found incomplete in round 3 on four
+specific points (Pas 0 false-incomplete marking, ATR non-uniform
+adjustments, plan-gate wiring, MAE/MFE zero baseline); those four are
+fixed in a further follow-up commit. This document describes what each
+fix does; it is not a claim that the review considers Batch 3 accepted --
+as of this writing Batch 3 remains unaccepted, with baseline `3cdc532`
+still the last accepted state, and the outstanding obligations below are
+unchanged.**
 
 ## What Batch 3 delivers vs. what remains outstanding
 
@@ -126,5 +130,82 @@ scope"):**
    only when set -- byte-identical for a plan that doesn't use it).
    `SelectionRule.ranking_metric` now also accepts
    `RANKING_METRIC_STOP_MANAGED_V1`. `backtest.exits.plan_integration.
-   validate_stop_managed_plan_requirements()` cross-checks that a plan
+   validate_stop_managed_plan_requirements()` cross-checked that a plan
    whose cohort includes STOP_MANAGED_INVALIDATION variants sets both.
+   (Round 3 found this wiring itself insufficient -- see below, finding
+   #3 -- and it was replaced, not merely extended.)
+
+## GPT review round 3 corrections (applied in a further follow-up commit)
+
+Round 3 found the round-2 fixes for temporal-rule usage (#1), tranche
+own-basis freezing (#5), and numeric validity (#6) sufficient -- those are
+NOT reopened here. It found four remaining problems, all now fixed:
+
+1. **Pas 0 still marked positions incomplete for splits that were never
+   its concern.** `reconcile_split_for_open_position()`'s lateness check
+   (`late = any(a.effective_date < session_date for a in
+   newly_authorized)`) treated any not-yet-processed split as relevant to
+   the position's reconciliation, including one with
+   `effective_date <= position.entry_date` -- a split that, by
+   `compute_factors()`'s own `effective_date > d` condition, could never
+   have needed rescaling at entry in the first place, since the position's
+   opening basis already reflects it. Such actions are now skipped
+   entirely, before authorization checking, before being counted toward
+   lateness, and before being added to `processed_split_action_ids` --
+   this includes an action effective the day before entry and one
+   effective exactly on the entry day itself, both provably already
+   correct at entry. Regressions: `test_split_effective_before_entry_is_
+   never_pas0s_concern`, `test_split_effective_exactly_on_entry_day_is_
+   never_pas0s_concern`.
+2. **ATR reconciliation could not detect a non-uniform, retroactively
+   disclosed split.** `check_new_splits_authorized_at_open()` used to skip
+   any action with `effective_date <= signal_date`, which excluded exactly
+   the actions that matter when disclosure happens between signal and
+   entry. `compute_atr_basis_reconciliation()`'s own ratio mechanism
+   (`atr_s * (close_asof_entry / close_asof_signal)`) was independently
+   incapable of catching this class of split regardless of that skip,
+   because a split effective at or before the signal-date bar never
+   rescales that bar itself, so the ratio is always 1.0 even when the ATR
+   window's earlier bars need reconciling. Both are replaced: the
+   authorization check now covers every split known as of `entry_date`
+   with no pre-filter, and the ATR window is now fetched as a single
+   `get_price_series_as_of(entry_date)` query -- using entry_date's own
+   knowledge to correctly re-express the whole historical window, which
+   the amendment's own text sanctions ("seria istorică... e exprimată pe
+   baza prețului de intrare folosind numai ajustările efective și
+   cunoscute la momentul deschiderii"). This removes the need for a
+   separate uniformity precondition: `compute_factors()`'s per-date,
+   per-action-type computation is structurally uniform already.
+   Regressions: `test_split_within_window_disclosed_between_signal_and_
+   entry_end_to_end`, `test_split_within_window_disclosed_late_without_
+   evidence_is_rejected`.
+3. **Plan validation remained optional and disconnected from real data.**
+   The round-2 `validate_stop_managed_plan_requirements(plan, bool)` took
+   a caller-supplied boolean instead of resolving the cohort from a real
+   registry, accepted any non-`None` profile id without checking it
+   against an actual profile object, and returned success immediately for
+   an old-family cohort even when the new metric was set. It is replaced
+   by `accept_research_plan(plan, registry, stop_managed_profile=None)`,
+   the package's first real acceptance gate: it resolves every
+   `hypothesis_cohort_ids` entry via `HypothesisRegistry.get()`/
+   `variants_for()` to determine whether the cohort actually includes a
+   STOP_MANAGED_INVALIDATION variant, rejects an unresolvable cohort id
+   outright, requires and verifies a real, independently-verified
+   `StopManagedExecutionSemanticsProfile` object (not a bare id string)
+   whenever the cohort needs one, and now also rejects an old-family-only
+   cohort that sets the new ranking metric -- symmetric enforcement,
+   neither side of the family split gets a free choice.
+   `tests/spec005/test_32_stop_managed_plan_integration.py` was rewritten
+   to build real `StrategyHypothesis`/`StrategyVariant` objects through a
+   `HypothesisRegistry` and exercise this gate directly (11 tests), rather
+   than calling a validator helper in isolation.
+4. **MAE/MFE omitted the known-zero excursion at entry.** Excursion
+   tracking started from an empty list and only added observations from
+   supplied bars and the exit fill -- so an empty-bars tranche with entry
+   100 / exit 110 wrongly reported MAE == MFE == +10%, when the price
+   never actually traded below entry and the correct MAE is 0%.
+   `compute_tranche_mae_mfe()` now seeds the excursion list with the
+   entry's own always-known 0.0 excursion unconditionally. Regressions:
+   `test_empty_bars_still_includes_the_known_zero_excursion_at_entry`
+   (MAE=0%, MFE=+10%), `test_empty_bars_pure_loss_never_reports_a_
+   positive_mfe` (MAE=-10%, MFE=0%).

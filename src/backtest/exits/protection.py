@@ -115,24 +115,32 @@ def compute_atr_from_bars(bars: list[PITPriceBar], volatility_config: Optional[d
 
 
 def check_new_splits_authorized_at_open(
-    pit: BoundedPITAccess, security_id: str, signal_date: str, entry_date: str,
+    pit: BoundedPITAccess, security_id: str, entry_date: str,
     same_day_evidence: frozenset = frozenset(),
 ) -> tuple[bool, tuple[str, ...]]:
-    """For every SPLIT/REVERSE_SPLIT action strictly after `signal_date`
-    (a pre-signal split is already baked into both bases and needs no
-    check) and known (per #001's own, unmodified
-    `_is_action_known_for_adjustment` gate) as of `entry_date`: apply
-    `is_authorized_at_open()` to its `knowledge_date()`, not its
+    """For every SPLIT/REVERSE_SPLIT action known (per #001's own,
+    unmodified `_is_action_known_for_adjustment` gate) as of `entry_date`:
+    apply `is_authorized_at_open()` to its `knowledge_date()`, not its
     `effective_date`. Returns (authorized, blocking_action_ids) --
     non-empty blocking ids means the basis reconciliation below must not
-    proceed (NO_VALID_STOP_BASIS)."""
+    proceed (NO_VALID_STOP_BASIS).
+
+    GPT review round 3, finding #2: there is no `effective_date` cutoff
+    (e.g. "only after signal_date") that safely excludes a split from
+    this check -- a split effective AT OR BEFORE signal_date can still
+    need same-day-at-entry authorization if its own KNOWLEDGE only
+    arrived between signal_date and entry_date (a retroactive disclosure
+    affecting the ATR window's own internal coherence, not merely the
+    signal-to-entry re-expression the earlier, narrower filter was
+    written for). A split whose knowledge_date is safely in the past
+    (the overwhelming majority) trivially auto-authorizes here regardless
+    -- removing the filter only changes behavior for genuinely recent/
+    same-day disclosures, which is exactly what needs checking."""
     actions = pit.get_corporate_actions_as_of(security_id, entry_date)
     blocking = []
     for pca in actions:
         a = pca.action
         if a.action_type not in (ActionType.SPLIT.value, ActionType.REVERSE_SPLIT.value):
-            continue
-        if a.effective_date <= signal_date:
             continue
         if not _is_action_known_for_adjustment(a, entry_date):
             continue
@@ -145,43 +153,51 @@ def compute_atr_basis_reconciliation(
     pit: BoundedPITAccess, security_id: str, signal_date: str, entry_date: str,
     same_day_evidence: frozenset = frozenset(), volatility_config: Optional[dict] = None,
 ) -> tuple[Optional[float], tuple[str, ...]]:
-    """Amendment section 3: ATR_14(s) re-expressed on the entry price's
-    basis via the ratio factor(s, as_of=entry_date)/factor(s, as_of=s),
-    both obtained from #001's own `split_adjusted_close` (never a
-    re-derivation of `compute_factors()`). Returns
-    (atr_reexpressed_on_entry_basis, diagnostics) -- `None` on the first
-    element means the entry must be rejected via NO_VALID_STOP_BASIS;
-    `diagnostics` names why."""
-    authorized, blocking = check_new_splits_authorized_at_open(pit, security_id, signal_date, entry_date, same_day_evidence)
+    """Amendment section 3: ATR_14(s), the window of bars up to and
+    including the signal session, expressed on the entry price's basis
+    "folosind NUMAI ajustările efective ȘI CUNOSCUTE LA MOMENTUL
+    DESCHIDERII" (using only adjustments effective AND KNOWN AT THE
+    MOMENT OF OPENING). Returns (atr_reexpressed_on_entry_basis,
+    diagnostics) -- `None` on the first element means the entry must be
+    rejected via NO_VALID_STOP_BASIS; `diagnostics` names why.
+
+    GPT review round 3, finding #2: the window is fetched via a SINGLE
+    `get_price_series_as_of(as_of=entry_date)` query and computed
+    directly on THOSE (already correctly, per-date, split-adjusted)
+    bars -- never the previous two-step "freeze the window as of
+    signal_date, then multiply the whole ATR by one ratio" shortcut. That
+    shortcut silently missed a split effective AT OR BEFORE signal_date
+    (inside or before the window) whose knowledge only arrives between
+    signal_date and entry_date: frozen-as-of-signal_date bars could never
+    reflect it, and the ratio (computed from signal_date's own bar, which
+    a split effective AT OR BEFORE it structurally never rescales) was
+    always 1.0 regardless, so the distortion passed through undetected.
+    Fetching directly at `as_of=entry_date` uses #001's own `compute_
+    factors()` recipe per-date, which handles any number of splits,
+    anywhere in the window, correctly and uniformly per split (it reacts
+    only to SPLIT/REVERSE_SPLIT actions, each a well-defined, clean
+    multiplicative constant before its own effective_date) -- there is no
+    separate "uniformity" precondition left to verify, because this IS
+    the bar-by-bar reconciliation the amendment's non-uniform-case text
+    calls for, not the single-ratio shortcut it warns cannot substitute
+    for it. PIT-safety: this uses ONLY facts known as of `entry_date` (our
+    actual "now" when computing the trade's initial protection) to
+    correctly re-express HISTORICAL bars -- never anything known only
+    after entry_date."""
+    authorized, blocking = check_new_splits_authorized_at_open(pit, security_id, entry_date, same_day_evidence)
     if not authorized:
         return None, blocking
 
-    bars_as_of_signal = pit.get_price_series_as_of(security_id, signal_date)
-    bars_window = [b for b in bars_as_of_signal if b.date <= signal_date]
+    bars_as_of_entry = pit.get_price_series_as_of(security_id, entry_date)
+    bars_window = [b for b in bars_as_of_entry if b.date <= signal_date]
     cfg = volatility_config or _DEFAULT_VOLATILITY_CONFIG
     if len(bars_window) < cfg["atr_window"]:
         return None, ("INSUFFICIENT_HISTORY_FOR_ATR_WINDOW",)
 
-    atr_s = compute_atr_from_bars(bars_window, cfg)
-    if atr_s is None or not math.isfinite(atr_s) or not (atr_s > 0):
+    atr = compute_atr_from_bars(bars_window, cfg)
+    if atr is None or not math.isfinite(atr) or not (atr > 0):
         return None, ("ATR_NOT_STRICTLY_POSITIVE",)
-
-    bar_signal_as_of_signal = _find_bar(bars_as_of_signal, signal_date)
-    bars_as_of_entry = pit.get_price_series_as_of(security_id, entry_date)
-    bar_signal_as_of_entry = _find_bar(bars_as_of_entry, signal_date)
-    if bar_signal_as_of_signal is None or bar_signal_as_of_entry is None:
-        return None, ("SIGNAL_BAR_MISSING",)
-
-    close_asof_signal = bar_signal_as_of_signal.split_adjusted_close
-    close_asof_entry = bar_signal_as_of_entry.split_adjusted_close
-    if not close_asof_signal or close_asof_entry is None:
-        return None, ("BASIS_RATIO_UNCOMPUTABLE",)
-
-    ratio = close_asof_entry / close_asof_signal
-    reexpressed = atr_s * ratio
-    if not math.isfinite(reexpressed) or not (reexpressed > 0):
-        return None, ("ATR_NOT_STRICTLY_POSITIVE",)
-    return reexpressed, ()
+    return atr, ()
 
 
 def compute_initial_protection(
