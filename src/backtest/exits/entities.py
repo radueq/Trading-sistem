@@ -60,13 +60,26 @@ class Tranche:
     "Ponderea e o fracție din cantitatea ORIGINALĂ... neafectată de
     split"). `holding_days` is THIS tranche's own calendar days (entry to
     its own exit), used unweighted inside its own borrow_drag term
-    (section 9)."""
+    (section 9).
+
+    `entry_fill_price_reference` (GPT review, round 2, finding #5) is a
+    SNAPSHOT of `position.entry_fill_price` taken at the exact moment
+    this tranche was created -- never the position's CURRENT (possibly
+    later-rescaled-by-a-subsequent-split) `entry_fill_price`. Section 6 is
+    explicit that reconciliation must never modify "valoarea economică...
+    a unei tranșe deja vândute -- fapte istorice fixate la momentul lor";
+    without this snapshot, a split occurring AFTER this tranche closed
+    would silently corrupt its return (the historical `exit_fill_price`
+    combined with a since-rescaled entry price). Every cost/return
+    computation for this tranche MUST use this field, never `position.
+    entry_fill_price` directly."""
     kind: str  # "PARTIAL_PROFIT" | "REMAINDER"
     exit_reason: str  # EXIT_REASON_* constant
     fraction_of_original: float
     exit_date: str
     exit_fill_price: float  # F_x
     holding_days: int
+    entry_fill_price_reference: float  # F_e, as it stood when THIS tranche closed
 
 
 @dataclass(frozen=True)

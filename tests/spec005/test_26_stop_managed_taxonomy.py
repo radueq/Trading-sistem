@@ -30,7 +30,7 @@ def _base_position(**overrides) -> StopManagedPosition:
 
 
 def test_closed_with_no_incompleteness_is_evaluable():
-    pos = _base_position(closed=True, close_tranche=Tranche("REMAINDER", EXIT_REASON_STOP, 1.0, "2024-01-12", 90.0, 1))
+    pos = _base_position(closed=True, close_tranche=Tranche("REMAINDER", EXIT_REASON_STOP, 1.0, "2024-01-12", 90.0, 1, entry_fill_price_reference=100.0))
     outcome = classify_position(pos, stage_end_reached=False)
     assert outcome.lifecycle == LIFECYCLE_CLOSED
     assert outcome.evaluability == EVALUABILITY_EVALUABLE
@@ -48,7 +48,7 @@ def test_exit_failed_is_always_uneval_no_exit_bar():
 def test_regression_7_partial_executed_rest_censored_is_evaluable_w_is_fraction():
     """Section 13 regression #7: partial profit realized, remainder still
     active at stage end -> CENSORED_AT_HORIZON, EVALUABLE, w = fraction."""
-    partial = Tranche("PARTIAL_PROFIT", EXIT_REASON_TARGET, 0.5, "2024-01-13", 120.0, 2)
+    partial = Tranche("PARTIAL_PROFIT", EXIT_REASON_TARGET, 0.5, "2024-01-13", 120.0, 2, entry_fill_price_reference=100.0)
     pos = _base_position(target_consumed=True, partial_tranche=partial, remaining_quantity=0.5)
     outcome = classify_position(pos, stage_end_reached=True, final_mark_available=True)
     assert outcome.lifecycle == LIFECYCLE_CENSORED_AT_HORIZON

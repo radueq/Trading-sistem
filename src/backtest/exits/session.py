@@ -11,10 +11,12 @@ sequence these per the amendment's Pas 0 / Pas 3' / Pas 5 order (section
 from __future__ import annotations
 
 import dataclasses
+import math
 from datetime import date
 from typing import Optional
 
-from data_foundation.model.entities import ActionType
+from data_foundation.model.adjustment_engine import compute_factors
+from data_foundation.model.entities import ActionType, CorporateAction
 from data_foundation.pit.access import _is_action_known_for_adjustment
 
 from backtest.data.pit_access import BoundedPITAccess
@@ -25,24 +27,11 @@ from backtest.exits.entities import (
     StopManagedPosition,
     Tranche,
 )
-from backtest.exits.protection import _find_bar, is_authorized_at_open
+from backtest.exits.protection import _find_bar, is_authorized_at_open, knowledge_date
 
 
 def _calendar_days(start: str, end: str) -> int:
     return (date.fromisoformat(end) - date.fromisoformat(start)).days
-
-
-def _current_split_factor(pit: BoundedPITAccess, security_id: str, entry_date: str, as_of: str) -> Optional[float]:
-    """Amendment section 6: `current_factor` is the adjustment factor,
-    recomputed TODAY, of the POSITION'S OWN entry date (never a generic
-    security-wide "latest" factor) -- the same `compute_factors()`
-    recipe #001 already applies, reached only via `split_adjusted_close`
-    ratios (never re-derived here)."""
-    bars = pit.get_price_series_as_of(security_id, as_of)
-    bar = _find_bar(bars, entry_date)
-    if bar is None or not bar.raw_close or bar.split_adjusted_close is None:
-        return None
-    return bar.split_adjusted_close / bar.raw_close
 
 
 def reconcile_split_for_open_position(
@@ -55,34 +44,69 @@ def reconcile_split_for_open_position(
     action_ids`), rescaling only the still-active remainder -- an
     already-closed tranche's own recorded values are never touched. A
     split that is date-effective but not authorized at THIS session's
-    open (same-day, no evidence) is neither applied nor ignored: it
-    marks `split_reconciliation_incomplete=True`, permanently."""
+    open (same-day, no evidence -- checked on its `knowledge_date()`,
+    never `effective_date` directly, GPT review round 2 finding #1) is
+    neither applied nor ignored: it marks `split_reconciliation_
+    incomplete=True`, permanently.
+
+    GPT review round 2, finding #4: the applied factor is built ONLY
+    from actions THIS position has actually authorized (already-processed
+    + newly-authorized this call) via `compute_factors()` directly --
+    never delegated to `get_price_series_as_of()`'s own full known-action
+    set, which could silently fold in a DIFFERENT same-day action this
+    position has not (yet) authorized at open.
+
+    GPT review round 2, finding #2: even when the ratio is successfully
+    applied, if the action's own `effective_date` is STRICTLY BEFORE
+    `session_date`, this reconciliation happened later than the split's
+    own rightful session -- some number of intervening sessions were
+    necessarily simulated on the stale, unreconciled basis (regardless of
+    whether that was itself PIT-correct at the time). `split_
+    reconciliation_incomplete` is set permanently in that case too, even
+    though the ratio catch-up still corrects the position going forward."""
     if position.closed or position.remaining_quantity <= 0:
         return position
 
     actions = pit.get_corporate_actions_as_of(position.security_id, session_date)
     pos = position
     became_incomplete = False
+    known_split_actions: list[CorporateAction] = []
+    newly_authorized: list[CorporateAction] = []
+
     for pca in actions:
         a = pca.action
         if a.action_type not in (ActionType.SPLIT.value, ActionType.REVERSE_SPLIT.value):
             continue
-        if a.action_id in pos.processed_split_action_ids:
-            continue
         if not _is_action_known_for_adjustment(a, session_date):
             continue
-        if not is_authorized_at_open(a.effective_date, session_date, a.action_id in same_day_evidence):
+        known_split_actions.append(a)
+        if a.action_id in pos.processed_split_action_ids:
+            continue
+        if not is_authorized_at_open(knowledge_date(a), session_date, a.action_id in same_day_evidence):
             became_incomplete = True
             continue
+        newly_authorized.append(a)
 
-        current_factor = _current_split_factor(pit, pos.security_id, pos.entry_date, session_date)
-        if current_factor is None:
-            became_incomplete = True
-            continue
-        if current_factor == pos.applied_factor:
-            pos = dataclasses.replace(pos, processed_split_action_ids=pos.processed_split_action_ids + (a.action_id,))
-            continue
+    if not newly_authorized:
+        if became_incomplete:
+            pos = dataclasses.replace(pos, split_reconciliation_incomplete=True)
+        return pos
 
+    already_processed = {a.action_id for a in known_split_actions if a.action_id in pos.processed_split_action_ids}
+    authorized_actions = [a for a in known_split_actions if a.action_id in already_processed] + newly_authorized
+
+    bars = pit.get_price_series_as_of(pos.security_id, session_date)
+    entry_bar = _find_bar(bars, pos.entry_date)
+    if entry_bar is None or not entry_bar.raw_close:
+        return dataclasses.replace(pos, split_reconciliation_incomplete=True)
+
+    factors = compute_factors([pos.entry_date], {pos.entry_date: entry_bar.raw_close}, authorized_actions, [])
+    current_factor, _total_return_factor = factors[pos.entry_date]
+
+    newly_authorized_ids = tuple(a.action_id for a in newly_authorized)
+    late = any(a.effective_date < session_date for a in newly_authorized)
+
+    if current_factor != pos.applied_factor:
         ratio = current_factor / pos.applied_factor
         pos = dataclasses.replace(
             pos,
@@ -92,10 +116,12 @@ def reconcile_split_for_open_position(
             entry_fill_price=pos.entry_fill_price * ratio,
             remaining_quantity=pos.remaining_quantity / ratio,
             applied_factor=current_factor,
-            processed_split_action_ids=pos.processed_split_action_ids + (a.action_id,),
+            processed_split_action_ids=pos.processed_split_action_ids + newly_authorized_ids,
         )
+    else:
+        pos = dataclasses.replace(pos, processed_split_action_ids=pos.processed_split_action_ids + newly_authorized_ids)
 
-    if became_incomplete:
+    if became_incomplete or late:
         pos = dataclasses.replace(pos, split_reconciliation_incomplete=True)
     return pos
 
@@ -104,12 +130,17 @@ def advance_intrabar(
     position: StopManagedPosition, session_date: str, open_price: float, high: float, low: float,
 ) -> tuple[StopManagedPosition, tuple[Tranche, ...]]:
     """Amendment section 5, Pas 3'. Returns (new_position, tranches
-    executed THIS session, in chronological order)."""
+    executed THIS session, in chronological order). Every `Tranche`
+    freezes `entry_fill_price_reference=position.entry_fill_price` at the
+    moment of its OWN creation (GPT review round 2, finding #5) -- so a
+    split reconciled on a LATER session can never retroactively corrupt
+    an already-closed tranche's own return computation."""
     if position.closed or position.remaining_quantity <= 0:
         return position, ()
 
     long = position.direction == "LONG"
     holding_days = _calendar_days(position.entry_date, session_date)
+    entry_ref = position.entry_fill_price
     target = position.target_price if not position.target_consumed else None
 
     def _stop_breach(price: float, stop: float) -> bool:
@@ -124,6 +155,7 @@ def advance_intrabar(
         tranche = Tranche(
             kind="REMAINDER", exit_reason=EXIT_REASON_STOP, fraction_of_original=frac,
             exit_date=session_date, exit_fill_price=open_price, holding_days=holding_days,
+            entry_fill_price_reference=entry_ref,
         )
         new_pos = dataclasses.replace(position, closed=True, close_tranche=tranche, remaining_quantity=0.0)
         return new_pos, (tranche,)
@@ -136,6 +168,7 @@ def advance_intrabar(
         partial = Tranche(
             kind="PARTIAL_PROFIT", exit_reason=EXIT_REASON_TARGET, fraction_of_original=pos.fraction,
             exit_date=session_date, exit_fill_price=open_price, holding_days=holding_days,
+            entry_fill_price_reference=entry_ref,
         )
         pos = dataclasses.replace(
             pos, target_consumed=True, partial_tranche=partial,
@@ -155,6 +188,7 @@ def advance_intrabar(
         tranche = Tranche(
             kind="REMAINDER", exit_reason=EXIT_REASON_STOP, fraction_of_original=frac,
             exit_date=session_date, exit_fill_price=pos.active_stop, holding_days=holding_days,
+            entry_fill_price_reference=entry_ref,
         )
         pos = dataclasses.replace(
             pos, closed=True, close_tranche=tranche, remaining_quantity=0.0,
@@ -168,6 +202,7 @@ def advance_intrabar(
         tranche = Tranche(
             kind="REMAINDER", exit_reason=EXIT_REASON_STOP, fraction_of_original=frac,
             exit_date=session_date, exit_fill_price=pos.active_stop, holding_days=holding_days,
+            entry_fill_price_reference=entry_ref,
         )
         pos = dataclasses.replace(pos, closed=True, close_tranche=tranche, remaining_quantity=0.0)
         executed.append(tranche)
@@ -177,6 +212,7 @@ def advance_intrabar(
         partial = Tranche(
             kind="PARTIAL_PROFIT", exit_reason=EXIT_REASON_TARGET, fraction_of_original=pos.fraction,
             exit_date=session_date, exit_fill_price=pos.target_price, holding_days=holding_days,
+            entry_fill_price_reference=entry_ref,
         )
         pos = dataclasses.replace(
             pos, target_consumed=True, partial_tranche=partial,
@@ -192,13 +228,17 @@ def update_trailing_stop_at_close(position: StopManagedPosition, close_price: fl
     """Amendment section 3: S_next computed at close(t), becomes S_activ
     only from session t+1 -- never applied retroactively to today's own
     low/high check (Pas 3' above always reads the STOP value as it stood
-    BEFORE this update). `atr_today=None` (ATR invalid mid-position, e.g.
-    insufficient history after a data gap) leaves the stop at its last
-    valid value -- never relaxed, never a substitute value -- and marks
-    `trailing_path_incomplete=True` permanently (section 10)."""
+    BEFORE this update). Any non-usable `atr_today` -- missing, non-finite
+    (NaN/inf), zero, or negative (GPT review round 2, finding #6a: not
+    just `None`) -- leaves the stop at its last valid value -- never
+    relaxed, never a substitute value -- and marks `trailing_path_
+    incomplete=True` permanently (section 10)."""
     if position.closed or position.remaining_quantity <= 0:
         return position
-    if atr_today is None:
+    if (
+        atr_today is None or not math.isfinite(atr_today) or atr_today <= 0
+        or close_price is None or not math.isfinite(close_price)
+    ):
         return dataclasses.replace(position, trailing_path_incomplete=True)
     long = position.direction == "LONG"
     candidate = close_price - position.k * atr_today if long else close_price + position.k * atr_today
@@ -254,6 +294,7 @@ def execute_scheduled_invalidation(
     tranche = Tranche(
         kind="REMAINDER", exit_reason=EXIT_REASON_INVALIDATION, fraction_of_original=frac,
         exit_date=next_session_date, exit_fill_price=next_session_open_price, holding_days=holding_days,
+        entry_fill_price_reference=position.entry_fill_price,
     )
     return dataclasses.replace(
         position, closed=True, close_tranche=tranche, remaining_quantity=0.0,

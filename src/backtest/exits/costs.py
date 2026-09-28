@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from backtest.exits.entities import StopManagedPosition
+from backtest.exits.entities import StopManagedPosition, Tranche
 
 
 def _direction_sign(direction: str) -> float:
@@ -35,10 +35,34 @@ def tranche_net_return(
     this is the partial-profit tranche or a fully-closed remainder:
     d*(F_x-F_e)/F_e - c_e - c_x*(F_x/F_e) - borrow_drag_tranșă. Borrow
     drag uses THIS tranche's own holding_days, fully unweighted here --
-    weighting (w/1-w) is applied once, only at `aggregate_position_return`."""
+    weighting (w/1-w) is applied once, only at `aggregate_position_return`.
+
+    `entry_fill` MUST be the tranche's OWN `entry_fill_price_reference`
+    (see `Tranche`'s docstring) -- NEVER `position.entry_fill_price`
+    directly, which a split reconciled AFTER this tranche closed may have
+    since rescaled (GPT review round 2, finding #5). Prefer
+    `net_return_for_tranche()` below, which enforces this by construction."""
     d = _direction_sign(direction)
     borrow_drag = borrow_annual_rate * holding_days / 365.0
     return d * (exit_fill - entry_fill) / entry_fill - commission_entry_rate - commission_exit_rate * (exit_fill / entry_fill) - borrow_drag
+
+
+def net_return_for_tranche(
+    tranche: Tranche, direction: str,
+    commission_entry_rate: float, commission_exit_rate: float, borrow_annual_rate: float,
+) -> float:
+    """Convenience wrapper that always reads F_e from `tranche.
+    entry_fill_price_reference` -- never from a position's possibly
+    later-rescaled `entry_fill_price` -- so a caller cannot accidentally
+    reproduce the exact bug GPT review round 2 finding #5 identified
+    (entry 100, partial profit at 120 fixed historically, THEN a 2:1
+    split rescales the live position's entry to 50 -- combining that 50
+    with the historical 120 fill would report +140% instead of the
+    correct +20%)."""
+    return tranche_net_return(
+        direction, tranche.entry_fill_price_reference, tranche.exit_fill_price,
+        commission_entry_rate, commission_exit_rate, borrow_annual_rate, tranche.holding_days,
+    )
 
 
 def open_remainder_net_return(

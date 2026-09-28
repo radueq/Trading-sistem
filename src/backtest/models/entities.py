@@ -394,6 +394,15 @@ def build_execution_semantics_profile_v1() -> ExecutionSemanticsProfile:
 # --------------------------------------------------------------------------
 
 RANKING_METRIC_V1 = "MEDIAN_NET_RETURN"
+# Spec #005 Exit Amendment v1.0 (docs/spec005_exit_amendment_v1.0.md,
+# ACCEPTED, section 11) -- additive: a SECOND allowed ranking_metric,
+# mandatory (not optional) for any ResearchPlan whose hypothesis cohort
+# includes STOP_MANAGED_INVALIDATION variants. RANKING_METRIC_V1 stays
+# the only allowed value for a plan composed exclusively of old families
+# -- see `backtest.exits.plan_integration.validate_stop_managed_plan_
+# requirements()` for the family-aware cross-check this module itself
+# deliberately never performs (this file stays family-agnostic).
+RANKING_METRIC_STOP_MANAGED_V1 = "MEDIAN_NET_RETURN_TO_EXIT_OR_STAGE_END"
 THRESHOLD_OPERATOR_V1 = "STRICTLY_GREATER"
 TIE_BREAK_V1 = "LEXICOGRAPHIC_STRATEGY_VARIANT_ID"
 MINIMUM_SELECTION_METRIC_V1 = 0.0
@@ -427,8 +436,14 @@ def validate_selection_rule(rule: SelectionRule) -> tuple[bool, tuple[str, ...]]
         errors.append(f"minimum_evaluable_trades must be a positive integer, got {rule.minimum_evaluable_trades!r}")
     if not (0 < rule.minimum_evaluable_ratio <= 1):
         errors.append(f"minimum_evaluable_ratio must be in (0,1], got {rule.minimum_evaluable_ratio!r}")
-    if rule.ranking_metric != RANKING_METRIC_V1:
-        errors.append(f"ranking_metric must be {RANKING_METRIC_V1!r} in V1, got {rule.ranking_metric!r} (SS18 -- no hidden Sharpe/drawdown/win-rate metric)")
+    if rule.ranking_metric not in (RANKING_METRIC_V1, RANKING_METRIC_STOP_MANAGED_V1):
+        errors.append(
+            f"ranking_metric must be {RANKING_METRIC_V1!r} or {RANKING_METRIC_STOP_MANAGED_V1!r}, got "
+            f"{rule.ranking_metric!r} (SS18 -- no hidden Sharpe/drawdown/win-rate metric; the second "
+            f"value is the Spec #005 Exit Amendment v1.0 addition, mandatory -- not merely allowed -- "
+            f"whenever the cohort includes STOP_MANAGED_INVALIDATION variants, see backtest.exits."
+            f"plan_integration)"
+        )
     if rule.minimum_selection_metric != MINIMUM_SELECTION_METRIC_V1:
         errors.append(f"minimum_selection_metric must be {MINIMUM_SELECTION_METRIC_V1!r} in V1, got {rule.minimum_selection_metric!r}")
     if rule.threshold_operator != THRESHOLD_OPERATOR_V1:
@@ -649,12 +664,24 @@ class ResearchPlan:
     created_at: str
     created_by: str
 
+    # Spec #005 Exit Amendment v1.0 (ACCEPTED, section 7) -- additive,
+    # family-conditioned (GPT review round 2, finding #7): required
+    # whenever the plan's hypothesis cohort includes STOP_MANAGED_
+    # INVALIDATION variants (see `backtest.exits.plan_integration.
+    # validate_stop_managed_plan_requirements()`), left `None` for a plan
+    # built exclusively from old families -- and excluded from the
+    # fingerprint payload in exactly that case (`research_plan_
+    # fingerprint()` below), so an existing plan's identity is
+    # byte-for-byte unaffected by this field's mere existence.
+    stop_managed_execution_semantics_profile_id: Optional[str] = None
+
 
 def research_plan_fingerprint(
     formation_start: str, formation_end: str, validation_start: str, validation_end: str, locked_oos_start: str,
     selection_folds: tuple[SelectionFold, ...], hypothesis_cohort_ids: tuple[str, ...],
     trading_calendar_id: str, benchmark_security_id: str, execution_semantics_profile_id: str,
     selection_rule: SelectionRule, cost_assumptions: CostAssumptions, exposure_manifest: ExposureManifest,
+    stop_managed_execution_semantics_profile_id: Optional[str] = None,
 ) -> str:
     payload = {
         "formation_start": formation_start,
@@ -690,6 +717,8 @@ def research_plan_fingerprint(
             "declared_unseen": exposure_manifest.declared_unseen,
         },
     }
+    if stop_managed_execution_semantics_profile_id is not None:
+        payload["stop_managed_execution_semantics_profile_id"] = stop_managed_execution_semantics_profile_id
     return canonical_json(payload)
 
 
@@ -709,6 +738,7 @@ def verify_research_plan_identity(plan: ResearchPlan) -> tuple[bool, tuple[str, 
         plan.locked_oos_start, plan.selection_folds, plan.hypothesis_cohort_ids,
         plan.trading_calendar_id, plan.benchmark_security_id, plan.execution_semantics_profile_id,
         plan.selection_rule, plan.cost_assumptions, plan.exposure_manifest,
+        plan.stop_managed_execution_semantics_profile_id,
     )
     expected_id, expected_hash = build_research_plan_id(fp)
     if plan.research_plan_id != expected_id or plan.plan_hash != expected_hash:

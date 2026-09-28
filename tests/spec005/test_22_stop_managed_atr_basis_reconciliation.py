@@ -8,13 +8,25 @@ TEST 7's own established convention: Wilder's recursive method was
 specifically chosen so a SMALL synthetic OHLC sequence stays
 hand-verifiable, and this test exploits exactly that.
 """
-from backtest.exits.protection import compute_atr_basis_reconciliation
+import pytest
+
+from backtest.exits.protection import check_new_splits_authorized_at_open, compute_atr_basis_reconciliation, compute_atr_from_bars
 
 from spec005.fixtures.pit_universe import insert_corporate_action, make_security
 from data_foundation.model import repository as repo
 from data_foundation.model.entities import PriceBar
+from data_foundation.pit.access import PITPriceBar
 
 _VOL_CFG = {"atr_window": 3, "bb_window": 3, "bb_num_std": 2.0, "realized_vol_window": 3}
+
+
+def _bar(date: str, raw_h: float, raw_l: float, raw_c: float, adj_h: float, adj_l: float, adj_c: float) -> PITPriceBar:
+    return PITPriceBar(
+        date=date, raw_open=raw_c, raw_high=raw_h, raw_low=raw_l, raw_close=raw_c, raw_volume=1000,
+        split_adjusted_open=adj_c, split_adjusted_high=adj_h, split_adjusted_low=adj_l,
+        split_adjusted_close=adj_c, split_adjusted_volume=1000.0,
+        total_return_adjusted_close=adj_c, total_return_status="EXPERIMENTAL_NOT_APPROVED_FOR_RESEARCH",
+    )
 
 
 class _UnboundedAccess:
@@ -134,3 +146,99 @@ def test_insufficient_history_for_atr_window_is_rejected(conn, now):
     )
     assert atr is None
     assert diagnostics == ("INSUFFICIENT_HISTORY_FOR_ATR_WINDOW",)
+
+
+# --------------------------------------------------------------------------
+# GPT review round 2, finding #1: the temporal-access-at-open check must
+# apply to the KNOWLEDGE date (available_at, or its effective_date
+# fallback), never to effective_date directly.
+# --------------------------------------------------------------------------
+
+def test_available_at_before_effective_date_same_day_auto_authorizes(conn, now):
+    """A split ANNOUNCED yesterday but EFFECTIVE today needs no evidence
+    at all -- the previous, buggy implementation required it anyway,
+    because it checked effective_date instead of the knowledge date."""
+    sec = make_security(conn, "spec005:ATR_KNOW_A", now)
+    signal_date, entry_date = "2024-01-05", "2024-01-11"
+    insert_corporate_action(
+        conn, sec, "act_know_a", "SPLIT", effective_date=entry_date, value=2.0, now=now,
+        available_at="2024-01-10",  # known a day BEFORE the effective/entry date
+    )
+    pit = _UnboundedAccess(conn)
+    authorized, blocking = check_new_splits_authorized_at_open(pit, sec, signal_date, entry_date, same_day_evidence=frozenset())
+    assert authorized, blocking
+
+
+def test_effective_earlier_but_available_same_day_requires_evidence(conn, now):
+    """A split EFFECTIVE several days ago but only KNOWN (available_at)
+    today needs the same same-day scrutiny a same-day-effective split
+    would -- the previous implementation auto-authorized this (it only
+    ever looked at effective_date, which was already in the past)."""
+    sec = make_security(conn, "spec005:ATR_KNOW_B", now)
+    signal_date, entry_date = "2024-01-05", "2024-01-11"
+    insert_corporate_action(
+        conn, sec, "act_know_b", "SPLIT", effective_date="2024-01-08", value=2.0, now=now,
+        available_at=entry_date,  # only became knowable on the entry date itself
+    )
+    pit = _UnboundedAccess(conn)
+
+    without_evidence, blocking = check_new_splits_authorized_at_open(pit, sec, signal_date, entry_date, same_day_evidence=frozenset())
+    assert not without_evidence
+    assert "act_know_b" in blocking
+
+    with_evidence, blocking2 = check_new_splits_authorized_at_open(pit, sec, signal_date, entry_date, same_day_evidence=frozenset({"act_know_b"}))
+    assert with_evidence, blocking2
+
+
+# --------------------------------------------------------------------------
+# GPT review round 2, finding #3: ATR must be computed on an internally
+# COHERENT basis -- split_adjusted_high/low/close together, never raw
+# high/low mixed with split-adjusted close (which would inject an
+# artificial true-range spike at any split inside the window).
+# --------------------------------------------------------------------------
+
+def test_split_within_the_atr_window_does_not_distort_atr():
+    """d1 is pre-split (raw levels ~200), d2/d3 are post a 2-for-1 split
+    (raw levels ~100). On the split-adjusted basis, d1 rescales to match
+    d2/d3's post-split scale -- a clean, flat 4-point range throughout,
+    matching what a fully-adjusted, split-aware calculation must show.
+    (On the RAW-only, buggy basis this project's Batch-3 code previously
+    used, the d1->d2 transition would show a true range of 102, from the
+    unadjusted ~200->~100 price-level halving -- an artifact of the split,
+    not real volatility.)"""
+    bars = [
+        _bar("d1", raw_h=204.0, raw_l=196.0, raw_c=200.0, adj_h=102.0, adj_l=98.0, adj_c=100.0),
+        _bar("d2", raw_h=102.0, raw_l=98.0, raw_c=100.0, adj_h=102.0, adj_l=98.0, adj_c=100.0),
+        _bar("d3", raw_h=103.0, raw_l=99.0, raw_c=101.0, adj_h=103.0, adj_l=99.0, adj_c=101.0),
+    ]
+    atr = compute_atr_from_bars(bars, volatility_config=_VOL_CFG)
+    assert atr == pytest.approx(4.0)
+
+
+def test_reverse_split_within_the_atr_window_does_not_distort_atr():
+    """d1 pre-reverse-split (raw levels ~100), d2/d3 post a 1-for-2
+    reverse split (raw levels ~200, doubled). On the split-adjusted
+    basis, d1 rescales UP to match -- a clean, flat 8-point range."""
+    bars = [
+        _bar("d1", raw_h=102.0, raw_l=98.0, raw_c=100.0, adj_h=204.0, adj_l=196.0, adj_c=200.0),
+        _bar("d2", raw_h=204.0, raw_l=196.0, raw_c=200.0, adj_h=204.0, adj_l=196.0, adj_c=200.0),
+        _bar("d3", raw_h=205.0, raw_l=197.0, raw_c=201.0, adj_h=205.0, adj_l=197.0, adj_c=201.0),
+    ]
+    atr = compute_atr_from_bars(bars, volatility_config=_VOL_CFG)
+    assert atr == pytest.approx(8.0)
+
+
+def test_dividend_within_the_atr_window_is_never_treated_as_an_adjustment():
+    """A dividend produces a real, legitimate ex-dividend price move in
+    raw prices -- it must NOT be smoothed away (split_adjusted_* is
+    purely split-driven, by construction; this confirms the ATR module
+    never accidentally reacts to a non-split action)."""
+    bars = [
+        _bar("d1", raw_h=102.0, raw_l=98.0, raw_c=100.0, adj_h=102.0, adj_l=98.0, adj_c=100.0),
+        _bar("d2", raw_h=99.0, raw_l=95.0, raw_c=97.0, adj_h=99.0, adj_l=95.0, adj_c=97.0),  # ex-div drop, real
+        _bar("d3", raw_h=100.0, raw_l=96.0, raw_c=98.0, adj_h=100.0, adj_l=96.0, adj_c=98.0),
+    ]
+    atr_adjusted_basis = compute_atr_from_bars(bars, volatility_config=_VOL_CFG)
+    raw_only_bars = [_bar(b.date, b.raw_high, b.raw_low, b.raw_close, b.raw_high, b.raw_low, b.raw_close) for b in bars]
+    atr_raw_basis = compute_atr_from_bars(raw_only_bars, volatility_config=_VOL_CFG)
+    assert atr_adjusted_basis == pytest.approx(atr_raw_basis)
