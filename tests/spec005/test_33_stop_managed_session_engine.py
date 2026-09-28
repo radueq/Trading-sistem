@@ -686,7 +686,7 @@ def test_the_exact_overwrite_repro_is_rejected_before_either_signal_ever_runs(co
     hid_b, vid_b = build_registered_stop_managed_hypothesis(registry, k=3.0, signature_id="SIG_OVERWRITE_B")
     sec = make_security(conn, "spec005:ENGINE_OVERWRITE_REPRO", now)
     entry_signals = {
-        ("dummy_key_never_reached", vid_a, "2024-05-01"): EntrySignal(security_id="dummy_key_never_reached", strategy_variant_id=vid_a),
+        (sec, vid_a, "2024-05-01"): EntrySignal(security_id=sec, strategy_variant_id=vid_a),
         (sec, vid_b, "2024-05-02"): EntrySignal(security_id=sec, strategy_variant_id=vid_a),  # mismatched: key says VAR_B
     }
     with pytest.raises(ValueError, match="does not match its own EntrySignal's identity"):
