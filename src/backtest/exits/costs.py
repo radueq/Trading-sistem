@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from backtest.exits.entities import StopManagedPosition, Tranche
+from backtest.exits.entities import EXIT_REASON_TARGET, StopManagedPosition, Tranche
 
 
 def _direction_sign(direction: str) -> float:
@@ -24,6 +24,34 @@ def _direction_sign(direction: str) -> float:
     if direction == "SHORT":
         return -1.0
     raise ValueError(f"direction must be 'LONG' or 'SHORT', got {direction!r}")
+
+
+def slippage_rate_from_bps(slippage_bps: float) -> float:
+    """`CostAssumptions.slippage_exit_bps` is stored in basis points
+    (`validate_cost_assumptions()` requires it `< 10000`, i.e. `< 100%`) --
+    this is the one, single conversion to a plain rate, reused everywhere
+    a slippage rate is needed so `/10000.0` never gets re-typed (and
+    potentially mistyped) at each call site."""
+    return slippage_bps / 10000.0
+
+
+def apply_exit_slippage(direction: str, level_fill: float, exit_reason: str, slippage_exit_rate: float) -> float:
+    """Amendment section 9 (base spec SS13's original formula, restated in
+    full there): `F_x = nivel_fill` for the partial-profit tranche --
+    "fara slippage advers" (section 4) -- and `F_x = nivel_fill*(1-d*s_x)`
+    for ANY tranche closed via stop or trend invalidation. `level_fill` is
+    the RAW level a `Tranche.exit_fill_price` already stores (the order's
+    own trigger/fill level, e.g. the active stop, the target price, or a
+    NEXT_SESSION_OPEN price) -- this function is the one place that turns
+    that raw level into the ACTUAL fill `F_x` a cost/return computation
+    must use; `Tranche.exit_fill_price` itself is never overwritten with
+    the slipped value (MAE/MFE, `backtest.exits.mae_mfe`, deliberately
+    tracks the raw market level the price actually reached, not this
+    engine's own execution slippage)."""
+    if exit_reason == EXIT_REASON_TARGET:
+        return level_fill
+    d = _direction_sign(direction)
+    return level_fill * (1.0 - d * slippage_exit_rate)
 
 
 def tranche_net_return(
@@ -61,6 +89,27 @@ def net_return_for_tranche(
     correct +20%)."""
     return tranche_net_return(
         direction, tranche.entry_fill_price_reference, tranche.exit_fill_price,
+        commission_entry_rate, commission_exit_rate, borrow_annual_rate, tranche.holding_days,
+    )
+
+
+def net_return_for_tranche_with_slippage(
+    tranche: Tranche, direction: str,
+    commission_entry_rate: float, commission_exit_rate: float, borrow_annual_rate: float,
+    slippage_exit_rate: float,
+) -> float:
+    """The actual section-9 entry point for a CLOSED tranche's return:
+    unlike `net_return_for_tranche()` above (which takes `tranche.
+    exit_fill_price` as an already-final `F_x`, by design -- see this
+    module's own docstring, "this module computes the RETURN from a given
+    fill, it does not itself decide the fill"), this ALSO decides F_x from
+    the tranche's raw level via `apply_exit_slippage()` first. Additive:
+    `net_return_for_tranche()` itself is untouched, so every existing
+    caller (and test) that already supplies its own pre-decided F_x keeps
+    working byte-for-byte."""
+    f_x = apply_exit_slippage(direction, tranche.exit_fill_price, tranche.exit_reason, slippage_exit_rate)
+    return tranche_net_return(
+        direction, tranche.entry_fill_price_reference, f_x,
         commission_entry_rate, commission_exit_rate, borrow_annual_rate, tranche.holding_days,
     )
 

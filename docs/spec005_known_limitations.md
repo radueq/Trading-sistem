@@ -3,61 +3,69 @@
 Scope: `src/backtest/exits/` -- the STOP_MANAGED_INVALIDATION exit engine
 implementing `docs/spec005_exit_amendment_v1.0.md` (ACCEPTED).
 
-**Status: Batch 3 underwent two correction rounds (GPT review round 2 and
-round 3, both CHANGES REQUIRED) after the initial delivery (`cb9d67f`).
-The round-2 fixes were themselves found incomplete in round 3 on four
-specific points (Pas 0 false-incomplete marking, ATR non-uniform
-adjustments, plan-gate wiring, MAE/MFE zero baseline); those four are
-fixed in a further follow-up commit. This document describes what each
-fix does; it is not a claim that the review considers Batch 3 accepted --
-as of this writing Batch 3 remains unaccepted, with baseline `3cdc532`
-still the last accepted state, and the outstanding obligations below are
-unchanged.**
+**Status: Batch 3 underwent three correction rounds (GPT review rounds 2
+and 3, plus a narrow round-3-follow-up regression fix) after the initial
+delivery (`cb9d67f`), then a further delivery -- "Session Engine &
+Integration" -- addressing the four obligations that remained after the
+round-3 follow-up was accepted (`0ed78ca`): the multi-security session
+loop, the mandatory ResearchPlan acceptance gate wired to a real run
+entry point, the exit-side slippage formula, and an integrated Pas 0-6
+test with stage-limit and aggregate-cost coverage. This document
+describes what each delivery does; it is not itself a claim of
+acceptance -- as of this writing the baseline commit last confirmed
+ACCEPTED by review is `0ed78ca`, and whether the Session Engine &
+Integration delivery below closes Batch 3 is for that same review to
+say.**
 
 ## What Batch 3 delivers vs. what remains outstanding
 
 Batch 1/2 of Spec #005 (`backtest.models.entities`, `backtest.data.*`,
-`backtest.zones.*`) are CONTRACTS AND PIT ACCESS ONLY -- no multi-security
-session loop, entry-signal matching, or TIME_EXIT/SIGNAL_INVALIDATION
-execution engine exists anywhere in this codebase for ANY exit family, old
-or new. Batch 3 implements the STOP_MANAGED_INVALIDATION position's own
-per-position mechanics in full (`backtest/exits/protection.py`,
-`session.py`, `costs.py`, `taxonomy.py`, `mae_mfe.py`, `entities.py`,
-`plan_integration.py`), taking an already-determined entry fill and
-already-fetched PIT bars/corporate actions as input, all reached only
-through `backtest.data.pit_access.BoundedPITAccess` (the one sanctioned
-gateway, Spec #005 SS3/SS6). `ResearchPlan`/`SelectionRule` identity and
-validation ARE wired to this family's requirements (section 7/11) --
-GPT review round 2 finding #7 confirmed this was achievable now, since
-that infrastructure already exists, and it is no longer disconnected.
+`backtest.zones.*`) are CONTRACTS AND PIT ACCESS ONLY. Batch 3 implements
+the STOP_MANAGED_INVALIDATION position's own per-position mechanics in
+full (`backtest/exits/protection.py`, `session.py`, `costs.py`,
+`taxonomy.py`, `mae_mfe.py`, `entities.py`, `plan_integration.py`), and
+the Session Engine & Integration delivery (`backtest/exits/engine.py`)
+adds the multi-security session LOOP around those mechanics -- see its
+own section below for exactly what that loop does and does not cover.
+All PIT access, in every layer, is reached only through
+`backtest.data.pit_access.BoundedPITAccess` (the one sanctioned gateway,
+Spec #005 SS3/SS6). `ResearchPlan`/`SelectionRule` identity and validation
+ARE wired to this family's requirements (section 7/11) -- GPT review
+round 2 finding #7 confirmed this was achievable now, since that
+infrastructure already exists -- and, as of the Session Engine &
+Integration delivery, `accept_research_plan()` sits at a real, mandatory
+run entry point (`engine.run_stage()`), not merely a test-reachable
+function.
 
 **Genuinely outstanding, mapped to the next delivery (not "out of
 scope"):**
 
-1. **The multi-security session/universe loop itself** -- steps 1/2/4/6
-   of the amendment's own session order (scheduled exits, entry matching,
-   TIME_EXIT/CAP, new entries) do not exist yet for ANY exit family.
-   Wiring this package's Pas 0 (`reconcile_split_for_open_position`) and
-   Pas 3' (`advance_intrabar`) functions into a real loop -- in the right
-   order relative to those still-unbuilt steps, across a real universe of
-   securities and sessions -- requires that base engine to exist first.
-   This is the next delivery's primary content.
-2. **Full session-order demonstration through an integrated path** --
-   until (1) exists, there is no end-to-end test exercising a complete
-   session (Pas 0 through Pas 6) against a real multi-day, multi-security
-   fixture. The 90-plus unit/integration-level regressions in
-   `tests/spec005/test_21` through `test_32` cover each mechanism in
-   isolation; they are not a substitute for that integrated demonstration,
-   and the next delivery must add it once (1) lands.
-3. **The base spec's own SS13 slippage-application formula for a stop/
-   invalidation fill** (`nivel_fill·(1−d·s_x)`) -- referenced by the
-   amendment but its full text was not available to derive independently
-   here. `backtest.exits.costs` computes the RETURN from an
-   already-determined fill; it does not derive the fill's own slippage
-   adjustment. The next delivery (or a request for the base document's
-   full SS13 text) must close this before `costs.py` can be exercised
-   end-to-end against `CostAssumptions.slippage_entry_bps`/
-   `slippage_exit_bps` rather than a caller-supplied fill.
+1. **Discovery-based entry-signal matching does not exist anywhere in
+   this codebase, for any exit family.** `SessionEngine` takes
+   `entry_signals` as an explicit, caller-supplied mapping keyed by
+   `(security_id, signal_date)` -- turning Discovery lane STATES into an
+   actual match against a variant's `EntryDefinition` is a separate
+   integration surface nothing in Batch 1-3, or elsewhere in this
+   codebase, builds. The next delivery that wants a fully autonomous run
+   (no caller-supplied signals) must build this first.
+2. **Evaluating an `InvalidationCondition` against real Discovery lane
+   output does not exist anywhere in this codebase either** (confirmed by
+   grep: no function anywhere consumes `InvalidationCondition` to produce
+   VALID_HOLD/INVALIDATED/UNKNOWN). `SessionEngine` takes
+   `invalidation_observer` as an explicit, caller-supplied callable for
+   exactly this reason. Building the real evaluator is a second, separate
+   integration surface from (1) -- both are the natural next step once a
+   caller wants the engine driven by real Discovery output rather than a
+   test/research-supplied signal source.
+3. **TIME_EXIT/SIGNAL_INVALIDATION have no execution engine of their
+   own.** `SessionEngine` only ever constructs/advances
+   `StopManagedPosition` objects -- the two older exit families remain
+   pure validation-time contracts (Batch 1/2), with no per-position
+   mechanics or session-loop integration of their own. A `ResearchPlan`
+   whose cohort mixes old-family and STOP_MANAGED_INVALIDATION variants
+   can be ACCEPTED by `accept_research_plan()` (it only inspects the
+   cohort's ranking-metric/profile requirements), but `SessionEngine`
+   itself has nothing to run for that cohort's old-family variants.
 
 ## Declared limitations (amendment section 14, carried forward as-is)
 
@@ -212,6 +220,81 @@ NOT reopened here. It found four remaining problems, all now fixed:
 
 Round 3 review of this round's own delta (`24cd4f0`) found one further
 regression, since fixed:
+
+## Session Engine & Integration delivery (`backtest/exits/engine.py`)
+
+Addresses the four obligations named after the round-3-follow-up
+(`0ed78ca`) was accepted:
+
+1. **Multi-security session loop.** `SessionEngine` runs the amendment's
+   Pas 0/1/2/3'/5/6 order (section 5) over a caller-supplied
+   `session_dates` sequence and an implicit universe (every security_id
+   appearing in `entry_signals`), composing the already-accepted
+   per-position functions in `protection.py`/`session.py` -- Pas 0
+   (`reconcile_split_for_open_position`, run only for positions opened in
+   a strictly prior session, never one opened today), Pas 1
+   (`execute_scheduled_invalidation`, for a pending invalidation detected
+   at a prior close, run before Pas 2 per section 5), Pas 2
+   (`open_stop_managed_position`, for a signal recorded at the PREVIOUS
+   session's close), Pas 3' (`advance_intrabar`), Pas 5
+   (`check_trend_invalidation` plus the close(t) `S_next` recompute via
+   `update_trailing_stop_at_close`). Pas 6 needs no separate code: a
+   signal recorded at today's close is simply looked up again as Pas 2's
+   `signal_date` on the next iteration. Entry-time rejections (section 2)
+   are recorded as `EntryDisposition` objects, never silently dropped;
+   `SUPPRESSED_STAGE_BOUNDARY` fires for a signal on the stage's own last
+   session with no price ever read for it, matching section 2 item 1
+   exactly. See the outstanding-obligations list above for what this loop
+   deliberately takes as an external input rather than deriving itself
+   (entry-signal matching, invalidation-lane evaluation).
+2. **Mandatory plan validation before running.** `engine.run_stage()` is
+   the one real "run a stage" entry point: it calls
+   `plan_integration.accept_research_plan()` FIRST and raises
+   `PlanNotAcceptedError` without ever constructing a `SessionEngine` if
+   the plan is rejected. `SessionEngine` itself stays directly callable
+   (for tests exercising the loop in isolation, the same way `session.py`
+   itself is unit-tested), but the only path that also carries a
+   `ResearchPlan`/`HypothesisRegistry` runs the gate unconditionally.
+3. **Exit-side slippage (section 9 / "amendament §13").** The amendment's
+   own section 9 already restates the base spec's SS13 formula in full,
+   including the fill formula this delivery was missing:
+   `F_x = nivel_fill` for the partial-profit tranche (no adverse slippage,
+   section 4), `F_x = nivel_fill·(1−d·s_x)` for any tranche closed via
+   stop or trend invalidation. `costs.apply_exit_slippage()` implements
+   this exactly (`s_x` = `CostAssumptions.slippage_exit_bps` via the new
+   `slippage_rate_from_bps()` helper); `costs.
+   net_return_for_tranche_with_slippage()` composes it with the existing,
+   untouched `tranche_net_return()` formula -- fully additive, so every
+   existing caller of `net_return_for_tranche()` (which still takes an
+   already-decided `F_x`, by the module's own original design) is
+   unaffected. `Tranche.exit_fill_price` itself is never overwritten with
+   the slipped value -- MAE/MFE deliberately tracks the raw market level
+   the price actually reached, never this engine's own execution
+   slippage.
+4. **Stage-end classification and aggregate cost evaluation.**
+   `engine.evaluate_stage_results()` runs `taxonomy.classify_position()`
+   plus section 9's aggregation (`compute_w`/`aggregate_position_return`,
+   `net_return_for_tranche_with_slippage()` for a closed tranche,
+   `open_remainder_net_return()` for a still-open/censored remainder)
+   per position, returning `None` wherever the facet is not EVALUABLE --
+   section 10's explicit rule, never a number for an UNEVALUABLE or
+   EXIT_FAILED position.
+   `tests/spec005/test_34_stop_managed_integrated_pas0_to_6.py` is the
+   integrated demonstration: two securities across one 6-session stage --
+   one entered with partial profit, reconciled through a mid-life 2-for-1
+   split at Pas 0, then stopped out (CLOSED, EVALUABLE); the other,
+   Control variant, with a trend invalidation detected at the STAGE'S OWN
+   LAST close, whose scheduled fill falls in the next stage and is never
+   read (CENSORED_AT_HORIZON, EVALUABLE, `pending_exit_note` recorded --
+   section 10's central regression #9 case). Where a value depends on
+   ATR-driven trailing-stop drift (already covered numerically by
+   `test_21`-`test_25`), the test cross-checks `evaluate_stage_results()`'s
+   number against the same cost primitives applied directly to the
+   position's own actually-recorded tranche fields, rather than
+   re-deriving Wilder's ATR by hand a second time; the still-open
+   remainder's return (no ATR dependence at all) is hand-verified
+   directly. `tests/spec005/test_33_stop_managed_session_engine.py` covers
+   `SUPPRESSED_STAGE_BOUNDARY` and the `run_stage()` gate in isolation.
 
 5. **The single-query ATR rewrite (finding #2 above) silently accepted a
    missing signal-session bar.** `compute_atr_basis_reconciliation()`

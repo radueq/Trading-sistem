@@ -2,8 +2,16 @@
 (docs/spec005_exit_amendment_v1.0.md, ACCEPTED, section 9)."""
 import pytest
 
-from backtest.exits.costs import aggregate_position_return, compute_w, open_remainder_net_return, tranche_net_return
-from backtest.exits.entities import StopManagedPosition
+from backtest.exits.costs import (
+    aggregate_position_return,
+    apply_exit_slippage,
+    compute_w,
+    net_return_for_tranche_with_slippage,
+    open_remainder_net_return,
+    slippage_rate_from_bps,
+    tranche_net_return,
+)
+from backtest.exits.entities import EXIT_REASON_INVALIDATION, EXIT_REASON_STOP, EXIT_REASON_TARGET, StopManagedPosition, Tranche
 
 
 def test_long_closed_tranche_no_costs():
@@ -69,3 +77,59 @@ def test_compute_w_is_the_configured_fraction_once_target_triggers():
 def test_compute_w_is_zero_for_control_variant():
     pos = _base_position(fraction=None, target_price=None, r_multiple=None)
     assert compute_w(pos) == 0.0
+
+
+# --------------------------------------------------------------------------
+# Amendment section 9 (base spec SS13, restated there in full) -- the
+# exit-side slippage formula: F_x = nivel_fill for the partial-profit
+# tranche ("fara slippage advers", section 4), F_x = nivel_fill*(1-d*s_x)
+# for any tranche closed via stop or trend invalidation.
+# --------------------------------------------------------------------------
+
+def test_slippage_rate_from_bps_is_a_plain_division():
+    assert slippage_rate_from_bps(100.0) == pytest.approx(0.01)
+    assert slippage_rate_from_bps(0.0) == 0.0
+
+
+def test_target_tranche_never_receives_adverse_slippage():
+    assert apply_exit_slippage("LONG", 120.0, EXIT_REASON_TARGET, slippage_exit_rate=0.05) == 120.0
+    assert apply_exit_slippage("SHORT", 80.0, EXIT_REASON_TARGET, slippage_exit_rate=0.05) == 80.0
+
+
+def test_long_stop_slippage_makes_the_fill_worse_lower():
+    # d=+1: F_x = 95*(1 - 1*0.01) = 94.05 -- a worse (lower) sale price.
+    assert apply_exit_slippage("LONG", 95.0, EXIT_REASON_STOP, slippage_exit_rate=0.01) == pytest.approx(94.05)
+
+
+def test_short_stop_slippage_makes_the_fill_worse_higher():
+    # d=-1: F_x = 105*(1 - (-1)*0.01) = 106.05 -- a worse (higher) buy-back price.
+    assert apply_exit_slippage("SHORT", 105.0, EXIT_REASON_STOP, slippage_exit_rate=0.01) == pytest.approx(106.05)
+
+
+def test_invalidation_tranche_gets_the_same_adverse_slippage_as_a_stop():
+    assert apply_exit_slippage("LONG", 95.0, EXIT_REASON_INVALIDATION, slippage_exit_rate=0.01) == pytest.approx(94.05)
+
+
+def test_net_return_for_tranche_with_slippage_applies_the_worse_fill_before_the_return_formula():
+    tranche = Tranche(
+        kind="REMAINDER", exit_reason=EXIT_REASON_STOP, fraction_of_original=1.0,
+        exit_date="2024-02-01", exit_fill_price=95.0, holding_days=10, entry_fill_price_reference=100.0,
+    )
+    # F_x = 95*(1-0.01) = 94.05 -> d*(94.05-100)/100 = -0.0595, no other costs.
+    r = net_return_for_tranche_with_slippage(
+        tranche, "LONG", commission_entry_rate=0.0, commission_exit_rate=0.0, borrow_annual_rate=0.0,
+        slippage_exit_rate=0.01,
+    )
+    assert r == pytest.approx(-0.0595)
+
+
+def test_net_return_for_tranche_with_slippage_leaves_a_target_tranche_unslipped():
+    tranche = Tranche(
+        kind="PARTIAL_PROFIT", exit_reason=EXIT_REASON_TARGET, fraction_of_original=0.5,
+        exit_date="2024-02-01", exit_fill_price=120.0, holding_days=10, entry_fill_price_reference=100.0,
+    )
+    r = net_return_for_tranche_with_slippage(
+        tranche, "LONG", commission_entry_rate=0.0, commission_exit_rate=0.0, borrow_annual_rate=0.0,
+        slippage_exit_rate=0.01,
+    )
+    assert r == pytest.approx(0.20)
