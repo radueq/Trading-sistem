@@ -54,6 +54,31 @@ def apply_exit_slippage(direction: str, level_fill: float, exit_reason: str, sli
     return level_fill * (1.0 - d * slippage_exit_rate)
 
 
+def apply_entry_slippage(direction: str, level_fill: float, slippage_entry_rate: float) -> float:
+    """Session Engine & Integration review round 1, finding #1: the
+    amendment's section 9 restates F_x's sub-formula explicitly (stop/
+    invalidation vs. target), but describes F_e only as "fill-ul de
+    intrare, comun ambelor tranșe" -- no symbolic entry-side sub-formula
+    is given there for `CostAssumptions.slippage_entry_bps` to plug into.
+    This is the derived counterpart of `apply_exit_slippage()`'s own
+    construction, built from the SAME principle (slippage always makes
+    the fill WORSE for the trader, never better) rather than quoted
+    verbatim from the amendment -- flagged here explicitly so a reviewer
+    can independently check or correct the derivation:
+
+    Raw return is `d*(F_x/F_e - 1)`. For LONG (d=1), INCREASING F_e
+    strictly decreases this -- so an adverse entry fill for a LONG is a
+    HIGHER price (paying more to buy): `F_e = nivel_fill*(1+s_e)`. For
+    SHORT (d=-1), DECREASING F_e strictly decreases the (sign-flipped)
+    return -- so an adverse entry fill for a SHORT is a LOWER price
+    (receiving less to sell to open): `F_e = nivel_fill*(1-s_e)`. Both
+    collapse to the single signed form below -- the exact mirror of
+    `apply_exit_slippage()`'s `(1-d*s_x)`, with the sign on `d` flipped
+    because entering and exiting are opposite economic actions."""
+    d = _direction_sign(direction)
+    return level_fill * (1.0 + d * slippage_entry_rate)
+
+
 def tranche_net_return(
     direction: str, entry_fill: float, exit_fill: float,
     commission_entry_rate: float, commission_exit_rate: float,

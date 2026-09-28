@@ -56,7 +56,16 @@ from backtest.exits.entities import (
 from backtest.exits.taxonomy import classify_position
 from backtest.models.entities import CostAssumptions
 
+from hypothesis.registry.hypotheses import HypothesisRegistry
+
 from spec005.fixtures.pit_universe import insert_corporate_action, make_security
+from spec005.fixtures.stop_managed_variants import build_registered_stop_managed_hypothesis
+
+_ENTRY_COSTS = CostAssumptions(
+    commission_entry_rate=0.001, commission_exit_rate=0.002,
+    slippage_entry_bps=0.0, slippage_exit_bps=100.0,  # entry slippage tested separately (test_33)
+    borrow_annual_rate=0.0365,
+)
 
 L1, L2, L3 = "2024-03-01", "2024-03-02", "2024-03-03"
 D1, D2, D3, D4, D5, D6 = (
@@ -141,10 +150,14 @@ def test_integrated_pas0_through_6_two_securities_stage_limits_and_aggregate_cos
         (D6, 53.0, 61.0, 52.0, 60.0),
     ])
 
+    registry = HypothesisRegistry()
+    hid_a, vid_a = build_registered_stop_managed_hypothesis(registry, k=2.0, r_multiple=2.0, fraction=0.5, signature_id="SIG_ENGINE_A")
+    hid_b, vid_b = build_registered_stop_managed_hypothesis(registry, k=2.0, signature_id="SIG_ENGINE_B")  # Control: no partial_profit
+
     pit = _UnboundedAccess(conn)
     entry_signals = {
-        (sec_a, D1): EntrySignal(security_id=sec_a, direction="LONG", k=2.0, r_multiple=2.0, fraction=0.5),
-        (sec_b, D1): EntrySignal(security_id=sec_b, direction="LONG", k=2.0),  # Control: no partial_profit
+        (sec_a, D1): EntrySignal(security_id=sec_a, strategy_variant_id=vid_a),
+        (sec_b, D1): EntrySignal(security_id=sec_b, strategy_variant_id=vid_b),
     }
 
     def same_day_evidence(security_id, session_date):
@@ -153,8 +166,9 @@ def test_integrated_pas0_through_6_two_securities_stage_limits_and_aggregate_cos
         return frozenset()
 
     engine = SessionEngine(
-        pit=pit, session_dates=SESSION_DATES, entry_signals=entry_signals,
-        invalidation_observer=_never_invalidated_except(sec_b, D6),
+        pit=pit, session_dates=SESSION_DATES, registry=registry, accepted_hypothesis_ids=frozenset({hid_a, hid_b}),
+        entry_signals=entry_signals, invalidation_observer=_never_invalidated_except(sec_b, D6),
+        cost_assumptions=_ENTRY_COSTS,
         same_day_split_evidence=same_day_evidence, volatility_config=_VOL_CFG, stage_end_date=STAGE_END_DATE,
     )
     result = engine.run()
@@ -208,11 +222,7 @@ def test_integrated_pas0_through_6_two_securities_stage_limits_and_aggregate_cos
 
     # -- Aggregate net_return (section 9), WITH exit-side slippage (section
     # 9 / amendament §13) applied only to the STOP/INVALIDATION legs. --
-    costs = CostAssumptions(
-        commission_entry_rate=0.001, commission_exit_rate=0.002,
-        slippage_entry_bps=0.0, slippage_exit_bps=100.0,  # 1% exit slippage
-        borrow_annual_rate=0.0365,
-    )
+    costs = _ENTRY_COSTS
     positions = [pos_a, pos_b]
     outcomes = [outcome_a, outcome_b]
     results = evaluate_stage_results(positions, outcomes, costs, STAGE_END_DATE, result.final_closes)

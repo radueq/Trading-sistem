@@ -41,6 +41,14 @@ ENTRY_NO_ENTRY_BAR = "NO_ENTRY_BAR"
 ENTRY_NO_VALID_STOP_BASIS = "NO_VALID_STOP_BASIS"
 ENTRY_INVALID_PROTECTIVE_LEVELS = "INVALID_PROTECTIVE_LEVELS"
 
+# Session Engine & Integration review round 1, finding #5: an entry
+# signal must resolve to a REAL variant, belonging to the PLAN'S OWN
+# accepted cohort, whose exit_family this engine actually implements --
+# checked BEFORE any price is read, exactly like the four reasons above.
+ENTRY_VARIANT_NOT_FOUND = "VARIANT_NOT_FOUND"
+ENTRY_VARIANT_NOT_IN_ACCEPTED_COHORT = "VARIANT_NOT_IN_ACCEPTED_COHORT"
+ENTRY_UNSUPPORTED_EXIT_FAMILY = "UNSUPPORTED_EXIT_FAMILY"
+
 # Exit reasons for a single tranche.
 EXIT_REASON_TARGET = "TARGET"
 EXIT_REASON_STOP = "STOP"

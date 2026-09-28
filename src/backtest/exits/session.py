@@ -240,6 +240,23 @@ def advance_intrabar(
     return pos, tuple(executed)
 
 
+def mark_session_data_unavailable(position: StopManagedPosition) -> StopManagedPosition:
+    """Session Engine & Integration review round 1, finding #2: a session
+    whose own bar is entirely missing, or whose OHLC is incomplete
+    (missing open/high/low), means Pas 3' (stop/target monitoring) could
+    not run for it at all -- a REAL breach could have happened and gone
+    undetected. This is the same "path not fully demonstrated" concept
+    `update_trailing_stop_at_close()` already uses for an unusable ATR
+    (section 10) -- just a different root cause (missing price data
+    instead of a bad indicator value) -- so it reuses `trailing_path_
+    incomplete`, set permanently: a LATER session's data recovering does
+    NOT repair this, mirroring section 5's own persistent-incompleteness
+    principle (stated there for an invalidation-observation gap) exactly."""
+    if position.closed or position.remaining_quantity <= 0:
+        return position
+    return dataclasses.replace(position, trailing_path_incomplete=True)
+
+
 def update_trailing_stop_at_close(position: StopManagedPosition, close_price: float, atr_today: Optional[float]) -> StopManagedPosition:
     """Amendment section 3: S_next computed at close(t), becomes S_activ
     only from session t+1 -- never applied retroactively to today's own

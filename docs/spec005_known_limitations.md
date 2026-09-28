@@ -7,15 +7,17 @@ implementing `docs/spec005_exit_amendment_v1.0.md` (ACCEPTED).
 and 3, plus a narrow round-3-follow-up regression fix) after the initial
 delivery (`cb9d67f`), then a further delivery -- "Session Engine &
 Integration" -- addressing the four obligations that remained after the
-round-3 follow-up was accepted (`0ed78ca`): the multi-security session
-loop, the mandatory ResearchPlan acceptance gate wired to a real run
-entry point, the exit-side slippage formula, and an integrated Pas 0-6
-test with stage-limit and aggregate-cost coverage. This document
-describes what each delivery does; it is not itself a claim of
+round-3 follow-up was accepted (`0ed78ca`). That delivery's own first
+review round (`76c0877`) found six further problems (entry slippage never
+applied, missing/incomplete session data silently skipped, a stale final
+mark, `stage_end_date` not actually bounding the loop, entry signals not
+tied to the plan's own resolved variant, and the integrated test not
+exercising the real `run_stage()`/`BoundedPITAccess` path) -- all six are
+fixed in a further follow-up, described in its own section below. This
+document describes what each delivery does; it is not itself a claim of
 acceptance -- as of this writing the baseline commit last confirmed
-ACCEPTED by review is `0ed78ca`, and whether the Session Engine &
-Integration delivery below closes Batch 3 is for that same review to
-say.**
+ACCEPTED by review is `0ed78ca`, and whether the fixes below close Batch 3
+is for that same review to say.**
 
 ## What Batch 3 delivers vs. what remains outstanding
 
@@ -312,3 +314,124 @@ Addresses the four obligations named after the round-3-follow-up
    history`, `test_missing_signal_session_bar_prevents_the_position_
    from_opening` (the latter exercised through `open_stop_managed_
    position()` itself, confirming the position is never created).
+
+## Session Engine & Integration review, round 1 corrections
+
+Review of `76c0877` found the loop, the exit-side slippage wiring, and the
+mandatory-gate SHAPE all real progress, but identified six further
+problems -- all fixed here:
+
+1. **Entry slippage was never applied.** `_evaluate_pending_entry()`
+   (renamed from `_execute_pending_entry()`) used to set
+   `entry_fill_price = bar.split_adjusted_open` directly -- two plans with
+   different `slippage_entry_bps` produced the identical entry fill,
+   protection levels, and aggregate return. The amendment's own section 9
+   restates F_x's sub-formula explicitly but describes F_e only as
+   "fill-ul de intrare" with no symbolic entry-side sub-formula --
+   `costs.apply_entry_slippage()` is the DERIVED counterpart (documented,
+   not quoted) of `apply_exit_slippage()`'s own construction: `F_e =
+   nivel_fill*(1+d*s_e)`, always adverse to the trader (a higher buy price
+   for LONG, a lower sell-to-open price for SHORT). Applied BEFORE
+   `open_stop_managed_position()` is ever called, so `S_initial`/target/
+   the aggregate return all reflect it. Regressions (`test_33`):
+   `test_entry_slippage_long_shifts_fill_protection_and_aggregate_return`,
+   `test_entry_slippage_short_shifts_fill_protection_and_aggregate_return`
+   -- both check the fill, the resulting protective level, AND the
+   aggregate net_return.
+2. **A missing or incomplete session bar was silently skipped.** Pas 3'
+   used a bare `continue` when a bar was absent or had a `None` open/high/
+   low, and the close(t) trailing-stop update was simply never reached
+   either (its own guard already required `bar is not None`) -- neither
+   path recorded that a REAL stop/target breach could have gone
+   undetected that session. `session.mark_session_data_unavailable()`
+   sets `trailing_path_incomplete=True` PERMANENTLY for exactly this case
+   -- reusing that existing reason (not inventing a new one) because the
+   underlying concept is identical to an unusable ATR (section 10): the
+   stop's own forward path is not fully demonstrated, whatever the root
+   cause. A later session's data recovering does not repair it. Two
+   separate regressions (`test_33`):
+   `test_missing_bar_marks_trailing_path_incomplete_permanently` (the
+   session has no bar at all) and
+   `test_incomplete_ohlc_marks_trailing_path_incomplete_permanently` (the
+   bar exists but `low` is `None`) -- both prove the flag survives later
+   sessions' clean data.
+3. **The final mark could come from a stale, earlier session.**
+   `_last_close` only updated when a close was actually observed, so a
+   missing bar on the stage's OWN last session silently left the PRIOR
+   session's close in place, indistinguishable from a genuine final mark.
+   The engine now tracks `(close_price, session_date)` per security and
+   only reports a `final_closes` value when that date equals the last
+   session actually run; otherwise `None` -- correctly propagating into
+   `classify_position()`'s `final_mark_available=False` ->
+   `CENSORED_MARK_UNAVAILABLE`, never silently substituted.
+   `evaluate_stage_results()` additionally raises if it is ever asked to
+   compute a still-open remainder's return with no mark in `final_closes`
+   -- a caller/outcome mismatch, not a value to paper over. Regression
+   (`test_33`): `test_final_close_from_a_stale_earlier_session_is_never_
+   used_as_the_mark`.
+4. **`stage_end_date` did not actually bound the loop.** The engine
+   iterated every date in `session_dates` regardless of a narrower
+   declared `stage_end_date`, and (separately) never checked its own
+   `stage_end_date` against the REAL PIT facade's own authorized
+   `boundary.max_as_of`. `SessionEngine.__init__()` now refuses
+   construction outright -- before a single session runs, before any PIT
+   read -- if `session_dates` contains anything past `stage_end_date`, or
+   if `stage_end_date` itself exceeds `pit.boundary.max_as_of` (checked
+   via `getattr`, so the existing `_UnboundedAccess`/`_EmptyAccess` test
+   doubles, which expose no `.boundary`, are unaffected). Regressions
+   (`test_33`): `test_session_dates_beyond_stage_end_date_is_refused_at_
+   construction`, `test_stage_end_date_beyond_the_pit_facades_own_
+   boundary_is_refused_at_construction`; `test_35` (below) additionally
+   runs the whole scenario through a REAL `BoundedPITAccess`/
+   `StageAccessBoundary`.
+5. **The plan-acceptance gate didn't tie to the simulation it authorized.**
+   `run_stage()` called `accept_research_plan()` -- real progress -- but
+   then handed `SessionEngine` an `EntrySignal` carrying its OWN
+   `direction`/`k`/`r_multiple`/`fraction`, completely independent of the
+   accepted cohort; even the gate's own positive test used an EMPTY
+   cohort while still authorizing a STOP_MANAGED entry to run. `EntrySignal`
+   now carries ONLY `security_id`/`strategy_variant_id` -- the engine
+   resolves the REAL `StrategyVariant` via `registry.get_variant()`,
+   requires `variant.parent_hypothesis_id` to be IN
+   `accepted_hypothesis_ids` (which `run_stage()` derives from
+   `plan.hypothesis_cohort_ids`, never a caller-asserted set), requires
+   `exit_hypothesis.exit_family == STOP_MANAGED_INVALIDATION` (the only
+   family this engine has mechanics for), and derives
+   direction/k/r_multiple/fraction from that SAME real variant/its parent
+   hypothesis -- never from caller-typed fields. Any failure
+   (`ENTRY_VARIANT_NOT_FOUND`, `ENTRY_VARIANT_NOT_IN_ACCEPTED_COHORT`,
+   `ENTRY_UNSUPPORTED_EXIT_FAMILY`) is rejected before any price is read,
+   exactly like the four amendment section-2 reasons. `run_stage()` also
+   now threads `plan.cost_assumptions` through to `SessionEngine` itself
+   (previously cost assumptions were not even a `SessionEngine`
+   parameter at all). Regressions (`test_33`): five new tests covering
+   variant-not-found, off-cohort, unsupported-family, and both the
+   `run_stage()`-level gate-rejects and gate-ties-to-cohort cases.
+6. **The integrated test never exercised the real, obligatory path.**
+   `test_34` called `SessionEngine` directly against the `_UnboundedAccess`
+   stand-in, never `run_stage()` or a real `BoundedPITAccess`/
+   `StageAccessBoundary`, and its only invalidation was detected at the
+   stage's OWN last close (never executed in-stage, so Pas 1's own
+   priority over a same-day stop/target was never actually exercised).
+   `test_34` itself is updated for the new `EntrySignal`/`SessionEngine`
+   signature (real registered variants via `spec005.fixtures.
+   stop_managed_variants`) and continues to serve as the mechanism-level
+   demonstration (`SessionEngine` called directly, the same way
+   `session.py`'s own functions are unit-tested in isolation).
+   `tests/spec005/test_35_stop_managed_run_stage_end_to_end.py` is NEW:
+   it goes through `run_stage()` itself, against a real `BoundedPITAccess`
+   bounded by a real `StageAccessBoundary`, with a genuinely accepted
+   STOP_MANAGED plan, nonzero costs (BOTH entry and exit slippage), and a
+   trend invalidation detected mid-stage and EXECUTED at the very next
+   in-stage session's open -- on a day whose own low would ALSO have
+   breached the stop, had Pas 3' ever run for it. It asserts the closing
+   tranche's `exit_reason` is `INVALIDATION`, never `STOP`, proving Pas 1
+   ran first and retired the position before Pas 3' was ever reached.
+
+A shared test helper, `tests/spec005/fixtures/stop_managed_variants.py`
+(`build_registered_stop_managed_hypothesis()`,
+`build_accepted_stop_managed_plan()`), factors out the
+StrategyHypothesis/StrategyVariant/ResearchPlan construction test_32
+already used inline -- now reused by test_33/34/35 as well, since all
+three now need a REAL registered variant, not a caller-typed parameter
+dict.
