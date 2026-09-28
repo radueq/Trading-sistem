@@ -10,7 +10,13 @@ hand-verifiable, and this test exploits exactly that.
 """
 import pytest
 
-from backtest.exits.protection import check_new_splits_authorized_at_open, compute_atr_basis_reconciliation, compute_atr_from_bars
+from backtest.exits.entities import ENTRY_NO_VALID_STOP_BASIS
+from backtest.exits.protection import (
+    check_new_splits_authorized_at_open,
+    compute_atr_basis_reconciliation,
+    compute_atr_from_bars,
+    open_stop_managed_position,
+)
 
 from spec005.fixtures.pit_universe import insert_corporate_action, make_security
 from data_foundation.model import repository as repo
@@ -310,3 +316,51 @@ def test_split_within_window_disclosed_late_without_evidence_is_rejected(conn, n
     )
     assert atr is None
     assert "act_nonuniform_b" in diagnostics
+
+
+# --------------------------------------------------------------------------
+# GPT review round 3 follow-up: the round-3 single-query rewrite dropped
+# the explicit check that a bar dated EXACTLY signal_date exists,
+# silently accepting the latest bar on or before it instead. ATR_14(s) is
+# defined AT the signal session -- not at whatever session happens to
+# precede it when that session's own bar is missing (a data gap, or a
+# signal_date the calendar the caller used doesn't actually align with
+# this security's own trading history).
+# --------------------------------------------------------------------------
+
+def test_missing_signal_session_bar_is_rejected_even_with_sufficient_history(conn, now):
+    """Enough history exists for the window (3 bars, window=3), but none
+    of them is dated the signal session itself. The previous
+    implementation (pre-round-3) rejected this via SIGNAL_BAR_MISSING;
+    the round-3 rewrite silently computed ATR as of 2024-01-10 (the
+    latest bar on or before signal_date) and reported it as ATR_14(s) --
+    this must reject instead, exactly like before."""
+    sec = make_security(conn, "spec005:ATR_RECON_SIGMISSING", now)
+    _insert_flat_range_bars(conn, sec, now, ["2024-01-08", "2024-01-09", "2024-01-10"], high=102.0, low=98.0, close=100.0)
+    signal_date = "2024-01-11"  # no bar exists for this date
+    entry_date = "2024-01-12"
+    pit = _UnboundedAccess(conn)
+
+    atr, diagnostics = compute_atr_basis_reconciliation(
+        pit, sec, signal_date, entry_date, same_day_evidence=frozenset(), volatility_config=_VOL_CFG,
+    )
+    assert atr is None
+    assert diagnostics == ("SIGNAL_BAR_MISSING",)
+
+
+def test_missing_signal_session_bar_prevents_the_position_from_opening(conn, now):
+    """Same configuration, exercised through the actual entry
+    orchestration -- the position must not open, via
+    ENTRY_NO_VALID_STOP_BASIS, not merely the lower-level diagnostic."""
+    sec = make_security(conn, "spec005:ATR_RECON_SIGMISSING_ENTRY", now)
+    _insert_flat_range_bars(conn, sec, now, ["2024-01-08", "2024-01-09", "2024-01-10"], high=102.0, low=98.0, close=100.0)
+    signal_date = "2024-01-11"
+    entry_date = "2024-01-12"
+    pit = _UnboundedAccess(conn)
+
+    position, rejection = open_stop_managed_position(
+        pit, sec, "LONG", signal_date, entry_date, entry_fill_price=100.0, k=2.0, r_multiple=None, fraction=1.0,
+        volatility_config=_VOL_CFG,
+    )
+    assert position is None
+    assert rejection == ENTRY_NO_VALID_STOP_BASIS

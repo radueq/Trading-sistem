@@ -209,3 +209,23 @@ NOT reopened here. It found four remaining problems, all now fixed:
    `test_empty_bars_still_includes_the_known_zero_excursion_at_entry`
    (MAE=0%, MFE=+10%), `test_empty_bars_pure_loss_never_reports_a_
    positive_mfe` (MAE=-10%, MFE=0%).
+
+Round 3 review of this round's own delta (`24cd4f0`) found one further
+regression, since fixed:
+
+5. **The single-query ATR rewrite (finding #2 above) silently accepted a
+   missing signal-session bar.** `compute_atr_basis_reconciliation()`
+   filtered `bars_as_of_entry` to `date <= signal_date` and checked only
+   the resulting count -- if no bar was dated exactly `signal_date` (a
+   data gap, or a `signal_date` misaligned with this security's own
+   trading calendar), it silently computed ATR as of whatever session
+   preceded it and reported that as ATR_14(s). An explicit
+   `_find_bar(bars_as_of_entry, signal_date)` check is restored before
+   the window is built -- missing signal bar rejects via
+   `SIGNAL_BAR_MISSING`, propagated by `open_stop_managed_position()`
+   into `ENTRY_NO_VALID_STOP_BASIS` like every other basis-rejection
+   reason. Regressions (`test_22`):
+   `test_missing_signal_session_bar_is_rejected_even_with_sufficient_
+   history`, `test_missing_signal_session_bar_prevents_the_position_
+   from_opening` (the latter exercised through `open_stop_managed_
+   position()` itself, confirming the position is never created).

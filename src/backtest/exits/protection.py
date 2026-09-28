@@ -183,12 +183,29 @@ def compute_atr_basis_reconciliation(
     for it. PIT-safety: this uses ONLY facts known as of `entry_date` (our
     actual "now" when computing the trade's initial protection) to
     correctly re-express HISTORICAL bars -- never anything known only
-    after entry_date."""
+    after entry_date.
+
+    GPT review round 3 follow-up: the single-query rewrite above dropped
+    the explicit check that a bar dated EXACTLY `signal_date` exists.
+    ATR_14(s) is defined at the signal session itself (section 3) -- not
+    at whatever session happens to be the latest one on or before it.
+    Filtering `bars_as_of_entry` to `date <= signal_date` and checking
+    only the resulting COUNT silently accepts a window whose last bar is
+    an earlier session (e.g. a data gap or a non-trading day misalignment
+    leaves no bar dated `signal_date`), producing an ATR computed as of
+    that earlier session while it is reported and used as ATR_14(s). The
+    explicit `_find_bar(..., signal_date)` check below closes this:
+    missing signal-session bar is SIGNAL_BAR_MISSING, propagated by
+    `open_stop_managed_position` into ENTRY_NO_VALID_STOP_BASIS exactly
+    like every other basis-rejection reason here."""
     authorized, blocking = check_new_splits_authorized_at_open(pit, security_id, entry_date, same_day_evidence)
     if not authorized:
         return None, blocking
 
     bars_as_of_entry = pit.get_price_series_as_of(security_id, entry_date)
+    if _find_bar(bars_as_of_entry, signal_date) is None:
+        return None, ("SIGNAL_BAR_MISSING",)
+
     bars_window = [b for b in bars_as_of_entry if b.date <= signal_date]
     cfg = volatility_config or _DEFAULT_VOLATILITY_CONFIG
     if len(bars_window) < cfg["atr_window"]:
