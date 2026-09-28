@@ -219,6 +219,18 @@ class SessionEngine:
         self.registry = registry
         self.accepted_hypothesis_ids = frozenset(accepted_hypothesis_ids)
         self.entry_signals = entry_signals
+        for (key_security_id, key_variant_id, sig_date), signal in entry_signals.items():
+            if signal.security_id != key_security_id or signal.strategy_variant_id != key_variant_id:
+                raise ValueError(
+                    f"entry_signals key {(key_security_id, key_variant_id, sig_date)!r} does not match "
+                    f"its own EntrySignal's identity (security_id={signal.security_id!r}, "
+                    f"strategy_variant_id={signal.strategy_variant_id!r}) -- an inconsistent entry_signals "
+                    f"entry is rejected outright, before any PIT read or position mutation (round-2 review "
+                    f"follow-up finding: `_evaluate_pending_entry()` resolves and stores under `signal."
+                    f"strategy_variant_id`, never the key's own variant_id -- two keys naming DIFFERENT "
+                    f"key-variant_ids but the SAME signal.strategy_variant_id would silently overwrite one "
+                    f"another's stored position instead of being caught as the already-open case)"
+                )
         self.invalidation_observer = invalidation_observer
         self.cost_assumptions = cost_assumptions
         self.same_day_split_evidence = same_day_split_evidence

@@ -517,3 +517,37 @@ integration-level problems, all now fixed:
    positions` -- two variants with different `k` both open, both tracked
    distinctly, with correspondingly different `active_stop` values proving
    they are genuinely independent objects, not one shared/overwritten one.
+
+## Session Engine & Integration review, round 2 follow-up correction
+
+Review of `7bf2035` confirmed all three round-2 findings fixed, but found
+one further problem in finding #3's own fix: the `entry_signals` KEY
+`(security_id, strategy_variant_id, signal_date)` and the `EntrySignal`
+VALUE stored at it both carry `security_id`/`strategy_variant_id` --
+`_evaluate_pending_entry()` resolves the variant and stores the resulting
+position under `signal.strategy_variant_id` (the VALUE's own field),
+while the "already open" check at Pas 2 tests `(security_id, variant_id)
+in self._open_positions` using the KEY's fields. These were never checked
+against each other. Repro: a dict with key `(SEC, VAR_A, d1)` -> a
+correctly-matching `EntrySignal(SEC, VAR_A)` (opens fine), plus a SECOND
+entry, key `(SEC, VAR_B, d2)` -> an EntrySignal that still claims
+`strategy_variant_id=VAR_A` (a mismatched value) -- the "already open"
+check tests `(SEC, VAR_B)`, finds nothing, proceeds, then stores the
+result at `(SEC, VAR_A)` (from the signal's own field) -- silently
+overwriting the FIRST position with no trace it ever existed.
+
+`SessionEngine.__init__()` now validates every `entry_signals` entry
+before anything else runs: each key's `(security_id, strategy_variant_id)`
+must equal its own stored `EntrySignal`'s `(security_id,
+strategy_variant_id)` exactly, or construction raises immediately --
+before any PIT read, before any position is opened or overwritten.
+Regressions (`test_33`):
+`test_variant_mismatch_between_key_and_signal_is_rejected_at_construction`,
+`test_the_exact_overwrite_repro_is_rejected_before_either_signal_ever_runs`
+(the precise two-signal scenario above -- construction rejects the WHOLE
+`entry_signals` mapping, so neither signal ever runs),
+`test_security_mismatch_between_key_and_signal_is_rejected_at_
+construction`, and
+`test_consistent_keys_for_two_variants_on_the_same_security_still_
+construct_fine` (confirming the new check does not reject the
+already-accepted, valid two-variants case).

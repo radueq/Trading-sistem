@@ -643,3 +643,89 @@ def test_two_variants_on_the_same_security_same_day_both_open_independent_positi
     assert pos_by_variant[vid_a].active_stop == pytest.approx(100.0 - 2 * 8)
     assert pos_by_variant[vid_b].active_stop == pytest.approx(100.0 - 3 * 8)
     assert pos_by_variant[vid_a].active_stop != pos_by_variant[vid_b].active_stop
+
+
+# --------------------------------------------------------------------------
+# Session Engine & Integration review, round 2 follow-up: the entry_signals
+# KEY and the EntrySignal VALUE both carry security_id/strategy_variant_id
+# -- `_evaluate_pending_entry()` resolves and stores under the VALUE's own
+# `signal.strategy_variant_id`, never the key's, so two keys disagreeing
+# with their own signal's identity could silently collide (one position
+# overwriting another) instead of being caught by the "already open" check
+# (which reads the KEY). Construction now rejects any such mismatch
+# outright, before a single PIT read or position mutation.
+# --------------------------------------------------------------------------
+
+def test_variant_mismatch_between_key_and_signal_is_rejected_at_construction():
+    """Exact repro from review: key names VAR_B, but the signal stored at
+    that key still claims strategy_variant_id=VAR_A. Must be rejected
+    immediately -- never reaches Pas 2, never silently opens or overwrites
+    a position."""
+    registry = HypothesisRegistry()
+    hid_a, vid_a = build_registered_stop_managed_hypothesis(registry, k=2.0, signature_id="SIG_MISMATCH_A")
+    _hid_b, vid_b = build_registered_stop_managed_hypothesis(registry, k=3.0, signature_id="SIG_MISMATCH_B")
+    mismatched_signal = EntrySignal(security_id="SEC_MISMATCH", strategy_variant_id=vid_a)  # value says VAR_A
+    with pytest.raises(ValueError, match="does not match its own EntrySignal's identity"):
+        SessionEngine(
+            pit=_EmptyAccess(), session_dates=("2024-05-01", "2024-05-02"), registry=registry,
+            accepted_hypothesis_ids=frozenset({hid_a}),
+            entry_signals={("SEC_MISMATCH", vid_b, "2024-05-01"): mismatched_signal},  # key says VAR_B
+            invalidation_observer=_never_invalidated, cost_assumptions=_ZERO_COSTS,
+        )
+
+
+def test_the_exact_overwrite_repro_is_rejected_before_either_signal_ever_runs(conn, now):
+    """The precise two-signal reproduction from the review: key VAR_A with
+    a matching VAR_A signal (would open on D1->D2), and key VAR_B with a
+    MISMATCHED signal still claiming VAR_A (would silently overwrite the
+    first position at D2->D3, per the pre-fix bug). Both signals share the
+    same `entry_signals` dict, so construction must reject the WHOLE thing
+    -- neither ever runs, no position from either is ever created."""
+    registry = HypothesisRegistry()
+    hid_a, vid_a = build_registered_stop_managed_hypothesis(registry, k=2.0, signature_id="SIG_OVERWRITE_A")
+    hid_b, vid_b = build_registered_stop_managed_hypothesis(registry, k=3.0, signature_id="SIG_OVERWRITE_B")
+    sec = make_security(conn, "spec005:ENGINE_OVERWRITE_REPRO", now)
+    entry_signals = {
+        ("dummy_key_never_reached", vid_a, "2024-05-01"): EntrySignal(security_id="dummy_key_never_reached", strategy_variant_id=vid_a),
+        (sec, vid_b, "2024-05-02"): EntrySignal(security_id=sec, strategy_variant_id=vid_a),  # mismatched: key says VAR_B
+    }
+    with pytest.raises(ValueError, match="does not match its own EntrySignal's identity"):
+        SessionEngine(
+            pit=_EmptyAccess(), session_dates=("2024-05-01", "2024-05-02", "2024-05-03"), registry=registry,
+            accepted_hypothesis_ids=frozenset({hid_a, hid_b}), entry_signals=entry_signals,
+            invalidation_observer=_never_invalidated, cost_assumptions=_ZERO_COSTS,
+        )
+
+
+def test_security_mismatch_between_key_and_signal_is_rejected_at_construction():
+    registry = HypothesisRegistry()
+    hid, vid = build_registered_stop_managed_hypothesis(registry, signature_id="SIG_SECMISMATCH")
+    mismatched_signal = EntrySignal(security_id="SEC_REAL", strategy_variant_id=vid)
+    with pytest.raises(ValueError, match="does not match its own EntrySignal's identity"):
+        SessionEngine(
+            pit=_EmptyAccess(), session_dates=("2024-05-01", "2024-05-02"), registry=registry,
+            accepted_hypothesis_ids=frozenset({hid}),
+            entry_signals={("SEC_DIFFERENT_FROM_SIGNAL", vid, "2024-05-01"): mismatched_signal},
+            invalidation_observer=_never_invalidated, cost_assumptions=_ZERO_COSTS,
+        )
+
+
+def test_consistent_keys_for_two_variants_on_the_same_security_still_construct_fine():
+    """The new validation must never reject the ALREADY-ACCEPTED, VALID
+    case: two DIFFERENT variants on the SAME security, each key correctly
+    matching its own signal's identity. Construction succeeds (the full
+    behavioral proof that both run independently is
+    `test_two_variants_on_the_same_security_same_day_both_open_
+    independent_positions` above)."""
+    registry = HypothesisRegistry()
+    hid_a, vid_a = build_registered_stop_managed_hypothesis(registry, k=2.0, signature_id="SIG_CONSISTENT_A")
+    hid_b, vid_b = build_registered_stop_managed_hypothesis(registry, k=3.0, signature_id="SIG_CONSISTENT_B")
+    entry_signals = {
+        ("SEC_CONSISTENT", vid_a, "2024-05-01"): EntrySignal(security_id="SEC_CONSISTENT", strategy_variant_id=vid_a),
+        ("SEC_CONSISTENT", vid_b, "2024-05-01"): EntrySignal(security_id="SEC_CONSISTENT", strategy_variant_id=vid_b),
+    }
+    SessionEngine(
+        pit=_EmptyAccess(), session_dates=("2024-05-01", "2024-05-02"), registry=registry,
+        accepted_hypothesis_ids=frozenset({hid_a, hid_b}), entry_signals=entry_signals,
+        invalidation_observer=_never_invalidated, cost_assumptions=_ZERO_COSTS,
+    )  # must not raise
