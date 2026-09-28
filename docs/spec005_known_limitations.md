@@ -3,21 +3,29 @@
 Scope: `src/backtest/exits/` -- the STOP_MANAGED_INVALIDATION exit engine
 implementing `docs/spec005_exit_amendment_v1.0.md` (ACCEPTED).
 
-**Status: Batch 3 underwent three correction rounds (GPT review rounds 2
-and 3, plus a narrow round-3-follow-up regression fix) after the initial
-delivery (`cb9d67f`), then a further delivery -- "Session Engine &
-Integration" -- addressing the four obligations that remained after the
-round-3 follow-up was accepted (`0ed78ca`). That delivery's own first
-review round (`76c0877`) found six further problems (entry slippage never
-applied, missing/incomplete session data silently skipped, a stale final
-mark, `stage_end_date` not actually bounding the loop, entry signals not
-tied to the plan's own resolved variant, and the integrated test not
-exercising the real `run_stage()`/`BoundedPITAccess` path) -- all six are
-fixed in a further follow-up, described in its own section below. This
-document describes what each delivery does; it is not itself a claim of
-acceptance -- as of this writing the baseline commit last confirmed
-ACCEPTED by review is `0ed78ca`, and whether the fixes below close Batch 3
-is for that same review to say.**
+**Status: the general accepted baseline remains `3cdc532` (Spec #005
+Batch 2, patch round 5). Batch 3 underwent three correction rounds (GPT
+review rounds 2 and 3, plus a narrow round-3-follow-up fixing one
+regression -- the missing signal-session-bar check, specifically accepted
+in `0ed78ca` -- that acceptance covers ONLY that one regression, not
+`0ed78ca` as a whole, and not Batch 3's overall acceptance). A further
+delivery -- "Session Engine & Integration" -- then addressed the four
+obligations that remained after that follow-up: the multi-security session
+loop, the mandatory plan-acceptance gate, exit-side slippage, and an
+integrated Pas 0-6 test. That delivery's own first review round (`76c0877`)
+found six further problems (entry slippage never applied,
+missing/incomplete session data silently skipped, a stale final mark,
+`stage_end_date` not actually bounding the loop, entry signals not tied to
+the plan's own resolved variant, and the integrated test not exercising
+the real `run_stage()`/`BoundedPITAccess` path) -- all six fixed in a
+follow-up (`4560f93`). That follow-up's OWN review round then found three
+more integration-level problems (the executed stage not tied to the
+plan's own zone/calendar, `session_dates` not validated for strict
+order/uniqueness, and variant-keyed position bookkeeping missing --
+described in their own section below, also now fixed). This document
+describes what each delivery does; it is not itself a claim of
+acceptance -- Batch 3 as a whole remains unaccepted, and whether the
+fixes below close it is for review to say.**
 
 ## What Batch 3 delivers vs. what remains outstanding
 
@@ -435,3 +443,77 @@ StrategyHypothesis/StrategyVariant/ResearchPlan construction test_32
 already used inline -- now reused by test_33/34/35 as well, since all
 three now need a REAL registered variant, not a caller-typed parameter
 dict.
+
+## Session Engine & Integration review, round 2 corrections
+
+Review of `4560f93` confirmed entry slippage, persistent-incompleteness
+marking, and the stale-mark fix all correct, and confirmed `test_35`'s
+invalidation-over-stop priority proof. It found three further
+integration-level problems, all now fixed:
+
+1. **The executed stage was not tied to the plan's own zone periods.**
+   `run_stage()` used to accept an already-built `pit: BoundedPITAccess`
+   and a raw `session_dates` list -- nothing checked that the boundary
+   backing `pit` was actually DERIVED from `plan`'s own declared zone
+   dates. `test_35`'s own original fixture proved the gap: a plan with
+   Formation in January, run against April session dates under a
+   `StageAccessBoundary(zone=FORMATION_SELECTION, ...)` built completely
+   independently of the plan -- `run_stage()` accepted it. `run_stage()`
+   no longer takes a `pit` parameter AT ALL: it takes `conn`, `zone`, and
+   a real `TradingCalendar`, and BUILDS the `StageAccessBoundary` itself
+   via `zones.boundaries.build_stage_access_boundary_from_plan(plan,
+   zone)` (already-accepted Batch 1/2 logic, reused, not reimplemented),
+   then derives `session_dates` as EXACTLY that calendar's own sessions
+   within `[zone_start, boundary.max_as_of]`. There is structurally no
+   way left to hand `run_stage()` a period that disagrees with the plan's
+   own zone dates. Two further checks close the identity gap completely:
+   `trading_calendar.calendar_id` must equal `plan.trading_calendar_id`,
+   and the calendar must pass its own content-address verification.
+   `tests/spec005/fixtures/stop_managed_variants.py`'s
+   `build_accepted_stop_managed_plan()` now also builds a REAL
+   `TradingCalendar` bound to the plan by construction. Regressions
+   (`test_33`): `test_run_stage_rejects_a_trading_calendar_that_does_not_
+   belong_to_the_plan`, `test_run_stage_never_executes_sessions_outside_
+   the_plans_own_formation_zone` (a calendar deliberately wider than the
+   plan's Formation zone -- an April session is a real calendar session
+   but never evaluated; a January session is).
+2. **The calendar could be incomplete or out of order.** The prior
+   `session_dates` check only excluded dates past `stage_end_date` --
+   reversed order, duplicates, and a truncated list stopping before the
+   stage's own real last session all passed silently (repro: a calendar
+   declared through May 3rd, only May 1-2 actually supplied -- the stale
+   final-mark bug from round 1 remained reachable through exactly this
+   gap). `SessionEngine.__init__()` now rejects non-strictly-increasing
+   or duplicate `session_dates` outright. Completeness against a REAL
+   calendar is `run_stage()`'s own responsibility now (finding #1 above):
+   since it derives `session_dates` directly from a verified
+   `TradingCalendar`'s own sessions, there is no longer a caller-supplied
+   list that could be truncated or reordered on that path at all. The
+   final mark and any pending invalidation already referenced
+   `stage_end_date`/the loop's own last iterated session correctly (round
+   1's fix); with `run_stage()` now guaranteeing that list's completeness,
+   that reference point is trustworthy on the real path too. Regressions
+   (`test_33`): `test_session_dates_out_of_order_is_refused_at_
+   construction`, `test_duplicate_session_dates_is_refused_at_
+   construction`.
+3. **Variants of the same security suppressed each other.** Position
+   bookkeeping (`_open_positions`) and the `entry_signals` mapping were
+   both keyed by bare `security_id` -- two DIFFERENT accepted variants
+   signalling on the SAME security on the SAME day could not even both be
+   represented in the `entry_signals` dict (one key collision silently
+   overwrote the other), and even if they could, the "already open, not a
+   candidate" check would have suppressed the second variant's signal
+   entirely. `EntrySignal`/position bookkeeping are now keyed by
+   `(security_id, strategy_variant_id)` throughout -- the "at most one
+   open position" restriction is scoped to the VARIANT, never the bare
+   security. `StopManagedPosition` gained an additive, optional
+   `strategy_variant_id` field (default `None`, so every existing
+   hand-built `StopManagedPosition(...)` in `protection.py`/`session.py`/
+   `costs.py`/`taxonomy.py`'s own unit tests stays valid unchanged);
+   `SessionEngine` stamps it immediately after opening a position.
+   `EntryDisposition` gained the same field, so two variants' dispositions
+   for the same security/day stay distinguishable. Regression (`test_33`):
+   `test_two_variants_on_the_same_security_same_day_both_open_independent_
+   positions` -- two variants with different `k` both open, both tracked
+   distinctly, with correspondingly different `active_stop` values proving
+   they are genuinely independent objects, not one shared/overwritten one.

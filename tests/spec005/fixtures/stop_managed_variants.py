@@ -32,18 +32,23 @@ from hypothesis.models.entities import (
 )
 from hypothesis.registry.hypotheses import HypothesisRegistry, build_hypothesis_id, hypothesis_fingerprint, materialize_variants
 
+from backtest.data.calendar import build_trading_calendar
 from backtest.exits.entities import build_stop_managed_execution_semantics_profile_v1
 from backtest.models.entities import (
     RANKING_METRIC_STOP_MANAGED_V1,
+    CalendarSource,
     CostAssumptions,
     ExposureManifest,
     ResearchPlan,
     SelectionFold,
     SelectionRule,
+    TradingCalendar,
     build_execution_semantics_profile_v1,
     build_research_plan_id,
     research_plan_fingerprint,
 )
+
+from fixtures.market_data import business_days
 
 _EVIDENCE = dict(
     evaluation_run_id="run_x", evaluation_engine_version="v1.0.0", evaluation_config_version="cfg_eval",
@@ -101,17 +106,28 @@ def build_registered_stop_managed_hypothesis(
 
 def build_accepted_stop_managed_plan(
     hypothesis_cohort_ids: tuple[str, ...], cost_assumptions: Optional[CostAssumptions] = None,
+    calendar_session_dates: Optional[tuple[str, ...]] = None,
     **zone_overrides,
-) -> tuple[ResearchPlan, "StopManagedExecutionSemanticsProfile"]:
+) -> tuple[ResearchPlan, "StopManagedExecutionSemanticsProfile", TradingCalendar]:
     """A `ResearchPlan` that `accept_research_plan()` accepts for a cohort
     that includes at least one STOP_MANAGED_INVALIDATION variant: the new
     ranking metric, a real, verified `StopManagedExecutionSemanticsProfile`,
-    and a matching `stop_managed_execution_semantics_profile_id`. Returns
-    (plan, profile) -- the caller must pass `profile` back into
-    `accept_research_plan()`/`run_stage()`'s own `stop_managed_profile`
-    parameter."""
-    from backtest.exits.entities import StopManagedExecutionSemanticsProfile  # noqa: F401  (for the return type)
-
+    and a matching `stop_managed_execution_semantics_profile_id`. Also
+    builds a REAL `TradingCalendar` (`SYNTHETIC_TEST_FIXTURE`) covering
+    `[coverage_start, coverage_end]` (default `[formation_start,
+    locked_oos_start]`) and binds `plan.trading_calendar_id` to ITS actual
+    `calendar_id` -- `run_stage()` (Session Engine & Integration review,
+    round 2, finding #1) verifies this identity and derives the executed
+    session_dates from this SAME calendar's own sessions, so a
+    plan/calendar pair built here can never be run against a mismatched
+    period. `calendar_session_dates` defaults to business days over the
+    coverage window; pass an explicit tuple for a test that needs exact
+    control over which dates count as sessions (e.g. including a weekend
+    date on purpose, for a narrative that doesn't care about real-calendar
+    realism). Returns (plan, profile, trading_calendar) -- pass `profile`
+    into `accept_research_plan()`/`run_stage()`'s own `stop_managed_
+    profile` parameter, and `trading_calendar` into `run_stage()`'s own
+    `trading_calendar` parameter."""
     profile = build_stop_managed_execution_semantics_profile_v1()
     rule = SelectionRule(minimum_executed_trades=1, minimum_evaluable_trades=1, minimum_evaluable_ratio=0.5, ranking_metric=RANKING_METRIC_STOP_MANAGED_V1)
     exec_profile = build_execution_semantics_profile_v1()
@@ -119,14 +135,27 @@ def build_accepted_stop_managed_plan(
         commission_entry_rate=0.0, commission_exit_rate=0.0, slippage_entry_bps=0.0, slippage_exit_bps=0.0, borrow_annual_rate=0.0,
     )
     exposure = ExposureManifest(declared_unseen=True)
+    formation_start = zone_overrides.get("formation_start", "2024-01-01")
+    formation_end = zone_overrides.get("formation_end", "2024-01-31")
+    validation_start = zone_overrides.get("validation_start", "2024-02-01")
+    validation_end = zone_overrides.get("validation_end", "2024-02-29")
+    locked_oos_start = zone_overrides.get("locked_oos_start", "2024-03-01")
+    coverage_start = zone_overrides.get("coverage_start", formation_start)
+    coverage_end = zone_overrides.get("coverage_end", locked_oos_start)
+
+    calendar_session_dates = tuple(calendar_session_dates) if calendar_session_dates is not None else tuple(business_days(coverage_start, coverage_end))
+    calendar = build_trading_calendar(
+        source=CalendarSource.SYNTHETIC_TEST_FIXTURE.value, calendar_identifier="SPEC005_TEST_CALENDAR_SM",
+        calendar_version="v1", market="US_EQUITIES", timezone="America/New_York",
+        coverage_start=coverage_start, coverage_end=coverage_end, session_dates=calendar_session_dates,
+        session_open_time="09:30", session_close_time="16:00", verified_by="test", verified_at="2026-01-01T00:00:00Z",
+    )
+
     fields = dict(
-        formation_start=zone_overrides.get("formation_start", "2024-01-01"),
-        formation_end=zone_overrides.get("formation_end", "2024-01-31"),
-        validation_start=zone_overrides.get("validation_start", "2024-02-01"),
-        validation_end=zone_overrides.get("validation_end", "2024-02-29"),
-        locked_oos_start=zone_overrides.get("locked_oos_start", "2024-03-01"),
-        selection_folds=(SelectionFold("fold_1", "2024-01-01", "2024-01-31"),),
-        hypothesis_cohort_ids=tuple(hypothesis_cohort_ids), trading_calendar_id="cal_x",
+        formation_start=formation_start, formation_end=formation_end,
+        validation_start=validation_start, validation_end=validation_end, locked_oos_start=locked_oos_start,
+        selection_folds=(SelectionFold("fold_1", formation_start, formation_end),),
+        hypothesis_cohort_ids=tuple(hypothesis_cohort_ids), trading_calendar_id=calendar.calendar_id,
         benchmark_security_id="SBENCH", execution_semantics_profile_id=exec_profile.profile_id,
         selection_rule=rule, cost_assumptions=costs, exposure_manifest=exposure,
         stop_managed_execution_semantics_profile_id=profile.profile_id,
@@ -134,4 +163,4 @@ def build_accepted_stop_managed_plan(
     fp = research_plan_fingerprint(**fields)
     plan_id, plan_hash = build_research_plan_id(fp)
     plan = ResearchPlan(research_plan_id=plan_id, plan_hash=plan_hash, created_at="t", created_by="radu", **fields)
-    return plan, profile
+    return plan, profile, calendar

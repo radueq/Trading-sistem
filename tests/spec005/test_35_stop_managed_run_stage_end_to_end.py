@@ -1,14 +1,15 @@
 """TEST 35 -- Session Engine & Integration review, round 1, finding #6:
 the integrated demonstration must go through the REAL, obligatory public
 entry point (`engine.run_stage()`), against a REAL `BoundedPITAccess`
-bounded by a REAL `StageAccessBoundary` (never the `_UnboundedAccess`
-stand-in test_33/34 use to exercise the loop's own mechanics in
-isolation), with a genuinely ACCEPTED STOP_MANAGED_INVALIDATION plan,
-NONZERO costs (both entry and exit slippage), and a trend invalidation
-detected and EXECUTED WITHIN the stage (not merely at the stage's last
-close, which TEST 34 already covers) -- with explicit proof that Pas 1's
-scheduled invalidation fill takes priority over a stop breach the SAME
-session's own price action would otherwise have triggered.
+bounded by a REAL `StageAccessBoundary` DERIVED FROM THE PLAN ITSELF
+(round 2, finding #1 -- `run_stage()` builds the boundary/session_dates
+from `plan`+`zone`+a real `TradingCalendar`, never an independently
+constructed one), with a genuinely ACCEPTED STOP_MANAGED_INVALIDATION
+plan, NONZERO costs (both entry and exit slippage), and a trend
+invalidation detected and EXECUTED WITHIN the stage (not merely at the
+stage's last close, which TEST 34 already covers) -- with explicit proof
+that Pas 1's scheduled invalidation fill takes priority over a stop breach
+the SAME session's own price action would otherwise have triggered.
 """
 from __future__ import annotations
 
@@ -16,11 +17,9 @@ import pytest
 
 from data_foundation.model import repository as repo
 from data_foundation.model.entities import PriceBar
-from data_foundation.pit import access as pit_module
 
 from hypothesis.registry.hypotheses import HypothesisRegistry
 
-from backtest.data.pit_access import BoundedPITAccess
 from backtest.exits.costs import apply_entry_slippage, apply_exit_slippage, tranche_net_return
 from backtest.exits.engine import EntrySignal, evaluate_stage_results, run_stage
 from backtest.exits.entities import (
@@ -30,14 +29,13 @@ from backtest.exits.entities import (
     LIFECYCLE_CLOSED,
 )
 from backtest.exits.taxonomy import classify_position
-from backtest.models.entities import FORMATION_SELECTION, CostAssumptions, StageAccessBoundary
+from backtest.models.entities import FORMATION_SELECTION, CostAssumptions
 
 from spec005.fixtures.pit_universe import make_security
 from spec005.fixtures.stop_managed_variants import build_accepted_stop_managed_plan, build_registered_stop_managed_hypothesis
 
 L1, L2, L3 = "2024-04-01", "2024-04-02", "2024-04-03"
 D1, D2, D3, D4, D5 = "2024-04-04", "2024-04-05", "2024-04-06", "2024-04-07", "2024-04-08"
-SESSION_DATES = (D1, D2, D3, D4, D5)
 STAGE_END_DATE = D5
 
 _COSTS = CostAssumptions(
@@ -79,18 +77,27 @@ def test_run_stage_end_to_end_real_bounded_pit_invalidation_priority_over_stop(c
 
     registry = HypothesisRegistry()
     hid, vid = build_registered_stop_managed_hypothesis(registry, k=2.0)  # Control: no partial_profit
-    plan, profile = build_accepted_stop_managed_plan([hid], cost_assumptions=_COSTS)
-
-    boundary = StageAccessBoundary(zone=FORMATION_SELECTION, max_as_of=STAGE_END_DATE)
-    pit = BoundedPITAccess(conn, boundary)
+    # Formation zone = EXACTLY D1..D5 (round-2 review finding #1: the
+    # executed stage must be the plan's OWN declared period) -- D3/D4 fall
+    # on a real weekend, so `calendar_session_dates` is supplied
+    # explicitly rather than derived from `business_days()` (a
+    # SYNTHETIC_TEST_FIXTURE calendar; this test isn't claiming real-
+    # market realism for its dates, only that whatever the calendar
+    # declares as sessions is what gets executed).
+    plan, profile, calendar = build_accepted_stop_managed_plan(
+        [hid], cost_assumptions=_COSTS,
+        formation_start=D1, formation_end=D5, validation_start="2024-05-01", validation_end="2024-05-31",
+        locked_oos_start="2024-06-01", coverage_start=D1, coverage_end=D5,
+        calendar_session_dates=(D1, D2, D3, D4, D5),
+    )
 
     def observer(position, session_date):
         return "INVALIDATED" if session_date == D3 else "VALID_HOLD"
 
     signal = EntrySignal(security_id=sec, strategy_variant_id=vid)
     result = run_stage(
-        plan, registry, pit, session_dates=SESSION_DATES,
-        entry_signals={(sec, D1): signal}, invalidation_observer=observer, stop_managed_profile=profile,
+        plan, registry, conn, FORMATION_SELECTION, calendar,
+        entry_signals={(sec, vid, D1): signal}, invalidation_observer=observer, stop_managed_profile=profile,
         volatility_config={"atr_window": 3, "bb_window": 3, "bb_num_std": 2.0, "realized_vol_window": 3},
     )
 

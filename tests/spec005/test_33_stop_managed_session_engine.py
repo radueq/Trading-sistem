@@ -1,12 +1,14 @@
 """TEST 33 -- the SessionEngine's own orchestration concerns that no
 per-position unit test can exercise: SUPPRESSED_STAGE_BOUNDARY (amendment
-section 2, item 1), `run_stage()`'s mandatory plan-acceptance gate, and
-(Session Engine & Integration review, round 1) tying every entry signal to
-a REAL, registry-resolved `StrategyVariant` belonging to the plan's own
-accepted cohort -- rejecting an unresolvable variant, an off-cohort
-variant, or an unsupported exit family BEFORE any price is read. The full
-Pas 0-6 session order itself, across a real multi-security PIT universe,
-is TEST 34/35's job -- this file is deliberately narrower.
+section 2, item 1), `run_stage()`'s mandatory plan-acceptance gate, tying
+every entry signal to a REAL, registry-resolved `StrategyVariant` (rejecting
+an unresolvable variant, an off-cohort variant, or an unsupported exit
+family BEFORE any price is read), `run_stage()` scoping execution to the
+PLAN's own declared zone/calendar (never an independently supplied period),
+strict `session_dates` ordering, and variant-keyed position bookkeeping (two
+variants trading the same security concurrently, never suppressing each
+other). The full Pas 0-6 session order itself, across a real multi-security
+PIT universe, is TEST 34/35's job -- this file is deliberately narrower.
 """
 from __future__ import annotations
 
@@ -19,6 +21,7 @@ from data_foundation.pit import access as pit_module
 from hypothesis.registry.hypotheses import HypothesisRegistry
 
 from backtest.exits.engine import (
+    ENTRY_EXECUTED,
     EntryDisposition,
     EntrySignal,
     PlanNotAcceptedError,
@@ -27,6 +30,7 @@ from backtest.exits.engine import (
     run_stage,
 )
 from backtest.exits.entities import (
+    ENTRY_NO_ENTRY_BAR,
     ENTRY_SUPPRESSED_STAGE_BOUNDARY,
     ENTRY_UNSUPPORTED_EXIT_FAMILY,
     ENTRY_VARIANT_NOT_FOUND,
@@ -37,7 +41,8 @@ from backtest.exits.taxonomy import classify_position
 
 from spec005.fixtures.pit_universe import make_security
 from backtest.models.entities import (
-    RANKING_METRIC_V1,
+    FORMATION_SELECTION,
+    RANKING_METRIC_STOP_MANAGED_V1,
     CostAssumptions,
     ExposureManifest,
     ResearchPlan,
@@ -83,14 +88,15 @@ def test_signal_on_the_stage_last_session_is_suppressed_without_reading_any_pric
     signal = EntrySignal(security_id="SEC_ENG_SUPPRESSED", strategy_variant_id="var_never_looked_up")
     engine = SessionEngine(
         pit=_EmptyAccess(), session_dates=session_dates, registry=HypothesisRegistry(),
-        accepted_hypothesis_ids=frozenset(), entry_signals={("SEC_ENG_SUPPRESSED", last_session): signal},
+        accepted_hypothesis_ids=frozenset(),
+        entry_signals={("SEC_ENG_SUPPRESSED", "var_never_looked_up", last_session): signal},
         invalidation_observer=_never_invalidated, cost_assumptions=_ZERO_COSTS,
     )
     result = engine.run()
     assert result.positions == ()
     assert result.entry_dispositions == (
         EntryDisposition(
-            security_id="SEC_ENG_SUPPRESSED", signal_date=last_session,
+            security_id="SEC_ENG_SUPPRESSED", strategy_variant_id="var_never_looked_up", signal_date=last_session,
             entry_date="<beyond authorized stage>", disposition=ENTRY_SUPPRESSED_STAGE_BOUNDARY,
         ),
     )
@@ -107,7 +113,8 @@ def test_a_signal_on_any_earlier_session_reaches_the_real_entry_path():
     signal = EntrySignal(security_id="SEC_ENG_NOTSUPPRESSED", strategy_variant_id=vid)
     engine = SessionEngine(
         pit=_EmptyAccess(), session_dates=session_dates, registry=registry,
-        accepted_hypothesis_ids=frozenset({hid}), entry_signals={("SEC_ENG_NOTSUPPRESSED", session_dates[0]): signal},
+        accepted_hypothesis_ids=frozenset({hid}),
+        entry_signals={("SEC_ENG_NOTSUPPRESSED", vid, session_dates[0]): signal},
         invalidation_observer=_never_invalidated, cost_assumptions=_ZERO_COSTS,
     )
     with pytest.raises(AssertionError, match="get_price_series_as_of"):
@@ -120,7 +127,8 @@ def test_unresolvable_variant_id_is_rejected_before_any_price_read():
     signal = EntrySignal(security_id="SEC_ENG_NOVARIANT", strategy_variant_id="var_does_not_exist")
     engine = SessionEngine(
         pit=_EmptyAccess(), session_dates=session_dates, registry=registry,
-        accepted_hypothesis_ids=frozenset(), entry_signals={("SEC_ENG_NOVARIANT", session_dates[0]): signal},
+        accepted_hypothesis_ids=frozenset(),
+        entry_signals={("SEC_ENG_NOVARIANT", "var_does_not_exist", session_dates[0]): signal},
         invalidation_observer=_never_invalidated, cost_assumptions=_ZERO_COSTS,
     )
     result = engine.run()
@@ -138,7 +146,7 @@ def test_variant_outside_the_accepted_cohort_is_rejected_before_any_price_read()
     engine = SessionEngine(
         pit=_EmptyAccess(), session_dates=session_dates, registry=registry,
         accepted_hypothesis_ids=frozenset(),  # hid is NOT here
-        entry_signals={("SEC_ENG_OFFCOHORT", session_dates[0]): signal},
+        entry_signals={("SEC_ENG_OFFCOHORT", vid, session_dates[0]): signal},
         invalidation_observer=_never_invalidated, cost_assumptions=_ZERO_COSTS,
     )
     result = engine.run()
@@ -149,7 +157,7 @@ def test_unsupported_exit_family_is_rejected_before_any_price_read():
     """A variant whose OWN exit_family this engine has no mechanics for
     (TIME_EXIT here) must never be silently run through the
     STOP_MANAGED_INVALIDATION machinery."""
-    from hypothesis.models.entities import Direction, EntryDefinition, ExitHypothesis, HorizonCandidateSet, LaneStateCondition, ParameterSource
+    from hypothesis.models.entities import Direction, EntryDefinition, HorizonCandidateSet, LaneStateCondition, ParameterSource
     from hypothesis.registry.hypotheses import build_hypothesis_id, hypothesis_fingerprint, materialize_variants
     import dataclasses as dc
     from hypothesis.models.entities import EvidenceProvenance, HypothesisComplexitySnapshot, HypothesisProvenance, HypothesisResearchMode, HypothesisStatus, StrategyHypothesis
@@ -183,7 +191,8 @@ def test_unsupported_exit_family_is_rejected_before_any_price_read():
     signal = EntrySignal(security_id="SEC_ENG_WRONGFAMILY", strategy_variant_id=time_exit_variant.strategy_variant_id)
     engine = SessionEngine(
         pit=_EmptyAccess(), session_dates=session_dates, registry=registry,
-        accepted_hypothesis_ids=frozenset({hid}), entry_signals={("SEC_ENG_WRONGFAMILY", session_dates[0]): signal},
+        accepted_hypothesis_ids=frozenset({hid}),
+        entry_signals={("SEC_ENG_WRONGFAMILY", time_exit_variant.strategy_variant_id, session_dates[0]): signal},
         invalidation_observer=_never_invalidated, cost_assumptions=_ZERO_COSTS,
     )
     result = engine.run()
@@ -193,7 +202,7 @@ def test_unsupported_exit_family_is_rejected_before_any_price_read():
 def _build_old_family_plan(hypothesis_cohort_ids, ranking_metric) -> ResearchPlan:
     """Trimmed down, old-family-only plan builder (mirrors test_32's own
     `_build_plan()`), used ONLY for the run_stage()-gate-rejects test below
-    -- that test never reaches variant resolution at all."""
+    -- that test never reaches calendar/variant resolution at all."""
     rule = SelectionRule(minimum_executed_trades=1, minimum_evaluable_trades=1, minimum_evaluable_ratio=0.5, ranking_metric=ranking_metric)
     profile = build_execution_semantics_profile_v1()
     costs = CostAssumptions(commission_entry_rate=0.0005, commission_exit_rate=0.0005, slippage_entry_bps=5.0, slippage_exit_bps=5.0, borrow_annual_rate=0.0)
@@ -215,39 +224,45 @@ def test_run_stage_refuses_to_run_a_single_session_for_a_rejected_plan():
     """An INVALID plan (empty cohort opting into the new ranking metric it
     has no right to -- symmetric enforcement, GPT review round 3 finding
     #3) must never reach the session loop at all -- not even far enough
-    to touch the registry or the PIT facade."""
+    to touch the calendar, the registry, or the PIT facade (accepted here
+    as `conn=None`/`trading_calendar=None`, since neither is ever
+    dereferenced before the plan-acceptance check fails)."""
     registry = HypothesisRegistry()
-    from backtest.models.entities import RANKING_METRIC_STOP_MANAGED_V1
     plan = _build_old_family_plan([], RANKING_METRIC_STOP_MANAGED_V1)  # wrong: empty cohort must use the OLD metric
     signal = EntrySignal(security_id="SEC_ENG_GATE", strategy_variant_id="unused")
     with pytest.raises(PlanNotAcceptedError):
         run_stage(
-            plan, registry, pit=_EmptyAccess(), session_dates=("2024-05-01", "2024-05-02"),
-            entry_signals={("SEC_ENG_GATE", "2024-05-01"): signal}, invalidation_observer=_never_invalidated,
+            plan, registry, conn=None, zone=FORMATION_SELECTION, trading_calendar=None,
+            entry_signals={("SEC_ENG_GATE", "unused", "2024-01-01"): signal},
+            invalidation_observer=_never_invalidated,
         )
 
 
-def test_run_stage_runs_the_engine_and_ties_signals_to_the_accepted_cohort():
+def test_run_stage_runs_the_engine_and_ties_signals_to_the_accepted_cohort(conn, now):
     """The mirror case: an ACCEPTED plan with a REAL STOP_MANAGED_
-    INVALIDATION cohort lets `run_stage()` proceed all the way into the
-    real session loop for a signal naming a variant FROM that cohort --
-    proven by it reaching (and failing on) an actual PIT read. Round-1
-    review finding #5's core: acceptance of the PLAN is not, by itself,
-    authorization to run an ARBITRARY signal -- this variant is the one
-    the accepted plan's own cohort actually names."""
+    INVALIDATION cohort, run against ITS OWN real calendar, lets
+    `run_stage()` proceed all the way into the real session loop for a
+    signal naming a variant FROM that cohort -- proven by it reaching an
+    actual PIT read (no price data exists for this security at all, so the
+    real entry path concludes in NO_ENTRY_BAR -- a genuine per-position
+    rejection, never a gate-level one). Acceptance of the PLAN is not, by
+    itself, authorization to run an ARBITRARY signal -- this variant is
+    the one the accepted plan's own cohort actually names."""
     registry = HypothesisRegistry()
     hid, vid = build_registered_stop_managed_hypothesis(registry)
-    plan, profile = build_accepted_stop_managed_plan([hid])
-    signal = EntrySignal(security_id="SEC_ENG_GATE_OK", strategy_variant_id=vid)
-    with pytest.raises(AssertionError, match="get_price_series_as_of"):
-        run_stage(
-            plan, registry, pit=_EmptyAccess(), session_dates=("2024-05-01", "2024-05-02"),
-            entry_signals={("SEC_ENG_GATE_OK", "2024-05-01"): signal}, invalidation_observer=_never_invalidated,
-            stop_managed_profile=profile,
-        )
+    plan, profile, calendar = build_accepted_stop_managed_plan([hid])
+    sec = make_security(conn, "spec005:ENGINE_GATE_OK", now)  # registered, but NO price bars at all
+    signal = EntrySignal(security_id=sec, strategy_variant_id=vid)
+    result = run_stage(
+        plan, registry, conn, FORMATION_SELECTION, calendar,
+        entry_signals={(sec, vid, "2024-01-29"): signal}, invalidation_observer=_never_invalidated,
+        stop_managed_profile=profile,
+    )
+    assert len(result.entry_dispositions) == 1
+    assert result.entry_dispositions[0].disposition == ENTRY_NO_ENTRY_BAR
 
 
-def test_run_stage_rejects_a_signal_for_a_variant_outside_the_accepted_plan_even_though_the_plan_itself_is_valid():
+def test_run_stage_rejects_a_signal_for_a_variant_outside_the_accepted_plan_even_though_the_plan_itself_is_valid(conn, now):
     """The plan is genuinely ACCEPTED (its OWN cohort is a DIFFERENT
     hypothesis), but the signal points at a variant that was never part of
     it. `run_stage()` must not treat "the plan was accepted" as "any
@@ -255,14 +270,96 @@ def test_run_stage_rejects_a_signal_for_a_variant_outside_the_accepted_plan_even
     registry = HypothesisRegistry()
     hid_in_cohort, _vid_in_cohort = build_registered_stop_managed_hypothesis(registry, signature_id="SIG_IN_COHORT")
     _hid_outside, vid_outside = build_registered_stop_managed_hypothesis(registry, signature_id="SIG_OUTSIDE")
-    plan, profile = build_accepted_stop_managed_plan([hid_in_cohort])  # does NOT include hid_outside
+    plan, profile, calendar = build_accepted_stop_managed_plan([hid_in_cohort])  # does NOT include hid_outside
     signal = EntrySignal(security_id="SEC_ENG_OFFPLAN", strategy_variant_id=vid_outside)
     result = run_stage(
-        plan, registry, pit=_EmptyAccess(), session_dates=("2024-05-01", "2024-05-02"),
-        entry_signals={("SEC_ENG_OFFPLAN", "2024-05-01"): signal}, invalidation_observer=_never_invalidated,
+        plan, registry, conn, FORMATION_SELECTION, calendar,
+        entry_signals={("SEC_ENG_OFFPLAN", vid_outside, "2024-01-29"): signal}, invalidation_observer=_never_invalidated,
         stop_managed_profile=profile,
     )
     assert result.entry_dispositions[0].disposition == ENTRY_VARIANT_NOT_IN_ACCEPTED_COHORT
+
+
+# --------------------------------------------------------------------------
+# Session Engine & Integration review, round 2, finding #1: the executed
+# stage must be tied to the PLAN'S OWN declared zone periods -- never an
+# independently constructed boundary/calendar/session list that disagrees
+# with them (e.g. treating April as this plan's FORMATION_SELECTION when
+# the plan's own formation_start/formation_end say January).
+# --------------------------------------------------------------------------
+
+def test_run_stage_rejects_a_trading_calendar_that_does_not_belong_to_the_plan(conn, now):
+    registry = HypothesisRegistry()
+    hid, vid = build_registered_stop_managed_hypothesis(registry)
+    plan, profile, _matching_calendar = build_accepted_stop_managed_plan([hid])
+    _other_hid, _other_vid = build_registered_stop_managed_hypothesis(registry, signature_id="SIG_UNRELATED")
+    _other_plan, _other_profile, unrelated_calendar = build_accepted_stop_managed_plan(
+        [hid], formation_start="2025-06-01", formation_end="2025-06-30",
+        validation_start="2025-07-01", validation_end="2025-07-31", locked_oos_start="2025-08-01",
+    )
+    signal = EntrySignal(security_id="SEC_X", strategy_variant_id=vid)
+    with pytest.raises(ValueError, match="does not match"):
+        run_stage(
+            plan, registry, conn, FORMATION_SELECTION, unrelated_calendar,
+            entry_signals={("SEC_X", vid, "2024-01-01"): signal}, invalidation_observer=_never_invalidated,
+            stop_managed_profile=profile,
+        )
+
+
+def test_run_stage_never_executes_sessions_outside_the_plans_own_formation_zone(conn, now):
+    """The plan's own Formation zone is January (the fixture default).
+    The calendar handed to `run_stage()` is intentionally WIDER, covering
+    through April -- a REAL trading session exists in April. A signal
+    dated in April must NEVER be evaluated when run against
+    FORMATION_SELECTION (no disposition at all -- it was never part of
+    the executed stage); a signal dated within January (the true
+    Formation zone) DOES reach the real entry path."""
+    registry = HypothesisRegistry()
+    hid, vid = build_registered_stop_managed_hypothesis(registry)
+    plan, profile, calendar = build_accepted_stop_managed_plan([hid], coverage_end="2024-04-30")
+    april_signal_date = "2024-04-01"
+    assert april_signal_date in calendar.session_dates  # a real session -- just outside the plan's Formation zone
+    january_signal_date = "2024-01-29"
+
+    sec_april = make_security(conn, "spec005:ENGINE_ZONE_APRIL", now)
+    sec_jan = make_security(conn, "spec005:ENGINE_ZONE_JAN", now)  # no price bars -- proves the real path was reached
+
+    entry_signals = {
+        (sec_april, vid, april_signal_date): EntrySignal(security_id=sec_april, strategy_variant_id=vid),
+        (sec_jan, vid, january_signal_date): EntrySignal(security_id=sec_jan, strategy_variant_id=vid),
+    }
+    result = run_stage(
+        plan, registry, conn, FORMATION_SELECTION, calendar,
+        entry_signals=entry_signals, invalidation_observer=_never_invalidated, stop_managed_profile=profile,
+    )
+    dispositions_by_sec = {d.security_id: d for d in result.entry_dispositions}
+    assert sec_april not in dispositions_by_sec  # April was never part of the executed FORMATION_SELECTION stage
+    assert sec_jan in dispositions_by_sec  # January correctly was
+    assert dispositions_by_sec[sec_jan].disposition == ENTRY_NO_ENTRY_BAR
+
+
+# --------------------------------------------------------------------------
+# Session Engine & Integration review, round 2, finding #2: session_dates
+# must be strictly increasing with no duplicates -- checked at
+# SessionEngine construction, regardless of caller.
+# --------------------------------------------------------------------------
+
+def test_session_dates_out_of_order_is_refused_at_construction():
+    with pytest.raises(ValueError, match="strictly increasing"):
+        SessionEngine(
+            pit=_EmptyAccess(), session_dates=("2024-05-02", "2024-05-01"), registry=HypothesisRegistry(),
+            accepted_hypothesis_ids=frozenset(), entry_signals={}, invalidation_observer=_never_invalidated,
+            cost_assumptions=_ZERO_COSTS,
+        )
+
+
+def test_duplicate_session_dates_is_refused_at_construction():
+    with pytest.raises(ValueError, match="strictly increasing"):
+        SessionEngine(
+            pit=_EmptyAccess(), session_dates=("2024-05-01", "2024-05-01", "2024-05-02"), registry=HypothesisRegistry(),
+            accepted_hypothesis_ids=frozenset(), entry_signals={}, invalidation_observer=_never_invalidated,
+            cost_assumptions=_ZERO_COSTS,
+        )
 
 
 # --------------------------------------------------------------------------
@@ -299,6 +396,9 @@ def _insert_bars(conn, security_id, now, rows):
     ])
 
 
+_VOL_CFG_3 = {"atr_window": 3, "bb_window": 3, "bb_num_std": 2.0, "realized_vol_window": 3}
+
+
 def _flat_signal_and_engine(conn, now, seed, rows, session_dates, direction="LONG", cost_assumptions=None):
     """Common scaffolding: one Control-variant STOP_MANAGED position
     entered at the first session, held with no exit trigger (stop far
@@ -312,9 +412,9 @@ def _flat_signal_and_engine(conn, now, seed, rows, session_dates, direction="LON
     signal = EntrySignal(security_id=sec, strategy_variant_id=vid)
     engine = SessionEngine(
         pit=_UnboundedAccess(conn), session_dates=session_dates, registry=registry,
-        accepted_hypothesis_ids=frozenset({hid}), entry_signals={(sec, session_dates[0]): signal},
+        accepted_hypothesis_ids=frozenset({hid}), entry_signals={(sec, vid, session_dates[0]): signal},
         invalidation_observer=_never_invalidated, cost_assumptions=cost_assumptions or _ZERO_COSTS,
-        volatility_config={"atr_window": 3, "bb_window": 3, "bb_num_std": 2.0, "realized_vol_window": 3},
+        volatility_config=_VOL_CFG_3,
     )
     return sec, engine.run()
 
@@ -478,7 +578,7 @@ def test_session_dates_beyond_stage_end_date_is_refused_at_construction():
         SessionEngine(
             pit=_EmptyAccess(), session_dates=("2024-05-01", "2024-05-02", "2024-05-03"),
             registry=HypothesisRegistry(), accepted_hypothesis_ids=frozenset(),
-            entry_signals={("SEC_ENG_BOUND", "2024-05-01"): signal}, invalidation_observer=_never_invalidated,
+            entry_signals={("SEC_ENG_BOUND", "unused", "2024-05-01"): signal}, invalidation_observer=_never_invalidated,
             cost_assumptions=_ZERO_COSTS, stage_end_date="2024-05-02",
         )
 
@@ -493,6 +593,53 @@ def test_stage_end_date_beyond_the_pit_facades_own_boundary_is_refused_at_constr
         SessionEngine(
             pit=_AccessWithBoundary(max_as_of="2024-05-01"), session_dates=("2024-05-01", "2024-05-02"),
             registry=HypothesisRegistry(), accepted_hypothesis_ids=frozenset(),
-            entry_signals={("SEC_ENG_BOUND2", "2024-05-01"): signal}, invalidation_observer=_never_invalidated,
+            entry_signals={("SEC_ENG_BOUND2", "unused", "2024-05-01"): signal}, invalidation_observer=_never_invalidated,
             cost_assumptions=_ZERO_COSTS, stage_end_date="2024-05-02",
         )
+
+
+# --------------------------------------------------------------------------
+# Session Engine & Integration review, round 2, finding #3: position
+# bookkeeping must be keyed by (security_id, strategy_variant_id), never
+# bare security_id -- two DIFFERENT variants trading the SAME security must
+# both open independent positions, neither suppressing the other.
+# --------------------------------------------------------------------------
+
+def test_two_variants_on_the_same_security_same_day_both_open_independent_positions(conn, now):
+    registry = HypothesisRegistry()
+    hid_a, vid_a = build_registered_stop_managed_hypothesis(registry, k=2.0, signature_id="SIG_VARA")
+    hid_b, vid_b = build_registered_stop_managed_hypothesis(registry, k=3.0, signature_id="SIG_VARB")
+    sec = make_security(conn, "spec005:ENGINE_TWO_VARIANTS", now)
+    rows = [
+        ("2024-08-01", 100.0, 104.0, 96.0, 100.0),  # D0 signal day
+        ("2024-07-30", 100.0, 104.0, 96.0, 100.0),
+        ("2024-07-29", 100.0, 104.0, 96.0, 100.0),
+        ("2024-08-02", 100.0, 104.0, 96.0, 100.0),  # D1: entry, same TR=8 -- no ATR drift
+    ]
+    _insert_bars(conn, sec, now, rows)
+    session_dates = ("2024-08-01", "2024-08-02")
+    entry_signals = {
+        (sec, vid_a, session_dates[0]): EntrySignal(security_id=sec, strategy_variant_id=vid_a),
+        (sec, vid_b, session_dates[0]): EntrySignal(security_id=sec, strategy_variant_id=vid_b),
+    }
+    engine = SessionEngine(
+        pit=_UnboundedAccess(conn), session_dates=session_dates, registry=registry,
+        accepted_hypothesis_ids=frozenset({hid_a, hid_b}), entry_signals=entry_signals,
+        invalidation_observer=_never_invalidated, cost_assumptions=_ZERO_COSTS, volatility_config=_VOL_CFG_3,
+    )
+    result = engine.run()
+
+    executed = [d for d in result.entry_dispositions if d.disposition == ENTRY_EXECUTED]
+    assert len(executed) == 2
+    assert {d.strategy_variant_id for d in executed} == {vid_a, vid_b}
+
+    assert len(result.positions) == 2
+    pos_by_variant = {p.strategy_variant_id: p for p in result.positions}
+    assert set(pos_by_variant) == {vid_a, vid_b}
+    assert all(p.security_id == sec for p in result.positions)
+    # k=2 vs k=3 on the identical ATR=8 basis -> different active_stop --
+    # proof these are two REALLY independent positions, not one shared/
+    # overwritten object.
+    assert pos_by_variant[vid_a].active_stop == pytest.approx(100.0 - 2 * 8)
+    assert pos_by_variant[vid_b].active_stop == pytest.approx(100.0 - 3 * 8)
+    assert pos_by_variant[vid_a].active_stop != pos_by_variant[vid_b].active_stop

@@ -136,6 +136,16 @@ class StopManagedPosition:
     # detected at the stage's last close, with fill due next stage,
     # stays CENSORED_AT_HORIZON, never EXIT_FAILED."
     pending_invalidation_detected_date: Optional[str] = None
+
+    # Session Engine & Integration review, round 2, finding #3: additive,
+    # optional (never populated by `protection.py`/`session.py` -- every
+    # existing hand-built `StopManagedPosition(...)` in this package's own
+    # unit tests stays valid, unchanged). `backtest.exits.engine.
+    # SessionEngine` stamps this immediately after opening a position, so
+    # two DIFFERENT variants trading the SAME security_id concurrently
+    # produce two distinguishable positions in a result set -- never one
+    # silently shadowing the other.
+    strategy_variant_id: Optional[str] = None
     pending_exit_note: Optional[str] = None
 
 

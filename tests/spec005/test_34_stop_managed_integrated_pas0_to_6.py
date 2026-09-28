@@ -156,8 +156,8 @@ def test_integrated_pas0_through_6_two_securities_stage_limits_and_aggregate_cos
 
     pit = _UnboundedAccess(conn)
     entry_signals = {
-        (sec_a, D1): EntrySignal(security_id=sec_a, strategy_variant_id=vid_a),
-        (sec_b, D1): EntrySignal(security_id=sec_b, strategy_variant_id=vid_b),
+        (sec_a, vid_a, D1): EntrySignal(security_id=sec_a, strategy_variant_id=vid_a),
+        (sec_b, vid_b, D1): EntrySignal(security_id=sec_b, strategy_variant_id=vid_b),
     }
 
     def same_day_evidence(security_id, session_date):
@@ -177,11 +177,12 @@ def test_integrated_pas0_through_6_two_securities_stage_limits_and_aggregate_cos
     assert set(positions_by_id) == {sec_a, sec_b}
 
     # -- Entry dispositions: both signals executed (Pas 2). --
-    assert EntryDisposition(sec_a, D1, D2, ENTRY_EXECUTED) in result.entry_dispositions
-    assert EntryDisposition(sec_b, D1, D2, ENTRY_EXECUTED) in result.entry_dispositions
+    assert EntryDisposition(sec_a, vid_a, D1, D2, ENTRY_EXECUTED) in result.entry_dispositions
+    assert EntryDisposition(sec_b, vid_b, D1, D2, ENTRY_EXECUTED) in result.entry_dispositions
 
     # -- SEC_A structural checks (Pas 2, Pas 3'b, Pas 0, Pas 3'c). --
     pos_a = positions_by_id[sec_a]
+    assert pos_a.strategy_variant_id == vid_a
     assert pos_a.closed is True
     assert pos_a.split_reconciliation_incomplete is False
     assert pos_a.applied_factor == pytest.approx(0.5)  # 2-for-1 split -> price halves
@@ -204,6 +205,7 @@ def test_integrated_pas0_through_6_two_securities_stage_limits_and_aggregate_cos
 
     # -- SEC_B structural checks (Pas 5 at the stage's own last close). --
     pos_b = positions_by_id[sec_b]
+    assert pos_b.strategy_variant_id == vid_b
     assert pos_b.closed is False
     assert pos_b.pending_invalidation_detected_date == D6
     assert pos_b.pending_exit_note is not None
