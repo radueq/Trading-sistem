@@ -4,6 +4,13 @@ position engine (docs/spec005_exit_amendment_v1.0.md, ACCEPTED).
 Frozen dataclasses updated only via `dataclasses.replace()`-returning pure
 functions in `backtest.exits.protection`/`session` -- same discipline as
 every other #004/#005 entity (never mutated in place).
+
+Spec #005 -- Discovery Integration & Legacy Exits (additive): also carries
+`LegacyPosition`, the equivalent typed contract for the two OLDER exit
+families (TIME_EXIT/SIGNAL_INVALIDATION), updated only via
+`dataclasses.replace()`-returning functions in `backtest.exits.legacy` --
+same discipline, same module, no `StopManagedPosition` field or behavior
+touched.
 """
 from __future__ import annotations
 
@@ -53,6 +60,17 @@ ENTRY_UNSUPPORTED_EXIT_FAMILY = "UNSUPPORTED_EXIT_FAMILY"
 EXIT_REASON_TARGET = "TARGET"
 EXIT_REASON_STOP = "STOP"
 EXIT_REASON_INVALIDATION = "INVALIDATION"
+
+# Spec #005 -- Discovery Integration & Legacy Exits: exit reasons for a
+# LegacyPosition's single closing tranche (TIME_EXIT/SIGNAL_INVALIDATION
+# never have a partial-profit tranche at all -- exactly one tranche, ever,
+# for the whole original quantity). None of these equal EXIT_REASON_TARGET,
+# so `costs.apply_exit_slippage()` already applies its adverse-slippage
+# branch to every one of them unmodified -- a legacy exit is always a
+# market order, never the STOP_MANAGED family's own no-slippage limit fill.
+EXIT_REASON_TIME_EXIT = "TIME_EXIT"
+EXIT_REASON_SIGNAL_INVALIDATION = "SIGNAL_INVALIDATION"
+EXIT_REASON_MAX_HOLDING_BARS_FORCED_EXIT = "MAX_HOLDING_BARS_FORCED_EXIT"
 
 AMBIGUOUS_INTRABAR_CONFLICT = "AMBIGUOUS_INTRABAR_CONFLICT"
 
@@ -147,6 +165,66 @@ class StopManagedPosition:
     # silently shadowing the other.
     strategy_variant_id: Optional[str] = None
     pending_exit_note: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class LegacyPosition:
+    """Spec #005 -- Discovery Integration & Legacy Exits: live simulation
+    state for one TIME_EXIT or SIGNAL_INVALIDATION position -- structurally
+    much simpler than `StopManagedPosition` because neither older family
+    has a stop, a target, a partial-profit tranche, or a deferred/scheduled
+    fill: `exit_execution_policy` is fixed `BAR_CLOSE` for both (Spec #004
+    HYPOTHESIS_ENGINE_VERSION contract), so the position's own single
+    closing tranche always fills at the SAME session's close that decided
+    the exit -- there is no separate "detected at close(t), executed at
+    t+1's open" state to track at all (contrast `StopManagedPosition.
+    pending_invalidation_detected_date`, which exists ONLY because that
+    family's own execution-semantics profile, section 7 of the amendment,
+    chose a different, newer fill convention).
+
+    `entry_session_index` is this position's own index into the stage's
+    `session_dates` sequence at entry -- TIME_EXIT's holding-bar count
+    (Spec #004: "holding bar 1 = entry bar itself; holding bar N = entry
+    bar index + (N-1)") is defined against the CALENDAR's own session
+    order, not against how many bars this particular security happened to
+    have a price for, so the count is `session_index - entry_session_index
+    + 1` at any later session, never a separately-incremented counter that
+    could drift out of sync with the loop's own position.
+
+    `entry_fill_price`/`applied_factor`/`processed_split_action_ids` exist
+    for exactly the same reason they do on `StopManagedPosition`: a split
+    between entry and a later as-of query re-expresses historical bars on a
+    DIFFERENT basis than the one `entry_fill_price` was frozen under at
+    entry time (amendment section 6's staleness problem applies to ANY
+    frozen entry-time price, not only a STOP_MANAGED one) -- see
+    `backtest.exits.legacy.reconcile_split_for_legacy_position()`, an
+    independent reimplementation (never a refactor of the already-accepted
+    `session.reconcile_split_for_open_position()`) of the same
+    authorization/lateness logic, narrowed to the one field a
+    `LegacyPosition` actually has to rescale."""
+    security_id: str
+    strategy_variant_id: str
+    exit_family: str  # ExitFamily.TIME_EXIT.value | ExitFamily.SIGNAL_INVALIDATION.value
+    direction: str  # "LONG" | "SHORT"
+    signal_date: str
+    entry_date: str
+    entry_session_index: int
+    entry_fill_price: float  # F_e (current basis, rescaled by split reconciliation like StopManagedPosition)
+
+    time_exit_bars: Optional[int] = None  # set iff exit_family == TIME_EXIT
+    max_holding_bars: Optional[int] = None  # set iff exit_family == SIGNAL_INVALIDATION
+
+    applied_factor: float = 1.0
+    processed_split_action_ids: tuple[str, ...] = field(default_factory=tuple)
+
+    closed: bool = False
+    close_tranche: Optional[Tranche] = None
+
+    exit_failed: bool = False
+    exit_failed_reason: Optional[str] = None
+
+    invalidation_path_incomplete: bool = False
+    split_reconciliation_incomplete: bool = False
 
 
 @dataclass(frozen=True)

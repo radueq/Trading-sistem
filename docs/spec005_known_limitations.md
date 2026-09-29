@@ -22,10 +22,20 @@ follow-up (`4560f93`). That follow-up's OWN review round then found three
 more integration-level problems (the executed stage not tied to the
 plan's own zone/calendar, `session_dates` not validated for strict
 order/uniqueness, and variant-keyed position bookkeeping missing --
-described in their own section below, also now fixed). This document
-describes what each delivery does; it is not itself a claim of
-acceptance -- Batch 3 as a whole remains unaccepted, and whether the
-fixes below close it is for review to say.**
+described in their own section below, also now fixed). A follow-up to
+THAT round (`ba38a4b`) closed one further finding in the entry_signals
+identity check itself -- Session Engine & Integration's own review is
+now closed (ACCEPTED for the key/signal identity fix; the general
+accepted baseline itself remains `3cdc532`, with each delivery's own
+acceptance tracked separately). A NEW delivery, "Discovery Integration &
+Legacy Exits" (its own section at the end of this document), then
+addressed the three obligations Session Engine & Integration's own
+acceptance explicitly left outstanding: Discovery-based entry-signal
+matching, real `InvalidationCondition` evaluation, and a TIME_EXIT/
+SIGNAL_INVALIDATION execution engine. This document describes what each
+delivery does; it is not itself a claim of acceptance -- that newest
+delivery is UNACCEPTED, pending review, exactly like every other section
+in this document before it was reviewed.**
 
 ## What Batch 3 delivers vs. what remains outstanding
 
@@ -47,8 +57,12 @@ Integration delivery, `accept_research_plan()` sits at a real, mandatory
 run entry point (`engine.run_stage()`), not merely a test-reachable
 function.
 
-**Genuinely outstanding, mapped to the next delivery (not "out of
-scope"):**
+**Status update:** the three obligations below were the subject of the
+"Discovery Integration & Legacy Exits" delivery (its own section further
+down describes what it built). They are restated here, unedited, as the
+historical record of what was outstanding going into that delivery --
+whether that delivery actually closes them is for review to say, exactly
+like every other section in this document.
 
 1. **Discovery-based entry-signal matching does not exist anywhere in
    this codebase, for any exit family.** `SessionEngine` takes
@@ -551,3 +565,133 @@ construction`, and
 `test_consistent_keys_for_two_variants_on_the_same_security_still_
 construct_fine` (confirming the new check does not reject the
 already-accepted, valid two-variants case).
+
+## Discovery Integration & Legacy Exits delivery
+
+Addresses the three obligations left outstanding after Session Engine &
+Integration's own acceptance (`ba38a4b`), pursued at the effort level
+Radu requested for this delivery. Nothing in `SessionEngine`/`session.py`/
+`protection.py`/`costs.py`/`taxonomy.py`/`plan_integration.py` is modified
+-- every new capability lives in NEW files or additive extensions of
+`engine.py`'s own `run_stage()` function body (never its already-accepted
+`SessionEngine` class), so the STOP_MANAGED_INVALIDATION path this
+document already describes is untouched, byte-for-byte (confirmed by the
+full suite: the pre-existing 638 passed/1 skipped baseline is unchanged
+within the new total below).
+
+1. **Discovery-based entry-signal matching** (`backtest.exits.
+   discovery_integration.matches_entry_definition()`): a real
+   implementation of Spec #004 SS11-13's `EntryDefinition` vocabulary --
+   AND over `core_conditions`/`confirmation_conditions`, each a
+   `LaneStateCondition` (exact `state_signature[lane]` match, `negate`
+   honored generically even though entry conditions are validator-
+   enforced non-negated) or `ReasonCodeCondition` (presence in
+   `reason_codes`) -- evaluated against a real `discovery.models.entities.
+   DiscoveryObservation`, mirroring `evaluation.observations.signatures.
+   matches()`'s own established pattern for the structurally distinct
+   Spec #003 vocabulary. `False` outright when no observation exists for
+   a security that session (an ineligible/unobserved security can never
+   satisfy an entry thesis).
+2. **`InvalidationCondition` evaluation** (`discovery_integration.
+   evaluate_invalidation_conditions()`): lane-based (invalidates when the
+   CURRENT observed label leaves `holds_labels`) and reason-code-based
+   (invalidates when that code's presence flips relative to an
+   `entry_observation` snapshot, `triggers_on_presence` deciding
+   appearance vs. disappearance) -- exactly `InvalidationCondition`'s own
+   documented semantics, the SAME field shared by SIGNAL_INVALIDATION and
+   STOP_MANAGED_INVALIDATION alike (Spec #004's own design: one shared
+   `invalidation_conditions` vocabulary, not a per-family reinvention).
+   Combining MULTIPLE conditions as an OR (any one triggers) is this
+   function's own documented INFERENCE -- no spec text states how more
+   than one simultaneously-active condition combines; OR is the
+   conservative, risk-side reading, consistent with `advance_intrabar()`'s
+   own stop-over-target tie-break precedent. Returns `UNKNOWN` (never a
+   false negative) when the current observation is missing, or a
+   reason-code condition cannot be evaluated for lack of an entry
+   snapshot -- but a definite `INVALIDATED` from any OTHER, evaluable
+   condition is still reported; an unrelated data gap never suppresses a
+   real invalidation.
+3. **TIME_EXIT/SIGNAL_INVALIDATION execution engine**
+   (`backtest.exits.legacy.LegacySessionEngine`): a SEPARATE engine from
+   `SessionEngine`, never an extension of it, sharing only the SAME
+   `entry_signals`/`EntryDisposition` shapes and the SAME identity/
+   ordering/stage-bound construction guards, independently reimplemented
+   (never a refactor of `SessionEngine.__init__()`). Both older families
+   use a FIXED `exit_execution_policy=BAR_CLOSE` (no deferred/scheduled
+   fill state at all, unlike STOP_MANAGED_INVALIDATION's own,
+   separately-versioned execution-semantics profile): TIME_EXIT counts
+   holding bars against the position's own `entry_session_index` in the
+   stage's `session_dates` ("holding bar 1 = entry bar itself; holding
+   bar N = entry bar index + (N-1)", Spec #004's own formula, including
+   the N=1 same-session-exit edge case); SIGNAL_INVALIDATION exits on
+   invalidation OR `max_holding_bars`, whichever first, PREFERRING
+   invalidation on an exact same-session tie (this module's own explicit,
+   documented tie-break -- no spec text covers this exact simultaneity).
+   `reconcile_split_for_legacy_position()` is an INDEPENDENT
+   reimplementation of `session.reconcile_split_for_open_position()`'s
+   authorization/lateness logic, narrowed to the one field a
+   `LegacyPosition` has to rescale (`entry_fill_price` -- the same
+   frozen-entry-price staleness problem `StopManagedPosition` has, not
+   specific to that one family). `classify_legacy_position()`/
+   `evaluate_legacy_stage_results()` mirror `taxonomy.classify_position()`/
+   `engine.evaluate_stage_results()` narrowed to a `LegacyPosition`'s own
+   shape (no partial-profit tranche ever, so `w` is always 0 -- neither
+   `costs.compute_w()` nor `aggregate_position_return()` is needed).
+4. **Mixed-family integration through `run_stage()`**: `run_stage()`'s
+   OWN body (not `SessionEngine`) now partitions the SAME `entry_signals`
+   mapping by each signal's resolved variant's `exit_family`
+   (`_partition_entry_signals_by_family()`), constructs a SECOND,
+   independent `LegacySessionEngine` alongside the existing `SessionEngine`
+   against the SAME `session_dates`/`stage_end_date`/cohort/cost_
+   assumptions, and merges both results into the SAME `SessionEngineResult`
+   (positions concatenated, dispositions concatenated, `final_closes`
+   unioned -- asserted, not silently preferred, on the disagreement that
+   should structurally never happen since both derive it from the same
+   underlying price series). A signal naming an unresolvable variant is
+   routed to `SessionEngine` by convention, producing exactly ONE
+   rejection disposition, never one from each engine (its VARIANT_NOT_
+   FOUND/NOT_IN_ACCEPTED_COHORT checks are family-agnostic, checked before
+   the family check itself). `run_stage()`'s existing `entry_signals`/
+   `invalidation_observer` PARAMETERS are unchanged -- an existing caller
+   supplying only STOP_MANAGED signals sees byte-for-byte identical
+   behavior (confirmed: the pre-existing test suite is unaffected).
+   `tests/spec005/test_38_mixed_family_run_stage.py` is the integrated
+   demonstration: one hypothesis, three materialized variants (TIME_EXIT,
+   SIGNAL_INVALIDATION, STOP_MANAGED_INVALIDATION) sharing one Discovery-
+   matched entry signal, each exiting differently (bar-count, real
+   invalidation, still-censored-at-horizon) in the SAME `run_stage()` call,
+   with entry AND exit slippage plus commissions verified against the
+   same cost primitives `test_35` already established, for all three
+   families.
+
+**What this delivery does NOT do -- stated explicitly, not silently
+narrowed:**
+
+- `run_stage()` itself still does not invoke Spec #002's Discovery engine,
+  or `backtest.data.context.StageReadContext`, internally. A caller/test
+  builds `entry_signals`/`invalidation_observer` from real
+  `DiscoveryObservation`s via `discovery_integration`'s functions, THEN
+  passes them to `run_stage()` exactly as before -- the two are still
+  composed by the caller, not fused into one call. `discovery_
+  integration.observations_by_session_from_caches()` is a real, tested
+  adapter over Batch 2's already-accepted `HistoricalObservationCache`
+  (the type `StageReadContext.get_or_compute_observations()` produces),
+  so a caller wanting LIVE, PIT-safe Discovery computation has a genuine,
+  regression-tested path to it -- but deciding a canonical universe/
+  benchmark/config-version policy for `run_stage()` to resolve entirely on
+  its own remains a further, separate integration step (`ResearchPlan`
+  carries `benchmark_security_id` but no canonical non-benchmark universe
+  declaration yet).
+- The mixed-cohort integrated test (`test_38`) uses HAND-BUILT
+  `DiscoveryObservation` objects, not a live `compute_discovery_
+  observations()` run -- Spec #002's own test suite already proves that
+  function computes correct states from price data; re-deriving specific
+  percentile-based lane states deterministically from synthetic price
+  series was judged orthogonal to what this delivery needs to prove
+  (that real entry-matching/invalidation-evaluation and the legacy
+  execution engine are wired and correct), and risked adding an entire
+  second surface of potential mistakes to a single delivery.
+- 638 passed/1 skipped was the reported baseline before this delivery;
+  682 passed/1 skipped (44 new tests: 20 in `test_36`, 23 in `test_37`,
+  1 in `test_38`) is this delivery's own self-reported full-suite result
+  -- not independently verified.

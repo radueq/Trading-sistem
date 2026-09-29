@@ -195,3 +195,22 @@ def build_stage_access_boundary_from_plan(plan: ResearchPlan, zone: str) -> Stag
             f"{DEVELOPMENT_VALIDATION!r} boundaries, got zone={zone!r}"
         )
     return StageAccessBoundary(zone=zone, max_as_of=max_as_of)
+
+
+def zone_start_date(plan: ResearchPlan, zone: str) -> str:
+    """The zone's own START date on `plan` -- `formation_start` for
+    FORMATION_SELECTION, `validation_start` for DEVELOPMENT_VALIDATION.
+    Additive (Spec #005 -- Discovery Integration & Legacy Exits): factors
+    out the exact zone-start mapping `engine.run_stage()` and
+    `data.context.StageReadContext.__init__()` each already inline
+    independently, for a THIRD caller (`exits.discovery_integration`)
+    that needs the same zone_start without a fourth inline copy. Neither
+    existing inline copy is touched -- this is a new function only."""
+    if zone == FORMATION_SELECTION:
+        return plan.formation_start
+    if zone == DEVELOPMENT_VALIDATION:
+        return plan.validation_start
+    raise StageBoundaryPlanMismatchError(
+        f"zone_start_date() only derives {FORMATION_SELECTION!r} or {DEVELOPMENT_VALIDATION!r} "
+        f"start dates, got zone={zone!r}"
+    )

@@ -45,7 +45,7 @@ from __future__ import annotations
 
 import dataclasses
 from datetime import date, timedelta
-from typing import Callable, Mapping, Optional, Sequence
+from typing import Callable, Mapping, Optional, Sequence, Union
 
 from hypothesis.models.entities import ExitFamily
 from hypothesis.registry.hypotheses import HypothesisRegistry
@@ -69,6 +69,7 @@ from backtest.exits.entities import (
     ENTRY_VARIANT_NOT_FOUND,
     ENTRY_VARIANT_NOT_IN_ACCEPTED_COHORT,
     EVALUABILITY_EVALUABLE,
+    LegacyPosition,
     PositionOutcome,
     StopManagedExecutionSemanticsProfile,
     StopManagedPosition,
@@ -159,8 +160,16 @@ class SessionEngineResult:
     `final_closes[security_id]` is the security's own close on the LAST
     session this engine actually ran (`session_dates[-1]`) -- `None` if
     that specific session's own bar/close was unavailable, NEVER a stale
-    close carried forward from an earlier session."""
-    positions: tuple[StopManagedPosition, ...]
+    close carried forward from an earlier session.
+
+    `positions` may hold `LegacyPosition` entries too (Spec #005 --
+    Discovery Integration & Legacy Exits): `run_stage()` merges
+    `SessionEngine`'s own `StopManagedPosition` results with
+    `LegacySessionEngine`'s `LegacyPosition` results into this SAME tuple
+    -- `SessionEngine.run()` itself, called directly (not through
+    `run_stage()`), still only ever produces `StopManagedPosition`s, so
+    this widened type changes nothing about that already-accepted path."""
+    positions: tuple[Union[StopManagedPosition, LegacyPosition], ...]
     entry_dispositions: tuple[EntryDisposition, ...]
     final_closes: Mapping[str, Optional[float]]
 
@@ -556,7 +565,30 @@ def run_stage(
     Once accepted, `plan.hypothesis_cohort_ids` becomes the
     `SessionEngine`'s own `accepted_hypothesis_ids` -- every entry signal
     is resolved against THIS SAME cohort, and `plan.cost_assumptions` is
-    what `SessionEngine` actually simulates with."""
+    what `SessionEngine` actually simulates with.
+
+    Spec #005 -- Discovery Integration & Legacy Exits (additive): `entry_
+    signals` may now also name TIME_EXIT/SIGNAL_INVALIDATION variants.
+    `run_stage()` partitions `entry_signals` by each signal's own resolved
+    variant's `exit_family` (`_partition_entry_signals_by_family()`,
+    below) and runs a SECOND, independent `backtest.exits.legacy.
+    LegacySessionEngine` alongside the existing `SessionEngine` -- never
+    inside it, so `SessionEngine`'s own accepted Pas 0/1/2/3'/5/6 loop is
+    untouched byte-for-byte. Both engines share the SAME `session_dates`/
+    `stage_end_date`/cohort/cost_assumptions/`same_day_split_evidence`, and
+    each independently applies its OWN already-accepted (`SessionEngine`)
+    or newly-built (`LegacySessionEngine`) entry-signal identity/ordering/
+    stage-bound guards. Their results are merged: `positions` and
+    `entry_dispositions` are concatenated, `final_closes` is unioned (the
+    two engines' own final-close computations can never actually disagree
+    for a security_id both happen to report, since both derive it from the
+    SAME underlying price series -- the merge asserts this explicitly
+    rather than silently preferring one side). A signal whose variant
+    cannot be resolved at all, or resolves to a hypothesis outside the
+    accepted cohort, is routed to `SessionEngine` by convention (its own
+    VARIANT_NOT_FOUND/NOT_IN_ACCEPTED_COHORT checks are family-agnostic,
+    checked BEFORE the family check itself) -- this produces exactly ONE
+    rejection disposition, never one from each engine."""
     accepted, errors = accept_research_plan(plan, registry, stop_managed_profile)
     if not accepted:
         raise PlanNotAcceptedError(f"ResearchPlan {plan.research_plan_id!r} rejected by accept_research_plan(): {errors}")
@@ -589,9 +621,59 @@ def run_stage(
             f"there is no stage to run"
         )
 
+    stop_managed_signals, legacy_signals = _partition_entry_signals_by_family(entry_signals, registry)
+
     pit = BoundedPITAccess(conn, boundary)
     engine = SessionEngine(
-        pit, session_dates, registry, frozenset(plan.hypothesis_cohort_ids), entry_signals, invalidation_observer,
+        pit, session_dates, registry, frozenset(plan.hypothesis_cohort_ids), stop_managed_signals, invalidation_observer,
         plan.cost_assumptions, same_day_split_evidence, volatility_config, stage_end_date=boundary.max_as_of,
     )
-    return engine.run()
+    sm_result = engine.run()
+
+    # Local import: avoids a module-load-time cycle (backtest.exits.legacy
+    # imports EntryDisposition/ENTRY_EXECUTED from THIS module) while
+    # SessionEngine's own class body above stays completely untouched.
+    from backtest.exits.legacy import LegacySessionEngine
+
+    legacy_pit = BoundedPITAccess(conn, boundary)
+    legacy_engine = LegacySessionEngine(
+        legacy_pit, session_dates, registry, frozenset(plan.hypothesis_cohort_ids), legacy_signals, invalidation_observer,
+        plan.cost_assumptions, same_day_split_evidence, stage_end_date=boundary.max_as_of,
+    )
+    legacy_result = legacy_engine.run()
+
+    merged_final_closes: dict[str, Optional[float]] = dict(sm_result.final_closes)
+    for security_id, close in legacy_result.final_closes.items():
+        if security_id in merged_final_closes and merged_final_closes[security_id] != close:
+            raise AssertionError(
+                f"unreachable: SessionEngine and LegacySessionEngine disagree on final_closes[{security_id!r}] "
+                f"({merged_final_closes[security_id]!r} vs {close!r}) -- both derive it from the SAME "
+                f"session_dates/conn and must agree"
+            )
+        merged_final_closes[security_id] = close
+
+    return SessionEngineResult(
+        positions=sm_result.positions + legacy_result.positions,
+        entry_dispositions=sm_result.entry_dispositions + legacy_result.entry_dispositions,
+        final_closes=merged_final_closes,
+    )
+
+
+def _partition_entry_signals_by_family(
+    entry_signals: Mapping[tuple[str, str, str], EntrySignal], registry: HypothesisRegistry,
+) -> tuple[dict[tuple[str, str, str], EntrySignal], dict[tuple[str, str, str], EntrySignal]]:
+    """Splits `entry_signals` into (stop_managed_signals, legacy_signals)
+    by each signal's OWN resolved variant's `exit_hypothesis.exit_family`
+    -- see `run_stage()`'s own docstring for why an unresolvable variant is
+    routed to the STOP_MANAGED side by convention (never both, never
+    neither)."""
+    stop_managed: dict[tuple[str, str, str], EntrySignal] = {}
+    legacy: dict[tuple[str, str, str], EntrySignal] = {}
+    for key, signal in entry_signals.items():
+        variant = registry.get_variant(signal.strategy_variant_id)
+        family = variant.exit_hypothesis.exit_family if variant is not None else None
+        if family in (ExitFamily.TIME_EXIT.value, ExitFamily.SIGNAL_INVALIDATION.value):
+            legacy[key] = signal
+        else:
+            stop_managed[key] = signal
+    return stop_managed, legacy
