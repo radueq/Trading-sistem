@@ -1094,3 +1094,107 @@ tags, and full commit history and remains genuinely absent from this repo.
 pytest -q -rs` -> `715 passed, 1 skipped` (was 696/1; 19 new tests: 5 in
 `test_37`, 5 in `test_40` (new file), 6 in `test_07`, 3 in `test_09`) --
 self-reported, not independently verified.
+
+---
+
+## Base Spec #005 document recovered; MAE/MFE delta reconciled against it
+
+Radu located and supplied the original `Spec_005_Backtesting_Exit_
+Evaluation_v1.0.md` (added verbatim at `docs/Spec_005_Backtesting_Exit_
+Evaluation_v1.0.md`, commit `f477e93`) -- the closure audit's own
+exhaustive search (all branches, tags, full commit history) had
+genuinely found nothing, and this is the real, complete text, not a
+reconstruction.
+
+**Batch boundaries confirmed, not merely inferred.** Section 24's own
+implementation-batch table: Batch 3 = "Event engine, invalidation/cap
+ordering, overlap, missingness, split-safe measurement and costs";
+Batch 4 = "Metrics, complete variant comparison, pooled selection and
+append-only persistence." This settles two open questions from the
+round-1/round-2 reports:
+- Cohort-level selection orchestration (base section 18) is Batch 4
+  scope, confirmed from text, not "consistent with a framing" inferred
+  without the base document.
+- Full MAE/MFE reporting/aggregation into a `VariantComparisonReport`
+  (base section 17) is ALSO Batch 4 scope ("Metrics"). The round-2
+  report's "blocker" framing for the MISSING wiring overstated what
+  Batch 3 itself owed -- Batch 3's real obligation was only that the
+  FORMULA correctly handle the new STOP_MANAGED_INVALIDATION family's
+  shape (amendment section 12), which was already true before round 2's
+  wiring work. The wiring itself is legitimate, tested, harmless
+  Batch-4-flavored preparation -- never a Batch 3 requirement.
+
+**Section 9's worked-examples table verbatim-confirms the round-2
+SIGNAL_INVALIDATION timing fix**, including the exact cap-vs-invalidation
+interaction case ("Invalidation Tuesday close, M=2 -> Wednesday open,
+SIGNAL_INVALIDATION": an earlier-detected invalidation's scheduled open
+fires before the same-session cap close would). Section 10 verbatim-
+confirms the OR-combination correction ("Multiple invalidation triggers
+combine with OR under this execution profile").
+
+**A fourth, newly surfaced correctness gap (Radu's own point 2 on
+`8287ebb`, now confirmed against the recovered primary text) -- the
+round-2 MAE/MFE wiring excluded high/low uniformly for ANY real
+execution, right for STOP_MANAGED's own intraday stop/target fills and
+for any open-fill (invalidation, either family), but WRONG for the
+legacy family's `TIME_EXIT`/`MAX_HOLDING_BARS_FORCED_EXIT`: base section
+17, verbatim, "exit-day full range only for close exits" -- these ARE
+close fills (`SCHEDULED_..._BAR_CLOSE`), so their own exit day should be
+FULLY included, never excluded as if an intraday ambiguity existed.
+`test_28` never exercised this case at all (only the exclusion path was
+ever tested) -- the gap predates the round-2 wiring, inherited unnoticed
+from the original Batch 3 formula.
+
+This closure delta fixes that plus three further defects Radu's own
+testing against the real engine surfaced in the same verdict:
+
+1. **Whole missing sessions and non-finite values never leave coverage
+   reading FULL.** `compute_tranche_mae_mfe()` now cross-references
+   `bars` against an explicit `expected_session_dates` (the stage's own
+   calendar-authorized sessions) -- any expected session with no bar at
+   all, or a high/low/open/entry/exit value that is not finite,
+   downgrades coverage to a new, more specific `COVERAGE_MISSING_
+   SESSION_DATA` -- distinct from the routine, by-design `PARTIAL_
+   EXIT_DAY_EXCLUDED` label for an open/intraday exit day's own
+   exclusion, and reported with priority over it.
+2. **A real `fill_mode` (`FILL_MODE_OPEN`/`FILL_MODE_INTRADAY`/
+   `FILL_MODE_CLOSE`/`FILL_MODE_CENSORED`) replaces the old boolean.**
+   OPEN and INTRADAY are mechanically identical (exclude high/low, use
+   only the open) but kept as separate named constants since they are
+   contractually distinct (base section 17 vs. amendment section 12);
+   CLOSE and CENSORED both get the tranche's full range. `_STOP_MANAGED_
+   FILL_MODE_BY_REASON`/`_LEGACY_FILL_MODE_BY_REASON` map each family's
+   own `exit_reason` constants to the correct mode.
+3. **`EXIT_FAILED` never borrows the security's own final mark.**
+   `final_closes`/`mark_final` is keyed by security, not by position --
+   both `evaluate_stop_managed_position_mae_mfe()`/`evaluate_legacy_
+   position_mae_mfe()` now check `position.exit_failed` FIRST and return
+   no records at all, regardless of whether `mark_final` happens to be
+   non-None for that security (mirrors `taxonomy.classify_position()`'s
+   own EXIT_FAILED-poisons-the-whole-position precedent).
+4. **`PositionMaeMfe` gained `entry_date`.** `(security_id, strategy_
+   variant_id, tranche_kind)` alone collides when the same variant
+   re-trades the same security within one stage (an ordinary TIME_EXIT(1)
+   reopening after its own same-day exit) -- both records would otherwise
+   be indistinguishable.
+
+Regressions traverse `run_stage()` -> MAE/MFE evaluation end to end,
+including a real two-trade successive-variant scenario
+(`test_40::test_real_run_stage_traversal_disambiguates_successive_
+trades_of_the_same_variant`) confirming defect #4's fix with the real
+engine, not a hand-constructed position. `test_28` updated for the new
+required `fill_mode`/`expected_session_dates` parameters (two of its
+existing cases were themselves genuine `COVERAGE_MISSING_SESSION_DATA`
+cases mislabeled `PARTIAL_EXIT_DAY_EXCLUDED` under the old scheme,
+corrected along with everything else). 15 new/changed tests total across
+`test_28`/`test_40`.
+
+**This delta is Batch-4-flavored preparation, not a Batch 3 requirement**
+per the confirmed section 24 boundary above -- Batch 3's closure verdict
+is judged separately, on the event engine, invalidation/cap ordering,
+overlap, missing data, split-safe measurement and costs, using the now-
+complete contract (base document + amendment together).
+
+**Full suite after this delta:** `PYTHONPATH=src:tests python3 -m pytest
+-q -rs` -> `722 passed, 1 skipped` (was 715/1) -- self-reported, not
+independently verified.

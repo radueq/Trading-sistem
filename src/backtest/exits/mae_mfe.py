@@ -1,51 +1,92 @@
 """Spec #005 Batch 3 -- per-tranche MAE/MFE for STOP_MANAGED_INVALIDATION
-(docs/spec005_exit_amendment_v1.0.md, ACCEPTED, section 12).
+(docs/spec005_exit_amendment_v1.0.md, ACCEPTED, section 12), reconciled
+against the base contract (docs/Spec_005_Backtesting_Exit_Evaluation_v1.0.md,
+section 17/23) once it was recovered.
 
 Partial profit does not end the whole position's exposure -- the
 remainder stays exposed after the sale, including the rest of that same
 day -- so MAE/MFE is reported PER TRANCHE, never as one combined
-"position" number when two tranches exist. The partial-observed-day
-exclusion applies uniformly to BOTH an intraday stop and an intraday
-target close (generalized here to any exit day at all, open-fill or
-intraday: on the day a tranche's own exit is filled, only that day's
-open and the exit fill itself are usable OHLC-derived inputs -- the
-day's low/high cannot be ordered against the fill from daily OHLC alone,
-whether the fill happened at the open or mid-session).
+"position" number when two tranches exist.
 
-Closure verification finding (post-`9feb4a5`): `compute_tranche_mae_mfe()`
-below was correct and unit-tested (`test_28`) but had NO caller anywhere
-in `engine.py`/`session.py`/`legacy.py` -- no `Tranche`/`StopManagedPosition`/
-`LegacyPosition` produced by a real `run_stage()` result ever carried an
-MAE/MFE value, so section 12's REPORTING requirement was not actually met
-despite the formula existing. `evaluate_stop_managed_position_mae_mfe()`/
-`evaluate_legacy_position_mae_mfe()` (bottom of this module) now wire it
-against real positions -- as a SEPARATE evaluation/reporting pass over an
-already-produced `run_stage()` result, never by adding fields to
-`StopManagedPosition`/`LegacyPosition`/`Tranche` themselves (both stay
-byte-for-byte unchanged)."""
+Base spec section 17, verbatim: "MAE/MFE includes entry-day full range
+for open entries and exit-day full range only for close exits. For open
+exits include the exit open and prior held sessions, NEVER that exit
+day's subsequent high/low." Section 23's own required test: "Open-exit
+day later high/low excluded; close-exit day included." This means the
+exit day's own treatment depends on WHICH fill convention closed the
+tranche -- `FILL_MODE_*` below names the four cases this module
+distinguishes. Amendment section 12 extends the OPEN/INTRADAY exclusion
+explicitly to STOP_MANAGED_INVALIDATION's own two intraday-level fills
+(stop, target); base section 17 governs everything else.
+
+Radu's verdict on `8287ebb` (his own point 2, now confirmed against the
+recovered base contract) found four defects in the first wiring pass,
+fixed together here:
+
+1. A whole missing session, or a non-finite OHLC value, inside a
+   tranche's own window must never leave coverage reading FULL -- FULL
+   is a positive claim of completeness, never a default for absent data.
+2. The open/intraday/close/censored fill conventions require genuinely
+   different treatment of the resolution day's own high/low, not one
+   boolean collapsing all four into "exclude" vs "include" -- the
+   earlier `exit_is_real_execution: bool` wrongly excluded TIME_EXIT/
+   MAX_HOLDING_BARS_FORCED_EXIT's own close-fill day, which base section
+   17 requires to be FULLY included (the position held through that
+   whole day, up to and including the close that closed it).
+3. `EXIT_FAILED` must never be reported as an ordinary censored
+   remainder -- `final_closes`/`mark_final` is keyed by SECURITY, not by
+   position, so a failed position sharing a security with a genuinely
+   censored one must not silently borrow that mark.
+4. `PositionMaeMfe` must carry a genuinely unique identity. Keying only
+   on (security_id, strategy_variant_id, tranche_kind) collides when the
+   same variant/security trades more than once within one stage (a
+   TIME_EXIT(1) reopening after its own same-day exit is the ordinary
+   case this engine already produces) -- `entry_date` is added so two
+   successive trades of the same variant never produce indistinguishable
+   records.
+"""
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Optional, Sequence
+
+from backtest.exits.entities import (
+    EXIT_REASON_INVALIDATION,
+    EXIT_REASON_MAX_HOLDING_BARS_FORCED_EXIT,
+    EXIT_REASON_SIGNAL_INVALIDATION,
+    EXIT_REASON_STOP,
+    EXIT_REASON_TARGET,
+    EXIT_REASON_TIME_EXIT,
+)
 
 if TYPE_CHECKING:
     from backtest.data.pit_access import BoundedPITAccess
     from backtest.exits.entities import LegacyPosition, StopManagedPosition
 
-# COVERAGE_FULL was previously unreachable (GPT review round 2, finding
-# #6b) because every caller passed a REAL execution's own exit day, which
-# is always ambiguous by construction (the fill's ordering against that
-# day's own high/low is unknowable from daily OHLC alone) -- so coverage
-# was always PARTIAL_EXIT_DAY_EXCLUDED whenever an exit day existed at
-# all. It IS reachable now: `compute_tranche_mae_mfe(..., exit_is_real_
-# execution=False)` (a still-open remainder marked-to-market at the stage
-# boundary, closure verification fix post-9feb4a5) treats its own final
-# day as a NORMAL, fully-held day -- no intraday exit happened on it, so
-# excluding its high/low would misrepresent a fully-observed day as if an
-# execution ambiguity existed there. FULL is reported when every day in
-# that window, including the final one, has both a high and a low.
+# Base section 17: exit day treatment depends on the fill convention that
+# closed the tranche, not on a single "was this a real execution" bit.
+FILL_MODE_OPEN = "OPEN_FILL"                    # NEXT_SESSION_OPEN_AFTER_DETECTION -- invalidation, either family
+FILL_MODE_INTRADAY = "INTRADAY_LEVEL_FILL"      # amendment sec 12 -- STOP_MANAGED's own stop/target
+FILL_MODE_CLOSE = "CLOSE_FILL"                  # SCHEDULED_..._BAR_CLOSE -- TIME_EXIT/cap (legacy family)
+FILL_MODE_CENSORED = "CENSORED_MARK_TO_MARKET"  # still open, marked at the stage's own final authorized close
+
+_ALL_FILL_MODES = frozenset({FILL_MODE_OPEN, FILL_MODE_INTRADAY, FILL_MODE_CLOSE, FILL_MODE_CENSORED})
+# OPEN and INTRADAY are mechanically identical (exclude high/low, use only
+# the day's open) -- kept as separate named constants because they are
+# contractually distinct cases (base sec 17 vs amendment sec 12), even
+# though the resulting computation does not need to tell them apart.
+_EXCLUDE_HIGH_LOW_MODES = frozenset({FILL_MODE_OPEN, FILL_MODE_INTRADAY})
+
 COVERAGE_FULL = "FULL"
 COVERAGE_PARTIAL_EXIT_DAY_EXCLUDED = "PARTIAL_EXIT_DAY_EXCLUDED"
+# Distinct from the above: this is a genuine DATA gap (a session the
+# calendar expected has no bar at all, or a recorded value is not finite)
+# -- never conflated with the routine, contractually-required exclusion
+# of an open/intraday exit day's own high/low. Takes priority when both
+# would otherwise apply, since it reflects an actual problem with the
+# data rather than an expected, by-design omission.
+COVERAGE_MISSING_SESSION_DATA = "MISSING_SESSION_DATA"
 
 
 @dataclass(frozen=True)
@@ -63,7 +104,7 @@ class DailyRange:
 class TrancheMaeMfe:
     mae: float  # most adverse excursion observed, signed (negative = adverse), relative to entry_fill
     mfe: float  # most favorable excursion observed, signed (positive = favorable)
-    coverage: str  # COVERAGE_FULL | COVERAGE_PARTIAL_EXIT_DAY_EXCLUDED
+    coverage: str  # COVERAGE_FULL | COVERAGE_PARTIAL_EXIT_DAY_EXCLUDED | COVERAGE_MISSING_SESSION_DATA
 
 
 def _direction_sign(direction: str) -> float:
@@ -74,84 +115,100 @@ def _direction_sign(direction: str) -> float:
     raise ValueError(f"direction must be 'LONG' or 'SHORT', got {direction!r}")
 
 
+def _is_finite(value: Optional[float]) -> bool:
+    return value is not None and math.isfinite(value)
+
+
+def _is_finite_positive(value: Optional[float]) -> bool:
+    return _is_finite(value) and value > 0
+
+
 def compute_tranche_mae_mfe(
-    direction: str, entry_fill: float, bars: list[DailyRange], exit_date: str, exit_fill: float,
-    exit_is_real_execution: bool = True,
+    direction: str, entry_fill: float, bars: Sequence[DailyRange], exit_date: str, exit_fill: float,
+    fill_mode: str, expected_session_dates: Sequence[str],
 ) -> TrancheMaeMfe:
-    """`bars` should cover the tranche's own holding window (entry date
-    through `exit_date`, inclusive) -- but the exit fill itself is ALWAYS
-    a valid observation on its own, so this never returns None: an empty
-    (or exit-day-only) `bars` list still yields a degenerate result from
-    the exit fill alone, correctly labeled PARTIAL_EXIT_DAY_EXCLUDED.
+    """`bars` covers whatever this tranche's own holding window's `as_of`
+    query actually returned; `expected_session_dates` is the trading
+    calendar's own authorized session sequence for that SAME window
+    (`entry_date` through `exit_date`, inclusive) -- the two are cross-
+    referenced explicitly so a session the calendar expected but `bars`
+    has nothing for is never silently treated as if it simply didn't
+    exist (defect #1: a whole missing session must downgrade coverage,
+    not vanish unnoticed). `exit_date` must be one of
+    `expected_session_dates` -- a real exit always happens ON an
+    authorized session.
 
-    `exit_is_real_execution` (default `True`, preserves every existing
-    caller's behavior byte-for-byte -- closure verification fix, post-
-    `9feb4a5`): `True` for a tranche that actually closed via a real fill
-    (stop, target, invalidation, time exit, cap) -- `exit_date`'s own bar
-    is genuinely ambiguous (the fill's ordering against that day's own
-    high/low cannot be established from daily OHLC alone) and is excluded
-    from the high/low sweep, same as always. `False` for a position/
-    remainder still open at the stage boundary, marked-to-market for
-    reporting (`CENSORED_AT_HORIZON`): no intraday execution happened on
-    that final day at all, so it is treated like any OTHER day in the
-    window -- its own high/low ARE genuine, fully-observable inputs.
-    Excluding them in this case would report a fully-held day as if an
-    intraday exit had occurred on it, which section 12 never asks for.
-    `exit_fill` in that case is the mark-to-market price (the final
-    authorized close) and is still added as an extra observed excursion.
+    `fill_mode` (defect #2) picks the exit day's own treatment:
+    - `FILL_MODE_OPEN`/`FILL_MODE_INTRADAY`: the exit day's high/low are
+      excluded (their ordering against the fill is unknowable from daily
+      OHLC alone) -- only that day's own open, if present, and the
+      actual `exit_fill` are usable.
+    - `FILL_MODE_CLOSE`/`FILL_MODE_CENSORED`: the exit/mark day is
+      treated like any OTHER day in the window -- the position held
+      through its own full range (a scheduled close fill, or simply
+      still open), so its high/low ARE genuine, fully-observable inputs.
 
-    GPT review round 2, finding #6b: coverage must never read FULL when
-    data is actually missing -- absence of data proves nothing about
-    coverage, so it can never be presented as complete. This flags
-    PARTIAL_EXIT_DAY_EXCLUDED whenever: (a) `exit_date`'s own bar is
-    absent from `bars` entirely (its true range was never even supplied),
-    (b) `exit_is_real_execution` is `True` (that day is ALWAYS ambiguous
-    by construction, regardless of data completeness), or (c) ANY day in
-    the window is missing a high or low value. The exit fill itself is
-    ALWAYS included as an excursion, regardless of whether a bar for
-    `exit_date` was present -- an exit day absent from `bars` would
-    otherwise silently drop the exit fill from consideration entirely,
-    understating the true MAE/MFE whenever the fill itself was the most
-    extreme point.
+    Every OTHER day in the window (including the entry day, always --
+    base section 17: "entry-day full range for open entries") uses its
+    own full high/low unconditionally.
 
-    GPT review round 3, finding #4: the excursion AT ENTRY is always
-    KNOWN -- by definition, price == entry_fill at that moment, so its
-    excursion is exactly 0.0 -- and this is included UNCONDITIONALLY,
-    regardless of `bars`. Without it, an empty-bars tranche with a
-    favorable exit (e.g. entry 100, exit 110, no bars) wrongly reported
-    MAE == MFE == +10% instead of the correct MAE=0%/MFE=+10% (the price
-    never actually traded below entry -- 0% IS the true worst point
-    observed); symmetrically, a pure-loss tranche must never report a
-    positive MFE from this alone."""
+    Non-finite/missing values (defect #1): any expected session absent
+    from `bars` entirely, or a high/low that is not finite, downgrades
+    coverage to `COVERAGE_MISSING_SESSION_DATA` -- checked independently
+    of, and reported with priority over, the routine `PARTIAL_EXIT_DAY_
+    EXCLUDED` label for an open/intraday exit day's own by-design
+    exclusion. `entry_fill`/`exit_fill` themselves must be finite and
+    strictly positive -- there is nothing meaningful to compute otherwise.
+
+    The excursion AT ENTRY is always KNOWN -- by definition, price ==
+    entry_fill at that moment, so its excursion is exactly 0.0 -- and is
+    included UNCONDITIONALLY, regardless of `bars` (GPT review round 3,
+    finding #4): without it, an empty-bars tranche with a favorable exit
+    (e.g. entry 100, exit 110, no bars) would wrongly report MAE == MFE
+    == +10% instead of the correct MAE=0%/MFE=+10%."""
+    if fill_mode not in _ALL_FILL_MODES:
+        raise ValueError(f"fill_mode must be one of {sorted(_ALL_FILL_MODES)}, got {fill_mode!r}")
+    if not _is_finite_positive(entry_fill) or not _is_finite_positive(exit_fill):
+        raise ValueError(
+            f"entry_fill/exit_fill must be finite and strictly positive, got entry_fill={entry_fill!r} "
+            f"exit_fill={exit_fill!r}"
+        )
+    if exit_date not in expected_session_dates:
+        raise ValueError(f"exit_date {exit_date!r} must be one of expected_session_dates")
+
     d = _direction_sign(direction)
-    excursions: list[float] = [0.0]  # the entry moment itself: always a known, zero excursion.
-    coverage = COVERAGE_FULL
-    exit_day_bar_present = False
+    excursions: list[float] = [0.0]
+    bars_by_date = {b.date: b for b in bars}
+    exclude_high_low_on_exit_day = fill_mode in _EXCLUDE_HIGH_LOW_MODES
+    saw_missing_data = False
 
-    for b in bars:
-        if b.date == exit_date:
-            exit_day_bar_present = True
-            if exit_is_real_execution:
-                coverage = COVERAGE_PARTIAL_EXIT_DAY_EXCLUDED
-                if b.open is not None:
-                    excursions.append(d * (b.open - entry_fill) / entry_fill)
-                continue
-            # else: fall through to the SAME high/low handling as any
-            # other day below -- this day was fully held, no real
-            # intraday exit occurred on it.
-        if b.high is None or b.low is None:
-            coverage = COVERAGE_PARTIAL_EXIT_DAY_EXCLUDED
-            if b.high is not None:
-                excursions.append(d * (b.high - entry_fill) / entry_fill)
-            if b.low is not None:
-                excursions.append(d * (b.low - entry_fill) / entry_fill)
+    for session_date in expected_session_dates:
+        bar = bars_by_date.get(session_date)
+        if bar is None:
+            saw_missing_data = True
             continue
-        excursions.append(d * (b.high - entry_fill) / entry_fill)
-        excursions.append(d * (b.low - entry_fill) / entry_fill)
+        if session_date == exit_date and exclude_high_low_on_exit_day:
+            if _is_finite(bar.open):
+                excursions.append(d * (bar.open - entry_fill) / entry_fill)
+            else:
+                saw_missing_data = True
+            continue
+        high_ok, low_ok = _is_finite(bar.high), _is_finite(bar.low)
+        if not high_ok or not low_ok:
+            saw_missing_data = True
+        if high_ok:
+            excursions.append(d * (bar.high - entry_fill) / entry_fill)
+        if low_ok:
+            excursions.append(d * (bar.low - entry_fill) / entry_fill)
 
     excursions.append(d * (exit_fill - entry_fill) / entry_fill)
-    if not exit_day_bar_present:
+
+    if saw_missing_data:
+        coverage = COVERAGE_MISSING_SESSION_DATA
+    elif exclude_high_low_on_exit_day:
         coverage = COVERAGE_PARTIAL_EXIT_DAY_EXCLUDED
+    else:
+        coverage = COVERAGE_FULL
 
     return TrancheMaeMfe(mae=min(excursions), mfe=max(excursions), coverage=coverage)
 
@@ -162,9 +219,14 @@ class PositionMaeMfe:
     tranche it belongs to -- section 12's own "per tranche, never one
     combined position number" requirement, as a standalone reporting
     record rather than a field on `StopManagedPosition`/`LegacyPosition`
-    themselves (neither is modified)."""
+    themselves (neither is modified). `entry_date` (defect #4) makes the
+    identity genuinely unique: `(security_id, strategy_variant_id,
+    tranche_kind)` alone collides when the same variant re-trades the
+    same security within one stage (e.g. a TIME_EXIT(1) reopening
+    immediately after its own same-day exit)."""
     security_id: str
     strategy_variant_id: str
+    entry_date: str
     tranche_kind: str  # "PARTIAL_PROFIT" | "REMAINDER"
     mae_mfe: TrancheMaeMfe
 
@@ -183,77 +245,132 @@ def _window_bars(pit: "BoundedPITAccess", security_id: str, as_of: str, start_da
     ]
 
 
+def _expected_dates_in_window(session_dates: Sequence[str], start_date: str, end_date: str) -> tuple[str, ...]:
+    return tuple(d for d in session_dates if start_date <= d <= end_date)
+
+
+_STOP_MANAGED_FILL_MODE_BY_REASON = {
+    EXIT_REASON_TARGET: FILL_MODE_INTRADAY,
+    EXIT_REASON_STOP: FILL_MODE_INTRADAY,
+    EXIT_REASON_INVALIDATION: FILL_MODE_OPEN,
+}
+_LEGACY_FILL_MODE_BY_REASON = {
+    EXIT_REASON_TIME_EXIT: FILL_MODE_CLOSE,
+    EXIT_REASON_MAX_HOLDING_BARS_FORCED_EXIT: FILL_MODE_CLOSE,
+    EXIT_REASON_SIGNAL_INVALIDATION: FILL_MODE_OPEN,
+}
+
+
 def evaluate_stop_managed_position_mae_mfe(
-    pit: "BoundedPITAccess", position: "StopManagedPosition", final_mark_date: str, mark_final: Optional[float],
+    pit: "BoundedPITAccess", position: "StopManagedPosition", session_dates: Sequence[str],
+    final_mark_date: str, mark_final: Optional[float],
 ) -> tuple[PositionMaeMfe, ...]:
     """Amendment section 12, wired against a real `run_stage()` result.
     Returns a SEPARATE record per tranche that actually exists on this
     position (0, 1, or 2 records) -- never merged into one "position"
     number. `position` itself is never modified.
 
-    Price basis coherence (the requirement behind this whole function):
-    each tranche's own bars are queried `as_of` THAT tranche's own
-    resolution date and paired with the entry price reference frozen (or
-    current) on that SAME basis -- `Tranche.entry_fill_price_reference`
-    for a closed tranche (frozen exactly when IT closed, section 6),
-    `position.entry_fill_price` (continuously reconciled) for a still-open
-    remainder queried as of the stage's own final mark date. Mixing a
-    frozen reference from one as-of basis with bars queried on a DIFFERENT
-    one would silently reintroduce the exact split-ratio error `entry_
-    fill_price_reference` exists to prevent (GPT review round 2, finding
-    #5)."""
+    `session_dates` is the stage's own full, calendar-authorized session
+    sequence (the same one `SessionEngine` was constructed with) --
+    needed to detect a whole missing session inside a tranche's own
+    window (defect #1), never to be confused with `bars`, which is
+    whatever the `as_of` price query actually returned.
+
+    Defect #3: an `EXIT_FAILED` position produces NO records at all,
+    checked FIRST, before any tranche/mark logic -- `final_closes` is
+    keyed by security, not by position, so a failed position sharing a
+    security with a genuinely censored one must never borrow that mark
+    and be reported as an ordinary censored remainder. This mirrors
+    `taxonomy.classify_position()`'s own EXIT_FAILED-poisons-the-whole-
+    position precedent (a realized partial tranche is not reported
+    either, exactly as `evaluate_stage_results()` already reports no
+    return at all for such a position).
+
+    Price basis coherence: each tranche's own bars are queried `as_of`
+    THAT tranche's own resolution date and paired with the entry price
+    reference frozen (or current) on that SAME basis -- `Tranche.
+    entry_fill_price_reference` for a closed tranche (frozen exactly when
+    IT closed, section 6), `position.entry_fill_price` (continuously
+    reconciled) for a still-open remainder queried as of the stage's own
+    final mark date. Mixing a frozen reference from one as-of basis with
+    bars queried on a DIFFERENT one would silently reintroduce the exact
+    split-ratio error `entry_fill_price_reference` exists to prevent
+    (GPT review round 2, finding #5)."""
+    if position.exit_failed:
+        return ()
+
     records: list[PositionMaeMfe] = []
 
     if position.partial_tranche is not None:
         t = position.partial_tranche
+        expected = _expected_dates_in_window(session_dates, position.entry_date, t.exit_date)
         bars = _window_bars(pit, position.security_id, t.exit_date, position.entry_date, t.exit_date)
+        fill_mode = _STOP_MANAGED_FILL_MODE_BY_REASON[t.exit_reason]
         result = compute_tranche_mae_mfe(
             position.direction, t.entry_fill_price_reference, bars, t.exit_date, t.exit_fill_price,
-            exit_is_real_execution=True,
+            fill_mode, expected,
         )
-        records.append(PositionMaeMfe(position.security_id, position.strategy_variant_id, t.kind, result))
+        records.append(PositionMaeMfe(position.security_id, position.strategy_variant_id, position.entry_date, t.kind, result))
 
     if position.closed and position.close_tranche is not None:
         t = position.close_tranche
+        expected = _expected_dates_in_window(session_dates, position.entry_date, t.exit_date)
         bars = _window_bars(pit, position.security_id, t.exit_date, position.entry_date, t.exit_date)
+        fill_mode = _STOP_MANAGED_FILL_MODE_BY_REASON[t.exit_reason]
         result = compute_tranche_mae_mfe(
             position.direction, t.entry_fill_price_reference, bars, t.exit_date, t.exit_fill_price,
-            exit_is_real_execution=True,
+            fill_mode, expected,
         )
-        records.append(PositionMaeMfe(position.security_id, position.strategy_variant_id, t.kind, result))
+        records.append(PositionMaeMfe(position.security_id, position.strategy_variant_id, position.entry_date, t.kind, result))
     elif not position.closed and mark_final is not None:
+        expected = _expected_dates_in_window(session_dates, position.entry_date, final_mark_date)
         bars = _window_bars(pit, position.security_id, final_mark_date, position.entry_date, final_mark_date)
         result = compute_tranche_mae_mfe(
             position.direction, position.entry_fill_price, bars, final_mark_date, mark_final,
-            exit_is_real_execution=False,
+            FILL_MODE_CENSORED, expected,
         )
-        records.append(PositionMaeMfe(position.security_id, position.strategy_variant_id, "REMAINDER", result))
+        records.append(PositionMaeMfe(position.security_id, position.strategy_variant_id, position.entry_date, "REMAINDER", result))
 
     return tuple(records)
 
 
 def evaluate_legacy_position_mae_mfe(
-    pit: "BoundedPITAccess", position: "LegacyPosition", final_mark_date: str, mark_final: Optional[float],
+    pit: "BoundedPITAccess", position: "LegacyPosition", session_dates: Sequence[str],
+    final_mark_date: str, mark_final: Optional[float],
 ) -> tuple[PositionMaeMfe, ...]:
     """The `LegacyPosition` (TIME_EXIT/SIGNAL_INVALIDATION) counterpart of
     `evaluate_stop_managed_position_mae_mfe()` -- narrower, since neither
     older family ever has a partial-profit tranche (module docstring of
     `backtest.exits.legacy`): always exactly one tranche's worth of
-    record, or none for a position with nothing to report (e.g.
-    `EXIT_FAILED`)."""
+    record, or none for a position with nothing to report (`EXIT_FAILED`,
+    checked first, same precedent as the STOP_MANAGED counterpart above).
+
+    `TIME_EXIT`/`MAX_HOLDING_BARS_FORCED_EXIT` are `FILL_MODE_CLOSE`
+    (`SCHEDULED_..._BAR_CLOSE`, base section 9) -- the position held
+    through that whole session up to and including the close that closed
+    it, so base section 17 requires its FULL range included, never
+    excluded as though an intraday ambiguity existed. `SIGNAL_
+    INVALIDATION` is `FILL_MODE_OPEN` (`NEXT_SESSION_OPEN_AFTER_
+    DETECTION`)."""
+    if position.exit_failed:
+        return ()
+
     if position.closed and position.close_tranche is not None:
         t = position.close_tranche
+        expected = _expected_dates_in_window(session_dates, position.entry_date, t.exit_date)
         bars = _window_bars(pit, position.security_id, t.exit_date, position.entry_date, t.exit_date)
+        fill_mode = _LEGACY_FILL_MODE_BY_REASON[t.exit_reason]
         result = compute_tranche_mae_mfe(
             position.direction, t.entry_fill_price_reference, bars, t.exit_date, t.exit_fill_price,
-            exit_is_real_execution=True,
+            fill_mode, expected,
         )
-        return (PositionMaeMfe(position.security_id, position.strategy_variant_id, t.kind, result),)
+        return (PositionMaeMfe(position.security_id, position.strategy_variant_id, position.entry_date, t.kind, result),)
     if not position.closed and mark_final is not None:
+        expected = _expected_dates_in_window(session_dates, position.entry_date, final_mark_date)
         bars = _window_bars(pit, position.security_id, final_mark_date, position.entry_date, final_mark_date)
         result = compute_tranche_mae_mfe(
             position.direction, position.entry_fill_price, bars, final_mark_date, mark_final,
-            exit_is_real_execution=False,
+            FILL_MODE_CENSORED, expected,
         )
-        return (PositionMaeMfe(position.security_id, position.strategy_variant_id, "REMAINDER", result),)
+        return (PositionMaeMfe(position.security_id, position.strategy_variant_id, position.entry_date, "REMAINDER", result),)
     return ()
