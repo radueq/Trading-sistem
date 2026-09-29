@@ -21,42 +21,47 @@ explicitly to STOP_MANAGED_INVALIDATION's own two intraday-level fills
 
 Radu's verdict on `8287ebb` (his own point 2, now confirmed against the
 recovered base contract) found four defects in the first wiring pass,
-fixed together here:
+fixed together (commit `3aae3ef`):
 
 1. A whole missing session, or a non-finite OHLC value, inside a
-   tranche's own window must never leave coverage reading FULL -- FULL
-   is a positive claim of completeness, never a default for absent data.
-   Corrected further after Radu's follow-up on this same point: labeling
-   the gap `COVERAGE_MISSING_SESSION_DATA` is not enough on its own --
-   base section 17, verbatim, "Missing interior range makes excursion
-   metrics unavailable even if endpoint return is measurable; report
-   coverage separately." `mae`/`mfe` are `Optional[float]` and are `None`
-   whenever any required session/value inside the window is missing or
-   non-finite -- never a number computed from the incomplete remainder
-   and merely tagged with a different coverage label. The routine,
-   by-design exclusion of an open/intraday exit day's own high/low
-   (`COVERAGE_PARTIAL_EXIT_DAY_EXCLUDED`) is NOT "missing data" in this
-   sense -- section 17 itself specifies exactly which fields to use
-   there, so `mae`/`mfe` stay real numbers for that case.
+   tranche's own window must never leave coverage reading FULL.
 2. The open/intraday/close/censored fill conventions require genuinely
-   different treatment of the resolution day's own high/low, not one
-   boolean collapsing all four into "exclude" vs "include" -- the
-   earlier `exit_is_real_execution: bool` wrongly excluded TIME_EXIT/
-   MAX_HOLDING_BARS_FORCED_EXIT's own close-fill day, which base section
-   17 requires to be FULLY included (the position held through that
-   whole day, up to and including the close that closed it).
+   different treatment of the resolution day's own high/low.
 3. `EXIT_FAILED` must never be reported as an ordinary censored
-   remainder -- `final_closes`/`mark_final` is keyed by SECURITY, not by
-   position, so a failed position sharing a security with a genuinely
-   censored one must not silently borrow that mark.
-4. `PositionMaeMfe` must carry a genuinely unique identity. Keying only
-   on (security_id, strategy_variant_id, tranche_kind) collides when the
-   same variant/security trades more than once within one stage (a
-   TIME_EXIT(1) reopening after its own same-day exit is the ordinary
-   case this engine already produces) -- `entry_date` is added so two
-   successive trades of the same variant never produce indistinguishable
-   records.
-"""
+   remainder.
+4. `PositionMaeMfe` must carry a genuinely unique identity (`entry_date`).
+
+Two follow-up corrections, both raised by Radu before independent
+verification of that delta completed:
+
+5. (commit `536bad7`) Labeling a genuine data gap
+   `COVERAGE_MISSING_SESSION_DATA` was not enough on its own -- base
+   section 17, verbatim, "Missing interior range makes excursion metrics
+   unavailable even if endpoint return is measurable; report coverage
+   separately." `mae`/`mfe` are `Optional[float]`, `None` whenever any
+   required session/value inside the window is missing or non-finite --
+   never a number computed from the incomplete remainder and merely
+   tagged with a different coverage label. The routine, by-design
+   exclusion of an open/intraday exit day's own high/low (`COVERAGE_
+   PARTIAL_EXIT_DAY_EXCLUDED`) is NOT "missing data" in this sense --
+   section 17 itself specifies exactly which fields to use there, so
+   `mae`/`mfe` stay real numbers for that case.
+6. The reference price MAE/MFE excursions are computed against was
+   `Tranche.entry_fill_price_reference`/`StopManagedPosition.
+   entry_fill_price` -- `F_e`, the entry fill WITH slippage baked in
+   (`costs.apply_entry_slippage()` runs before either field is ever
+   set). Base section 17's own formula is explicit: "MAE=min(0,min_price/
+   P_e-1)... cost-free price excursions" -- `P_e`, the RAW, pre-slippage
+   common-basis reference (base section 13), never `F_e`. `P_e` is now
+   derived directly from the entry day's OWN bar inside the tranche's
+   own `bars` window (already queried on the tranche's own as-of basis,
+   so split-coherence is automatic -- no separately-tracked reference
+   needed at all for this purpose). `F_e`/`entry_fill_price_reference`
+   remain exactly as they were for `costs.py`'s own NET RETURN
+   calculation, which stays entirely separate -- MAE/MFE and net return
+   answer different questions (a hypothetical cost-free excursion vs. an
+   actual realized, cost-bearing return) and must never share a
+   reference price."""
 from __future__ import annotations
 
 import math
@@ -115,13 +120,15 @@ class DailyRange:
 @dataclass(frozen=True)
 class TrancheMaeMfe:
     # `None` (unavailable) exactly when coverage == COVERAGE_MISSING_SESSION_DATA
-    # -- base section 17: missing interior range makes the excursion
-    # metrics unavailable, never a number computed from the incomplete
-    # remainder. Real signed floats otherwise (adverse = negative,
-    # favorable = positive, relative to entry_fill).
+    # -- base section 17: missing interior range (including a missing/
+    # non-finite entry-day open, since that IS the P_e reference every
+    # other excursion is computed against) makes the excursion metrics
+    # unavailable, never a number computed from the incomplete remainder.
+    # Real signed floats otherwise (adverse = negative, favorable =
+    # positive, relative to P_e -- the raw, pre-slippage entry reference).
     mae: Optional[float]
     mfe: Optional[float]
-    coverage: str  # COVERAGE_FULL | COVERAGE_PARTIAL_EXIT_DAY_EXCLUDED | COVERAGE_MISSING_SESSION_DATA | COVERAGE_MISSING_SESSION_DATA
+    coverage: str  # COVERAGE_FULL | COVERAGE_PARTIAL_EXIT_DAY_EXCLUDED | COVERAGE_MISSING_SESSION_DATA
 
 
 def _direction_sign(direction: str) -> float:
@@ -141,67 +148,76 @@ def _is_finite_positive(value: Optional[float]) -> bool:
 
 
 def compute_tranche_mae_mfe(
-    direction: str, entry_fill: float, bars: Sequence[DailyRange], exit_date: str, exit_fill: float,
+    direction: str, bars: Sequence[DailyRange], entry_date: str, exit_date: str, exit_fill: float,
     fill_mode: str, expected_session_dates: Sequence[str],
 ) -> TrancheMaeMfe:
     """`bars` covers whatever this tranche's own holding window's `as_of`
-    query actually returned; `expected_session_dates` is the trading
-    calendar's own authorized session sequence for that SAME window
-    (`entry_date` through `exit_date`, inclusive) -- the two are cross-
-    referenced explicitly so a session the calendar expected but `bars`
-    has nothing for is never silently treated as if it simply didn't
-    exist (defect #1: a whole missing session must downgrade coverage,
-    not vanish unnoticed). `exit_date` must be one of
-    `expected_session_dates` -- a real exit always happens ON an
-    authorized session.
+    query actually returned (starting at `entry_date`); `expected_
+    session_dates` is the trading calendar's own authorized session
+    sequence for that SAME window -- the two are cross-referenced
+    explicitly so a session the calendar expected but `bars` has nothing
+    for is never silently treated as if it simply didn't exist. Both
+    `entry_date` and `exit_date` must be one of `expected_session_dates`
+    -- a real entry/exit always happens ON an authorized session.
 
-    `fill_mode` (defect #2) picks the exit day's own treatment:
+    `P_e` (base section 13's "positive common-basis reference entry" --
+    the RAW price before slippage) is derived from the entry day's OWN
+    bar inside `bars`, never passed in separately: `bars` is already
+    queried on the tranche's own as-of basis, so deriving `P_e` from it
+    directly guarantees split coherence for free, and structurally
+    prevents ever passing a slipped `F_e` by mistake (the exact defect
+    this fixes -- see module docstring, point 6). A missing or non-finite
+    entry-day open makes the WHOLE result unavailable, exactly like any
+    other missing/non-finite value in the window (below): every other
+    excursion is computed relative to `P_e`, so an unknown `P_e` poisons
+    all of them, not just the entry day's own contribution.
+
+    `fill_mode` picks the exit day's own treatment:
     - `FILL_MODE_OPEN`/`FILL_MODE_INTRADAY`: the exit day's high/low are
       excluded (their ordering against the fill is unknowable from daily
       OHLC alone) -- only that day's own open, if present, and the
-      actual `exit_fill` are usable.
+      actual `exit_fill` (the RAW trigger/fill level -- `Tranche.
+      exit_fill_price`'s own value, never re-slipped here; slippage is
+      applied separately, downstream, only for the net-return
+      calculation in `costs.py`) are usable.
     - `FILL_MODE_CLOSE`/`FILL_MODE_CENSORED`: the exit/mark day is
       treated like any OTHER day in the window -- the position held
       through its own full range (a scheduled close fill, or simply
       still open), so its high/low ARE genuine, fully-observable inputs.
 
-    Every OTHER day in the window (including the entry day, always --
-    base section 17: "entry-day full range for open entries") uses its
-    own full high/low unconditionally.
+    Every OTHER day in the window (including the entry day itself, when
+    it differs from `exit_date` -- base section 17: "entry-day full
+    range for open entries") uses its own full high/low unconditionally.
 
-    Non-finite/missing values (defect #1): any expected session absent
-    from `bars` entirely, or a high/low that is not finite, downgrades
-    coverage to `COVERAGE_MISSING_SESSION_DATA` -- checked independently
-    of, and reported with priority over, the routine `PARTIAL_EXIT_DAY_
-    EXCLUDED` label for an open/intraday exit day's own by-design
-    exclusion. `entry_fill`/`exit_fill` themselves must be finite and
-    strictly positive -- there is nothing meaningful to compute otherwise.
-
-    The excursion AT ENTRY is always KNOWN -- by definition, price ==
-    entry_fill at that moment, so its excursion is exactly 0.0 -- and is
-    tracked UNCONDITIONALLY while iterating (GPT review round 3, finding
-    #4's original reasoning): it still contributes to `mae`/`mfe` for a
-    window with NO missing data, so a genuinely complete but short window
-    never appears artificially worse or better than what was truly
-    observed. It does NOT rescue a window with missing data, though --
-    Radu's own correction on this delta: `mae`/`mfe` are `None` whenever
-    `saw_missing_data` is true, regardless of how many other excursions
-    (entry included) happened to be collected -- a partial view can never
-    certify the TRUE min/max, since an unobserved gap could hide a more
-    extreme point than anything actually seen."""
+    Missing/non-finite data: any expected session absent from `bars`
+    entirely, a high/low/open that is not finite, or `exit_fill` itself
+    not finite/strictly positive, makes `mae`/`mfe` both `None`
+    (`COVERAGE_MISSING_SESSION_DATA`) -- base section 17: "Missing
+    interior range makes excursion metrics unavailable even if endpoint
+    return is measurable." This is never conflated with the routine,
+    by-design exclusion of an open/intraday exit day's own high/low
+    (`COVERAGE_PARTIAL_EXIT_DAY_EXCLUDED`), which still returns real
+    numbers -- section 17 itself specifies exactly which fields to use
+    there."""
     if fill_mode not in _ALL_FILL_MODES:
         raise ValueError(f"fill_mode must be one of {sorted(_ALL_FILL_MODES)}, got {fill_mode!r}")
-    if not _is_finite_positive(entry_fill) or not _is_finite_positive(exit_fill):
-        raise ValueError(
-            f"entry_fill/exit_fill must be finite and strictly positive, got entry_fill={entry_fill!r} "
-            f"exit_fill={exit_fill!r}"
-        )
+    if not _is_finite_positive(exit_fill):
+        raise ValueError(f"exit_fill must be finite and strictly positive, got exit_fill={exit_fill!r}")
+    if entry_date not in expected_session_dates:
+        raise ValueError(f"entry_date {entry_date!r} must be one of expected_session_dates")
     if exit_date not in expected_session_dates:
         raise ValueError(f"exit_date {exit_date!r} must be one of expected_session_dates")
 
-    d = _direction_sign(direction)
-    excursions: list[float] = [0.0]
     bars_by_date = {b.date: b for b in bars}
+    entry_bar = bars_by_date.get(entry_date)
+    if entry_bar is None or not _is_finite_positive(entry_bar.open):
+        # P_e itself is unknown -- every excursion depends on it, so the
+        # whole tranche's MAE/MFE is unavailable, not just the entry day.
+        return TrancheMaeMfe(mae=None, mfe=None, coverage=COVERAGE_MISSING_SESSION_DATA)
+    entry_fill = entry_bar.open  # P_e
+
+    d = _direction_sign(direction)
+    excursions: list[float] = [0.0]  # the entry moment itself: always a known, zero excursion, relative to P_e.
     exclude_high_low_on_exit_day = fill_mode in _EXCLUDE_HIGH_LOW_MODES
     saw_missing_data = False
 
@@ -245,11 +261,11 @@ class PositionMaeMfe:
     tranche it belongs to -- section 12's own "per tranche, never one
     combined position number" requirement, as a standalone reporting
     record rather than a field on `StopManagedPosition`/`LegacyPosition`
-    themselves (neither is modified). `entry_date` (defect #4) makes the
-    identity genuinely unique: `(security_id, strategy_variant_id,
-    tranche_kind)` alone collides when the same variant re-trades the
-    same security within one stage (e.g. a TIME_EXIT(1) reopening
-    immediately after its own same-day exit)."""
+    themselves (neither is modified). `entry_date` makes the identity
+    genuinely unique: `(security_id, strategy_variant_id, tranche_kind)`
+    alone collides when the same variant re-trades the same security
+    within one stage (e.g. a TIME_EXIT(1) reopening immediately after its
+    own same-day exit)."""
     security_id: str
     strategy_variant_id: str
     entry_date: str
@@ -260,10 +276,12 @@ class PositionMaeMfe:
 def _window_bars(pit: "BoundedPITAccess", security_id: str, as_of: str, start_date: str, end_date: str) -> list[DailyRange]:
     """Bars for `[start_date, end_date]`, queried `as_of` the SAME date
     the tranche itself resolved on (its own close date, or the stage's
-    final mark date for a still-open remainder) -- every bar returned is
-    therefore split-adjusted on that ONE basis, coherent with whichever
-    entry price reference the caller pairs it with (see the two
-    `evaluate_*_position_mae_mfe()` functions below)."""
+    final mark date for a still-open remainder) -- every bar returned,
+    INCLUDING the entry day's own (start_date is always `position.
+    entry_date`), is therefore split-adjusted on that ONE basis. `P_e` is
+    derived from this same list inside `compute_tranche_mae_mfe()` --
+    coherence is automatic, never a separately-tracked reference that
+    could drift onto a different basis."""
     bars = pit.get_price_series_as_of(security_id, as_of)
     return [
         DailyRange(date=b.date, open=b.split_adjusted_open, high=b.split_adjusted_high, low=b.split_adjusted_low)
@@ -299,29 +317,29 @@ def evaluate_stop_managed_position_mae_mfe(
     `session_dates` is the stage's own full, calendar-authorized session
     sequence (the same one `SessionEngine` was constructed with) --
     needed to detect a whole missing session inside a tranche's own
-    window (defect #1), never to be confused with `bars`, which is
-    whatever the `as_of` price query actually returned.
+    window, never to be confused with `bars`, which is whatever the
+    `as_of` price query actually returned.
 
-    Defect #3: an `EXIT_FAILED` position produces NO records at all,
-    checked FIRST, before any tranche/mark logic -- `final_closes` is
-    keyed by security, not by position, so a failed position sharing a
-    security with a genuinely censored one must never borrow that mark
-    and be reported as an ordinary censored remainder. This mirrors
-    `taxonomy.classify_position()`'s own EXIT_FAILED-poisons-the-whole-
-    position precedent (a realized partial tranche is not reported
-    either, exactly as `evaluate_stage_results()` already reports no
-    return at all for such a position).
+    An `EXIT_FAILED` position produces NO records at all, checked FIRST,
+    before any tranche/mark logic -- `final_closes` is keyed by security,
+    not by position, so a failed position sharing a security with a
+    genuinely censored one must never borrow that mark and be reported as
+    an ordinary censored remainder. This mirrors `taxonomy.
+    classify_position()`'s own EXIT_FAILED-poisons-the-whole-position
+    precedent (a realized partial tranche is not reported either, exactly
+    as `evaluate_stage_results()` already reports no return at all for
+    such a position).
 
-    Price basis coherence: each tranche's own bars are queried `as_of`
-    THAT tranche's own resolution date and paired with the entry price
-    reference frozen (or current) on that SAME basis -- `Tranche.
-    entry_fill_price_reference` for a closed tranche (frozen exactly when
-    IT closed, section 6), `position.entry_fill_price` (continuously
-    reconciled) for a still-open remainder queried as of the stage's own
-    final mark date. Mixing a frozen reference from one as-of basis with
-    bars queried on a DIFFERENT one would silently reintroduce the exact
-    split-ratio error `entry_fill_price_reference` exists to prevent
-    (GPT review round 2, finding #5)."""
+    `Tranche.exit_fill_price` is passed straight through as `exit_fill`
+    -- it is already the RAW trigger/fill level (`session.py` constructs
+    it from the stop/target/invalidation LEVEL itself, before
+    `costs.apply_exit_slippage()` ever runs), so it never needs
+    adjustment here. `entry_fill_price_reference`/`position.
+    entry_fill_price` are NOT passed to `compute_tranche_mae_mfe()` at
+    all -- `P_e` is derived internally from `bars`' own entry-day open
+    (see that function's docstring, point 6 of the module docstring).
+    Those two fields remain exactly what `costs.py` uses for the NET
+    RETURN calculation, entirely separate from MAE/MFE."""
     if position.exit_failed:
         return ()
 
@@ -333,7 +351,7 @@ def evaluate_stop_managed_position_mae_mfe(
         bars = _window_bars(pit, position.security_id, t.exit_date, position.entry_date, t.exit_date)
         fill_mode = _STOP_MANAGED_FILL_MODE_BY_REASON[t.exit_reason]
         result = compute_tranche_mae_mfe(
-            position.direction, t.entry_fill_price_reference, bars, t.exit_date, t.exit_fill_price,
+            position.direction, bars, position.entry_date, t.exit_date, t.exit_fill_price,
             fill_mode, expected,
         )
         records.append(PositionMaeMfe(position.security_id, position.strategy_variant_id, position.entry_date, t.kind, result))
@@ -344,7 +362,7 @@ def evaluate_stop_managed_position_mae_mfe(
         bars = _window_bars(pit, position.security_id, t.exit_date, position.entry_date, t.exit_date)
         fill_mode = _STOP_MANAGED_FILL_MODE_BY_REASON[t.exit_reason]
         result = compute_tranche_mae_mfe(
-            position.direction, t.entry_fill_price_reference, bars, t.exit_date, t.exit_fill_price,
+            position.direction, bars, position.entry_date, t.exit_date, t.exit_fill_price,
             fill_mode, expected,
         )
         records.append(PositionMaeMfe(position.security_id, position.strategy_variant_id, position.entry_date, t.kind, result))
@@ -352,7 +370,7 @@ def evaluate_stop_managed_position_mae_mfe(
         expected = _expected_dates_in_window(session_dates, position.entry_date, final_mark_date)
         bars = _window_bars(pit, position.security_id, final_mark_date, position.entry_date, final_mark_date)
         result = compute_tranche_mae_mfe(
-            position.direction, position.entry_fill_price, bars, final_mark_date, mark_final,
+            position.direction, bars, position.entry_date, final_mark_date, mark_final,
             FILL_MODE_CENSORED, expected,
         )
         records.append(PositionMaeMfe(position.security_id, position.strategy_variant_id, position.entry_date, "REMAINDER", result))
@@ -377,7 +395,10 @@ def evaluate_legacy_position_mae_mfe(
     it, so base section 17 requires its FULL range included, never
     excluded as though an intraday ambiguity existed. `SIGNAL_
     INVALIDATION` is `FILL_MODE_OPEN` (`NEXT_SESSION_OPEN_AFTER_
-    DETECTION`)."""
+    DETECTION`). As with the STOP_MANAGED counterpart, `P_e` is derived
+    from `bars`' own entry-day open, never from `entry_fill_price_
+    reference`/`position.entry_fill_price` (both `F_e`, reserved for
+    `costs.py`'s own net-return calculation)."""
     if position.exit_failed:
         return ()
 
@@ -387,7 +408,7 @@ def evaluate_legacy_position_mae_mfe(
         bars = _window_bars(pit, position.security_id, t.exit_date, position.entry_date, t.exit_date)
         fill_mode = _LEGACY_FILL_MODE_BY_REASON[t.exit_reason]
         result = compute_tranche_mae_mfe(
-            position.direction, t.entry_fill_price_reference, bars, t.exit_date, t.exit_fill_price,
+            position.direction, bars, position.entry_date, t.exit_date, t.exit_fill_price,
             fill_mode, expected,
         )
         return (PositionMaeMfe(position.security_id, position.strategy_variant_id, position.entry_date, t.kind, result),)
@@ -395,7 +416,7 @@ def evaluate_legacy_position_mae_mfe(
         expected = _expected_dates_in_window(session_dates, position.entry_date, final_mark_date)
         bars = _window_bars(pit, position.security_id, final_mark_date, position.entry_date, final_mark_date)
         result = compute_tranche_mae_mfe(
-            position.direction, position.entry_fill_price, bars, final_mark_date, mark_final,
+            position.direction, bars, position.entry_date, final_mark_date, mark_final,
             FILL_MODE_CENSORED, expected,
         )
         return (PositionMaeMfe(position.security_id, position.strategy_variant_id, position.entry_date, "REMAINDER", result),)

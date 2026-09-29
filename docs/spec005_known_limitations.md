@@ -1239,3 +1239,72 @@ full window -- it just no longer rescues a window with missing data.
 **Full suite after this correction:** `PYTHONPATH=src:tests python3 -m
 pytest -q -rs` -> `723 passed, 1 skipped` (was 722/1) -- self-reported,
 not independently verified.
+
+---
+
+## Follow-up correction: entry slippage was baked into the MAE/MFE reference price
+
+Radu's own independent verification of `536bad7` (723 passed, 1 skipped,
+confirmed) surfaced a further confirmed defect: MAE/MFE was computed
+against `entry_fill_price_reference`/`entry_fill_price` -- base section
+13's `F_e`, the actual cost-bearing fill -- instead of `P_e`, the raw
+pre-slippage common-basis reference price section 17's formula actually
+calls for ("These are cost-free price excursions on a common split
+basis"). Reproduced through `run_stage()` -> a real Legacy position ->
+MAE/MFE evaluation, entry 100/high 110/low 90: 0bps slippage correctly
+gave -10%/+10%, but 100bps entry slippage skewed the result to
+-10.8911%/+8.9109% -- both rows are contractually required to read
+-10%/+10%.
+
+Root cause: `Tranche.exit_fill_price` was already the raw, un-slipped
+level (`apply_exit_slippage()` only ever touches the net-return
+calculation in `costs.py`, never the tranche's own recorded fill), but
+the entry side had no equivalent raw value at all -- `apply_entry_
+slippage()` runs BEFORE the position is even constructed, so every field
+carrying an entry reference (`position.entry_fill_price`, `Tranche.entry_
+fill_price_reference`) was `F_e` by construction, with no `P_e` surviving
+anywhere on the position.
+
+Fixed by deriving `P_e` fresh from data instead of threading a new field
+through positions/tranches: `compute_tranche_mae_mfe()` no longer takes an
+`entry_fill` parameter at all -- it takes `entry_date` and reads that
+session's own bar `open` out of the same `bars` window already fetched
+for the rest of the excursion calculation (same `as_of` query, so the
+split basis is automatically coherent with the rest of the window, exactly
+as it already was for every other day in the range). A missing or
+non-finite entry-day open now makes the whole tranche `COVERAGE_MISSING_
+SESSION_DATA` (every other excursion in the window would otherwise be
+relative to an unknown reference). The entry day itself is not special-
+cased otherwise -- when it isn't also the exit day, its own full high/low
+range is included like any other day, consistent with section 17's "entry-
+day full range for open entries" (entry is always `NEXT_SESSION_OPEN` per
+the base section 9 profile, so every entry is an open entry). No slippage
+rate or `F_e` value is passed into the MAE/MFE layer anywhere anymore,
+which structurally prevents this defect from recurring rather than merely
+patching this one call path.
+
+Both evaluators (`evaluate_stop_managed_position_mae_mfe()`/`evaluate_
+legacy_position_mae_mfe()`) updated to stop passing any entry-fill
+reference and pass `position.entry_date` instead. `test_28` rewritten
+against the new `compute_tranche_mae_mfe(direction, bars, entry_date,
+exit_date, exit_fill, fill_mode, expected_session_dates)` signature
+(`entry_fill` parameter removed, `entry_date` added), including a
+dedicated case (`test_entry_slippage_is_never_baked_into_the_mae_mfe_
+reference`) reproducing Radu's exact -10%/+10% numbers, plus a new
+entry-day-missing-from-bars case. `test_40` gained three new end-to-end
+regressions traversing the real `run_stage()`: entry slippage on a LONG
+and on a SHORT Legacy position (both non-zero `slippage_entry_bps`,
+confirming `entry_fill_price` is genuinely slipped while MAE/MFE still
+reads the raw open), and a combined split+slippage case confirming a
+StopManagedPosition's partial AND remainder tranches both derive `P_e`
+from their own bars across an intervening split even when their recorded
+`entry_fill_price_reference` fields are deliberately set to wrong, slipped
+values.
+
+**This correction remains Batch-4-flavored preparation, not a Batch 3
+requirement**, per the same section 24 boundary as the deltas above --
+Batch 3's closure verdict stays separate. General accepted baseline
+remains `3cdc532`.
+
+**Full suite after this correction:** `PYTHONPATH=src:tests python3 -m
+pytest -q -rs` -> `727 passed, 1 skipped` (was 723/1).
