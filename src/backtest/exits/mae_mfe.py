@@ -26,6 +26,18 @@ fixed together here:
 1. A whole missing session, or a non-finite OHLC value, inside a
    tranche's own window must never leave coverage reading FULL -- FULL
    is a positive claim of completeness, never a default for absent data.
+   Corrected further after Radu's follow-up on this same point: labeling
+   the gap `COVERAGE_MISSING_SESSION_DATA` is not enough on its own --
+   base section 17, verbatim, "Missing interior range makes excursion
+   metrics unavailable even if endpoint return is measurable; report
+   coverage separately." `mae`/`mfe` are `Optional[float]` and are `None`
+   whenever any required session/value inside the window is missing or
+   non-finite -- never a number computed from the incomplete remainder
+   and merely tagged with a different coverage label. The routine,
+   by-design exclusion of an open/intraday exit day's own high/low
+   (`COVERAGE_PARTIAL_EXIT_DAY_EXCLUDED`) is NOT "missing data" in this
+   sense -- section 17 itself specifies exactly which fields to use
+   there, so `mae`/`mfe` stay real numbers for that case.
 2. The open/intraday/close/censored fill conventions require genuinely
    different treatment of the resolution day's own high/low, not one
    boolean collapsing all four into "exclude" vs "include" -- the
@@ -102,9 +114,14 @@ class DailyRange:
 
 @dataclass(frozen=True)
 class TrancheMaeMfe:
-    mae: float  # most adverse excursion observed, signed (negative = adverse), relative to entry_fill
-    mfe: float  # most favorable excursion observed, signed (positive = favorable)
-    coverage: str  # COVERAGE_FULL | COVERAGE_PARTIAL_EXIT_DAY_EXCLUDED | COVERAGE_MISSING_SESSION_DATA
+    # `None` (unavailable) exactly when coverage == COVERAGE_MISSING_SESSION_DATA
+    # -- base section 17: missing interior range makes the excursion
+    # metrics unavailable, never a number computed from the incomplete
+    # remainder. Real signed floats otherwise (adverse = negative,
+    # favorable = positive, relative to entry_fill).
+    mae: Optional[float]
+    mfe: Optional[float]
+    coverage: str  # COVERAGE_FULL | COVERAGE_PARTIAL_EXIT_DAY_EXCLUDED | COVERAGE_MISSING_SESSION_DATA | COVERAGE_MISSING_SESSION_DATA
 
 
 def _direction_sign(direction: str) -> float:
@@ -162,10 +179,16 @@ def compute_tranche_mae_mfe(
 
     The excursion AT ENTRY is always KNOWN -- by definition, price ==
     entry_fill at that moment, so its excursion is exactly 0.0 -- and is
-    included UNCONDITIONALLY, regardless of `bars` (GPT review round 3,
-    finding #4): without it, an empty-bars tranche with a favorable exit
-    (e.g. entry 100, exit 110, no bars) would wrongly report MAE == MFE
-    == +10% instead of the correct MAE=0%/MFE=+10%."""
+    tracked UNCONDITIONALLY while iterating (GPT review round 3, finding
+    #4's original reasoning): it still contributes to `mae`/`mfe` for a
+    window with NO missing data, so a genuinely complete but short window
+    never appears artificially worse or better than what was truly
+    observed. It does NOT rescue a window with missing data, though --
+    Radu's own correction on this delta: `mae`/`mfe` are `None` whenever
+    `saw_missing_data` is true, regardless of how many other excursions
+    (entry included) happened to be collected -- a partial view can never
+    certify the TRUE min/max, since an unobserved gap could hide a more
+    extreme point than anything actually seen."""
     if fill_mode not in _ALL_FILL_MODES:
         raise ValueError(f"fill_mode must be one of {sorted(_ALL_FILL_MODES)}, got {fill_mode!r}")
     if not _is_finite_positive(entry_fill) or not _is_finite_positive(exit_fill):
@@ -204,12 +227,15 @@ def compute_tranche_mae_mfe(
     excursions.append(d * (exit_fill - entry_fill) / entry_fill)
 
     if saw_missing_data:
-        coverage = COVERAGE_MISSING_SESSION_DATA
-    elif exclude_high_low_on_exit_day:
-        coverage = COVERAGE_PARTIAL_EXIT_DAY_EXCLUDED
-    else:
-        coverage = COVERAGE_FULL
+        # Base section 17, verbatim: "Missing interior range makes
+        # excursion metrics unavailable even if endpoint return is
+        # measurable; report coverage separately." `excursions` is
+        # discarded here, not reduced to min/max -- a partial view can
+        # never certify the TRUE excursion, since the unobserved gap
+        # could hide something more extreme than anything actually seen.
+        return TrancheMaeMfe(mae=None, mfe=None, coverage=COVERAGE_MISSING_SESSION_DATA)
 
+    coverage = COVERAGE_PARTIAL_EXIT_DAY_EXCLUDED if exclude_high_low_on_exit_day else COVERAGE_FULL
     return TrancheMaeMfe(mae=min(excursions), mfe=max(excursions), coverage=coverage)
 
 

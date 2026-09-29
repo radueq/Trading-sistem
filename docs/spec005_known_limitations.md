@@ -1198,3 +1198,44 @@ complete contract (base document + amendment together).
 **Full suite after this delta:** `PYTHONPATH=src:tests python3 -m pytest
 -q -rs` -> `722 passed, 1 skipped` (was 715/1) -- self-reported, not
 independently verified.
+
+---
+
+## Follow-up correction: missing/non-finite data must make MAE/MFE unavailable, not merely relabeled
+
+Radu's own follow-up on the delta above (`3aae3ef` was still pending his
+independent verification when he raised this): labeling a genuine gap
+`COVERAGE_MISSING_SESSION_DATA` is not, by itself, contractually
+sufficient. Base section 17, verbatim: "Missing interior range makes
+excursion metrics unavailable even if endpoint return is measurable;
+report coverage separately." The delta above still computed a real
+`min()`/`max()` over whatever partial excursions happened to survive a
+missing session or a non-finite value, merely tagging the result with the
+new coverage label instead of the old one -- exactly the numeric-value-
+under-a-different-label pattern the base text rules out.
+
+Fixed: `TrancheMaeMfe.mae`/`.mfe` are now `Optional[float]`, `None`
+whenever `compute_tranche_mae_mfe()` detects any missing session or
+non-finite value inside the window (`COVERAGE_MISSING_SESSION_DATA`) --
+the partial excursions collected up to that point are discarded entirely,
+never reduced to a number. This is NOT the same as the routine, by-design
+exclusion of an open/intraday exit day's own high/low (`COVERAGE_
+PARTIAL_EXIT_DAY_EXCLUDED`): section 17 itself specifies exactly which
+fields to use there (the day's open plus the fill), so that case still
+returns real, meaningful numbers -- only a genuine data gap makes the
+metric itself unavailable.
+
+Every test that previously asserted a computed value alongside
+`COVERAGE_MISSING_SESSION_DATA` was corrected to assert `mae is None`/
+`mfe is None` instead (`test_28`: the "empty bars" pair and the
+non-finite-value case; `test_40`: both wrapper-level missing-data cases,
+with explicit `is None` assertions added). A new `test_28` case
+(`test_entry_excursion_is_the_worst_point_when_the_window_never_traded_
+below_it`) replaces the superseded reasoning from the old "empty bars"
+test with a version that actually has complete data, confirming the
+"entry excursion is always known" principle still holds for a genuinely
+full window -- it just no longer rescues a window with missing data.
+
+**Full suite after this correction:** `PYTHONPATH=src:tests python3 -m
+pytest -q -rs` -> `723 passed, 1 skipped` (was 722/1) -- self-reported,
+not independently verified.

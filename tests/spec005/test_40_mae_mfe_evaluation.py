@@ -232,7 +232,13 @@ def test_censored_remainder_with_a_genuine_data_gap_is_missing_session_data(conn
     )
     records = evaluate_stop_managed_position_mae_mfe(_UnboundedAccess(conn), position, session_dates, final_mark_date=D5, mark_final=105.0)
     assert len(records) == 1
-    assert records[0].mae_mfe.coverage == COVERAGE_MISSING_SESSION_DATA
+    result = records[0].mae_mfe
+    assert result.coverage == COVERAGE_MISSING_SESSION_DATA
+    # Radu's own follow-up correction: the label alone is not enough --
+    # base section 17 makes the metrics themselves UNAVAILABLE, never a
+    # number computed from the incomplete remainder.
+    assert result.mae is None
+    assert result.mfe is None
 
 
 def test_censored_remainder_with_a_whole_missing_session_is_missing_session_data(conn, now):
@@ -255,7 +261,10 @@ def test_censored_remainder_with_a_whole_missing_session_is_missing_session_data
     )
     records = evaluate_stop_managed_position_mae_mfe(_UnboundedAccess(conn), position, session_dates, final_mark_date=D4, mark_final=107.0)
     assert len(records) == 1
-    assert records[0].mae_mfe.coverage == COVERAGE_MISSING_SESSION_DATA
+    result = records[0].mae_mfe
+    assert result.coverage == COVERAGE_MISSING_SESSION_DATA
+    assert result.mae is None
+    assert result.mfe is None
 
 
 def test_time_exit_close_fill_day_gets_its_full_range_not_excluded(conn, now):

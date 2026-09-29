@@ -3,13 +3,13 @@ rule (docs/spec005_exit_amendment_v1.0.md, ACCEPTED, section 12), and the
 base contract's own open/intraday/close/censored distinction (docs/
 Spec_005_Backtesting_Exit_Evaluation_v1.0.md, section 17/23), reconciled
 in the closure-verdict MAE/MFE delta on top of `8287ebb`."""
-import math
-
 import pytest
 
 from backtest.exits.mae_mfe import (
+    COVERAGE_FULL,
     COVERAGE_MISSING_SESSION_DATA,
     COVERAGE_PARTIAL_EXIT_DAY_EXCLUDED,
+    FILL_MODE_CLOSE,
     FILL_MODE_INTRADAY,
     FILL_MODE_OPEN,
     DailyRange,
@@ -35,11 +35,14 @@ def test_intraday_exit_day_excludes_high_low_uses_open_and_fill():
 def test_no_matching_exit_day_in_bars_is_marked_missing_session_data():
     """A session the calendar expected (it is in `expected_session_dates`,
     and a real exit happened on it) but for which `bars` has nothing at
-    all is a genuine DATA gap -- closure-verdict fix, post-`8287ebb`:
-    this is `COVERAGE_MISSING_SESSION_DATA`, not the routine `PARTIAL_
-    EXIT_DAY_EXCLUDED` label reserved for the BY-DESIGN exclusion of an
-    open/intraday exit day's own high/low. The exit fill itself is still
-    always included as an observation."""
+    all is a genuine DATA gap -- `COVERAGE_MISSING_SESSION_DATA`, not the
+    routine `PARTIAL_EXIT_DAY_EXCLUDED` label reserved for the BY-DESIGN
+    exclusion of an open/intraday exit day's own high/low. Radu's own
+    follow-up correction on this same delta: the label alone is not
+    enough -- base section 17, verbatim, "Missing interior range makes
+    excursion metrics unavailable"; `mae`/`mfe` must be `None`, never a
+    number computed from the incomplete remainder and merely tagged
+    differently."""
     bars = [
         DailyRange("d1", open=100.0, high=102.0, low=98.0),
         DailyRange("d2", open=101.0, high=108.0, low=95.0),
@@ -49,12 +52,15 @@ def test_no_matching_exit_day_in_bars_is_marked_missing_session_data():
         fill_mode=FILL_MODE_INTRADAY, expected_session_dates=("d1", "d2", "d3"),
     )
     assert result.coverage == COVERAGE_MISSING_SESSION_DATA
-    assert result.mfe == pytest.approx(0.10)  # the exit fill (110) beats d2's high (108)
-    assert result.mae == pytest.approx(-0.05)
+    assert result.mae is None
+    assert result.mfe is None
 
 
 def test_short_direction_sign_convention():
-    bars = [DailyRange("d1", open=100.0, high=105.0, low=95.0)]
+    bars = [
+        DailyRange("d1", open=100.0, high=105.0, low=95.0),
+        DailyRange("d2", open=92.0, high=93.0, low=88.0),  # exit day -- intraday fill, only open counts
+    ]
     result = compute_tranche_mae_mfe(
         "SHORT", entry_fill=100.0, bars=bars, exit_date="d2", exit_fill=90.0,
         fill_mode=FILL_MODE_INTRADAY, expected_session_dates=("d1", "d2"),
@@ -80,36 +86,56 @@ def test_stop_intraday_exit_day_also_gets_the_exclusion():
     assert result.mfe == pytest.approx(0.0)
 
 
-def test_empty_bars_still_includes_the_known_zero_excursion_at_entry():
-    """GPT review round 3, finding #4: the excursion AT ENTRY is always
-    known to be exactly 0.0 (price == entry_fill at that moment), included
-    unconditionally regardless of `bars`. A favorable exit (100 -> 110)
-    with no bars at all must report MAE=0%/MFE=+10% -- NOT both +10%,
-    which would falsely claim the position was never below entry by less
-    than its final gain (0% is the true worst point actually observed:
-    the entry moment itself). No bars at all for the exit day's own
-    expected session is a data gap (closure-verdict fix, post-`8287ebb`):
-    `COVERAGE_MISSING_SESSION_DATA`, not `PARTIAL_EXIT_DAY_EXCLUDED`."""
+def test_empty_bars_with_an_expected_session_is_unavailable_not_a_computed_degenerate_value():
+    """Supersedes an earlier version of this test (GPT review round 3,
+    finding #4), which asserted a computed MAE=0%/MFE=+10% degenerate
+    result from the entry excursion and the exit fill alone. Radu's own
+    correction on this delta: `expected_session_dates` names a session
+    the calendar authorized and NO bar exists for it at all -- that is
+    exactly the "missing interior range" base section 17 says makes the
+    excursion metrics UNAVAILABLE, never a number computed from whatever
+    fragments happen to be known and merely labeled differently. The
+    entry excursion being "always known" only matters once the window
+    has NO missing data at all (see the full-range tests above/below)."""
     result = compute_tranche_mae_mfe(
         "LONG", 100.0, [], exit_date="d1", exit_fill=110.0,
         fill_mode=FILL_MODE_OPEN, expected_session_dates=("d1",),
     )
-    assert result.mae == pytest.approx(0.0)
-    assert result.mfe == pytest.approx(0.10)
+    assert result.mae is None
+    assert result.mfe is None
     assert result.coverage == COVERAGE_MISSING_SESSION_DATA
 
 
-def test_empty_bars_pure_loss_never_reports_a_positive_mfe():
-    """Symmetric case: a pure loss (100 -> 90) with no bars must report
-    MFE=0% (the entry moment), never a positive MFE fabricated from
-    nothing -- the position was never observed above its own entry."""
+def test_empty_bars_pure_loss_is_also_unavailable():
+    """Symmetric case: direction of the hypothetical outcome (loss vs.
+    gain) does not matter -- missing data makes the metrics unavailable
+    either way, never a fabricated number in either direction."""
     result = compute_tranche_mae_mfe(
         "LONG", 100.0, [], exit_date="d1", exit_fill=90.0,
         fill_mode=FILL_MODE_OPEN, expected_session_dates=("d1",),
     )
-    assert result.mae == pytest.approx(-0.10)
-    assert result.mfe == pytest.approx(0.0)
+    assert result.mae is None
+    assert result.mfe is None
     assert result.coverage == COVERAGE_MISSING_SESSION_DATA
+
+
+def test_entry_excursion_is_the_worst_point_when_the_window_never_traded_below_it():
+    """The "entry is always a known, zero excursion" reasoning still
+    matters when there is NO missing data at all: a window that only ever
+    moves favorably must report MAE=0% (the entry moment itself), never a
+    worse number fabricated from nothing, and never omitted just because
+    no bar's own low ever went negative."""
+    bars = [
+        DailyRange("d1", open=101.0, high=105.0, low=100.5),  # never dips below entry (100.0)
+        DailyRange("d2", open=104.0, high=108.0, low=103.0),  # exit day -- full range (CLOSE fill)
+    ]
+    result = compute_tranche_mae_mfe(
+        "LONG", 100.0, bars, exit_date="d2", exit_fill=106.0,
+        fill_mode=FILL_MODE_CLOSE, expected_session_dates=("d1", "d2"),
+    )
+    assert result.coverage == COVERAGE_FULL
+    assert result.mae == pytest.approx(0.0)  # the entry moment -- the true worst point observed
+    assert result.mfe == pytest.approx(0.08)  # d2's own high (108), fully included
 
 
 def test_exit_date_not_in_expected_session_dates_is_rejected():
@@ -145,7 +171,8 @@ def test_non_finite_high_or_low_inside_the_window_is_missing_session_data():
     """A recorded bar with a NaN/infinite high or low is exactly as
     unusable as a missing bar -- never silently included as if it were a
     real, finite observation (which would otherwise contaminate MAE/MFE
-    with NaN and could leave coverage reading FULL)."""
+    with NaN). Coverage downgrades AND `mae`/`mfe` become unavailable
+    (`None`), never a number silently computed around the bad value."""
     bars = [
         DailyRange("d1", open=100.0, high=float("nan"), low=98.0),  # NOT the exit day -- its high/low are never skipped by fill_mode
         DailyRange("d2", open=101.0, high=104.0, low=99.0),
@@ -155,4 +182,5 @@ def test_non_finite_high_or_low_inside_the_window_is_missing_session_data():
         fill_mode=FILL_MODE_INTRADAY, expected_session_dates=("d1", "d2"),
     )
     assert result.coverage == COVERAGE_MISSING_SESSION_DATA
-    assert math.isfinite(result.mae) and math.isfinite(result.mfe)
+    assert result.mae is None
+    assert result.mfe is None
