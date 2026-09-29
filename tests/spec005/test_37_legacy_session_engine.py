@@ -445,13 +445,20 @@ def test_time_exit_still_short_of_its_bar_count_is_censored_at_horizon(conn, now
 
 # -- SIGNAL_INVALIDATION mechanics (real conn) --------------------------
 
-def test_signal_invalidation_closes_at_close_when_invalidated_before_the_time_cap(conn, now):
+def test_signal_invalidation_detected_at_close_executes_at_the_next_sessions_open(conn, now):
+    """Closure verification fix (post-9feb4a5): `ExecutionSemanticsProfile`
+    v1 (SS9) separates `invalidation_detection=COMPLETED_BAR_CLOSE` from
+    `invalidation_fill=NEXT_SESSION_OPEN_AFTER_DETECTION` -- an EARLIER
+    version of this engine wrongly closed at the SAME close the
+    invalidation was detected. D4's own open (107.0) deliberately differs
+    from D3's close (105.0) so this test cannot pass by accident under the
+    old, buggy same-close behavior."""
     sec = make_security(conn, "spec005:LEGACY_SIGINV", now)
     _insert_bars(conn, sec, now, [
         (D1, 100.0, 101.0, 99.0, 100.0),
         (D2, 100.0, 101.0, 99.0, 100.0),  # entry day
-        (D3, 100.0, 106.0, 99.0, 105.0),  # invalidated here -- exits at THIS close
-        (D4, 105.0, 111.0, 104.0, 110.0),
+        (D3, 100.0, 106.0, 99.0, 105.0),  # invalidated HERE (detection) -- does not exit yet
+        (D4, 107.0, 111.0, 104.0, 110.0),  # scheduled fill: open(D4) = 107.0, not close(D3) = 105.0
     ])
     registry = HypothesisRegistry()
     hid, vid = build_registered_signal_invalidation_hypothesis(registry, max_holding_bars=5, signature_id="SIG_LEGACY_INV_1")
@@ -469,9 +476,155 @@ def test_signal_invalidation_closes_at_close_when_invalidated_before_the_time_ca
     pos = result.positions[0]
     assert pos.closed is True
     assert pos.close_tranche.exit_reason == EXIT_REASON_SIGNAL_INVALIDATION
-    assert pos.close_tranche.exit_date == D3
-    assert pos.close_tranche.exit_fill_price == 105.0
+    assert pos.close_tranche.exit_date == D4
+    assert pos.close_tranche.exit_fill_price == 107.0
     assert pos.invalidation_path_incomplete is False
+    assert pos.pending_invalidation_detected_date is None  # consumed, not left dangling
+
+
+def test_signal_invalidation_execution_uses_the_real_overnight_gap_not_the_detection_close(conn, now):
+    """The economically material case: a detection close that LOOKS
+    profitable is never the executed fill if the next session's open gaps
+    hard against it. Entry 100 -> detection close ~130 (+30% if wrongly
+    executed there, the old bug) -> next open ~90 (-10% from entry,
+    correctly executed there) -- the exact numbers this finding was
+    reported with."""
+    sec = make_security(conn, "spec005:LEGACY_SIGINV_GAP", now)
+    _insert_bars(conn, sec, now, [
+        (D1, 100.0, 101.0, 99.0, 100.0),
+        (D2, 100.0, 101.0, 99.0, 100.0),  # entry day, F_e = 100.0
+        (D3, 100.0, 132.0, 99.0, 130.0),  # invalidated HERE at close=130.0 (would be +30% if executed here)
+        (D4, 90.0, 92.0, 88.0, 91.0),     # real overnight gap down: open(D4) = 90.0 (-10% from entry)
+    ])
+    registry = HypothesisRegistry()
+    hid, vid = build_registered_signal_invalidation_hypothesis(registry, max_holding_bars=10, signature_id="SIG_LEGACY_INV_GAP")
+    signal = EntrySignal(security_id=sec, strategy_variant_id=vid)
+
+    def observer(position, session_date):
+        return "INVALIDATED" if session_date == D3 else "VALID_HOLD"
+
+    engine = LegacySessionEngine(
+        pit=_UnboundedAccess(conn), session_dates=(D1, D2, D3, D4), registry=registry,
+        accepted_hypothesis_ids=frozenset({hid}), entry_signals={(sec, vid, D1): signal},
+        invalidation_observer=observer, cost_assumptions=_ZERO_COSTS,
+    )
+    result = engine.run()
+    pos = result.positions[0]
+    assert pos.closed is True
+    assert pos.close_tranche.exit_date == D4
+    assert pos.close_tranche.exit_fill_price == 90.0  # NOT 130.0 -- the detection close is never the fill
+    outcome = classify_legacy_position(pos, stage_end_reached=True)
+    (net_return,) = evaluate_legacy_stage_results([pos], [outcome], _ZERO_COSTS, D4, result.final_closes)
+    assert abs(net_return - (-0.10)) < 1e-9  # -10%, not the +30% the old same-close bug would have reported
+
+
+def test_signal_invalidation_scheduled_fill_fails_when_the_next_open_is_missing(conn, now):
+    """`execute_scheduled_legacy_invalidation()`'s own EXIT_FAILED path: a
+    detected invalidation due today (there IS a next session in
+    `session_dates`) with no usable open bar on it is a failed execution,
+    never silently dropped or deferred further."""
+    sec = make_security(conn, "spec005:LEGACY_SIGINV_NOBAR", now)
+    _insert_bars(conn, sec, now, [
+        (D1, 100.0, 101.0, 99.0, 100.0),
+        (D2, 100.0, 101.0, 99.0, 100.0),  # entry day
+        (D3, 100.0, 106.0, 99.0, 105.0),  # invalidated here
+        # D4: no bar at all -- the scheduled fill session has nothing to read.
+    ])
+    registry = HypothesisRegistry()
+    hid, vid = build_registered_signal_invalidation_hypothesis(registry, max_holding_bars=10, signature_id="SIG_LEGACY_INV_NOBAR")
+    signal = EntrySignal(security_id=sec, strategy_variant_id=vid)
+
+    def observer(position, session_date):
+        return "INVALIDATED" if session_date == D3 else "VALID_HOLD"
+
+    engine = LegacySessionEngine(
+        pit=_UnboundedAccess(conn), session_dates=(D1, D2, D3, D4), registry=registry,
+        accepted_hypothesis_ids=frozenset({hid}), entry_signals={(sec, vid, D1): signal},
+        invalidation_observer=observer, cost_assumptions=_ZERO_COSTS,
+    )
+    result = engine.run()
+    pos = result.positions[0]
+    assert pos.closed is False
+    assert pos.exit_failed is True
+    assert pos.exit_failed_reason == REASON_NO_EXIT_BAR
+    outcome = classify_legacy_position(pos, stage_end_reached=True)
+    assert outcome.lifecycle == LIFECYCLE_EXIT_FAILED
+    assert outcome.evaluability == EVALUABILITY_UNEVALUABLE
+
+
+def test_signal_invalidation_detected_on_the_stages_last_session_stays_censored_at_horizon(conn, now):
+    """Amendment section 10's CENSORED_AT_HORIZON central case (regression
+    #9), reused for this family: an invalidation detected at the STAGE's
+    own last close has no room left in `session_dates` for its scheduled
+    NEXT_SESSION_OPEN_AFTER_DETECTION fill -- it must stay
+    CENSORED_AT_HORIZON, EVALUABLE (using the last close as the mark),
+    never EXIT_FAILED, with the pending order recorded as a diagnostic
+    note only."""
+    sec = make_security(conn, "spec005:LEGACY_SIGINV_LASTCLOSE", now)
+    _insert_bars(conn, sec, now, [
+        (D1, 100.0, 101.0, 99.0, 100.0),
+        (D2, 100.0, 101.0, 99.0, 100.0),  # entry day
+        (D3, 100.0, 106.0, 99.0, 105.0),  # invalidated on the STAGE's own last session
+    ])
+    registry = HypothesisRegistry()
+    hid, vid = build_registered_signal_invalidation_hypothesis(registry, max_holding_bars=10, signature_id="SIG_LEGACY_INV_LASTCLOSE")
+    signal = EntrySignal(security_id=sec, strategy_variant_id=vid)
+
+    def observer(position, session_date):
+        return "INVALIDATED" if session_date == D3 else "VALID_HOLD"
+
+    engine = LegacySessionEngine(
+        pit=_UnboundedAccess(conn), session_dates=(D1, D2, D3), registry=registry,
+        accepted_hypothesis_ids=frozenset({hid}), entry_signals={(sec, vid, D1): signal},
+        invalidation_observer=observer, cost_assumptions=_ZERO_COSTS,
+    )
+    result = engine.run()
+    pos = result.positions[0]
+    assert pos.closed is False
+    assert pos.exit_failed is False
+    assert pos.pending_invalidation_detected_date == D3
+    assert pos.pending_exit_note is not None and "beyond this stage" in pos.pending_exit_note
+    outcome = classify_legacy_position(pos, stage_end_reached=True, final_mark_available=result.final_closes.get(sec) is not None)
+    assert outcome.lifecycle == LIFECYCLE_CENSORED_AT_HORIZON
+    assert outcome.evaluability == EVALUABILITY_EVALUABLE  # last close (105.0) is a usable mark
+    (net_return,) = evaluate_legacy_stage_results([pos], [outcome], _ZERO_COSTS, D3, result.final_closes)
+    assert net_return == (105.0 - 100.0) / 100.0  # open_remainder_net_return off the last close, zero costs
+
+
+def test_signal_invalidation_pending_fill_executes_before_the_next_sessions_own_cap_check(conn, now):
+    """Interaction with the cap: an invalidation detected at close(t),
+    scheduled for open(t+1), must be EXECUTED at that open (Pas 1) BEFORE
+    session t+1's own close-based cap check ever runs -- the position is
+    already retired by the time Pas 3'/5 would evaluate the cap for that
+    session, so it closes via the SCHEDULED INVALIDATION, never the cap,
+    even though the cap's own bar count would ALSO have been reached that
+    same session had the position still been open."""
+    sec = make_security(conn, "spec005:LEGACY_SIGINV_VS_CAP", now)
+    _insert_bars(conn, sec, now, [
+        (D1, 100.0, 101.0, 99.0, 100.0),
+        (D2, 100.0, 101.0, 99.0, 100.0),  # entry day, holding bar 1
+        (D3, 100.0, 106.0, 99.0, 105.0),  # holding bar 2 -- invalidated HERE
+        (D4, 95.0, 96.0, 90.0, 91.0),     # holding bar 3 == max_holding_bars -- but the pending fill wins
+    ])
+    registry = HypothesisRegistry()
+    hid, vid = build_registered_signal_invalidation_hypothesis(registry, max_holding_bars=3, signature_id="SIG_LEGACY_INV_VS_CAP")
+    signal = EntrySignal(security_id=sec, strategy_variant_id=vid)
+
+    def observer(position, session_date):
+        return "INVALIDATED" if session_date == D3 else "VALID_HOLD"
+
+    engine = LegacySessionEngine(
+        pit=_UnboundedAccess(conn), session_dates=(D1, D2, D3, D4), registry=registry,
+        accepted_hypothesis_ids=frozenset({hid}), entry_signals={(sec, vid, D1): signal},
+        invalidation_observer=observer, cost_assumptions=_ZERO_COSTS,
+    )
+    result = engine.run()
+    pos = result.positions[0]
+    assert pos.closed is True
+    assert pos.close_tranche.exit_reason == EXIT_REASON_SIGNAL_INVALIDATION
+    assert pos.close_tranche.exit_reason != EXIT_REASON_MAX_HOLDING_BARS_FORCED_EXIT
+    assert pos.close_tranche.exit_date == D4
+    assert pos.close_tranche.exit_fill_price == 95.0  # D4's OPEN, the scheduled fill -- not D4's close (91.0)
 
 
 def test_signal_invalidation_forces_exit_at_the_time_cap_when_never_invalidated(conn, now):
@@ -498,10 +651,18 @@ def test_signal_invalidation_forces_exit_at_the_time_cap_when_never_invalidated(
     assert pos.close_tranche.exit_fill_price == 110.0
 
 
-def test_signal_invalidation_and_time_cap_on_the_same_session_prefers_invalidation():
-    """Explicit, documented tie-break (never given verbatim by any spec
-    text for this exact simultaneity): the protective/risk-side signal
-    wins, mirroring `advance_intrabar()`'s own stop-over-target precedent."""
+def test_signal_invalidation_and_time_cap_on_the_same_session_the_cap_wins_and_closes_now():
+    """Closure verification fix (post-9feb4a5): the PREVIOUS version of
+    this test asserted the opposite (invalidation wins) under the old,
+    incorrect same-close-execution model, where both looked like competing
+    IMMEDIATE fills. Under the corrected model the cap is a hard,
+    immediate-close backstop (`CAP_IS_HARD_V1`) while invalidation is a
+    SCHEDULED exit (SS9's `NEXT_SESSION_OPEN_AFTER_DETECTION`) -- so a
+    genuine same-session coincidence is never a tie: the cap closes NOW,
+    the invalidation detection this same session has nothing left to
+    schedule a fill against (mirrors amendment regression #11's own
+    principle: a position fully resolved by one mechanism this session
+    skips any other evaluation `for that day`)."""
     position = LegacyPosition(
         security_id="SEC_TIE", strategy_variant_id="V1", exit_family="SIGNAL_INVALIDATION",
         direction="LONG", signal_date=D1, entry_date=D2, entry_session_index=1, entry_fill_price=100.0,
@@ -509,8 +670,11 @@ def test_signal_invalidation_and_time_cap_on_the_same_session_prefers_invalidati
     )
     new_pos = advance_legacy_position_at_close(position, D4, session_index=3, close_price=110.0, invalidation_status="INVALIDATED")
     assert new_pos.closed is True
-    assert new_pos.close_tranche.exit_reason == EXIT_REASON_SIGNAL_INVALIDATION
-    assert new_pos.close_tranche.exit_reason != EXIT_REASON_MAX_HOLDING_BARS_FORCED_EXIT
+    assert new_pos.close_tranche.exit_reason == EXIT_REASON_MAX_HOLDING_BARS_FORCED_EXIT
+    assert new_pos.close_tranche.exit_reason != EXIT_REASON_SIGNAL_INVALIDATION
+    assert new_pos.close_tranche.exit_date == D4
+    assert new_pos.close_tranche.exit_fill_price == 110.0
+    assert new_pos.pending_invalidation_detected_date is None  # never scheduled -- the cap already closed it
 
 
 def test_unknown_invalidation_status_taints_the_position_permanently(conn, now):

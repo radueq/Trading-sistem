@@ -125,3 +125,28 @@ def test_a_replace_tampered_plan_fails_identity_re_verification():
     ok, errors = verify_research_plan_identity(tampered)
     assert not ok
     assert any("content-address mismatch" in e for e in errors)
+
+
+def test_unset_maximum_censored_ratio_never_enters_the_fingerprint_payload():
+    """Closure verification fix (post-9feb4a5): `SelectionRule.
+    maximum_censored_ratio` defaults to `None` (unset) -- every plan built
+    before this field existed must produce a BYTE-IDENTICAL fingerprint.
+    The key itself must be entirely ABSENT from the payload, not merely
+    null, since `_RULE.maximum_censored_ratio` is `None` by construction
+    here (never explicitly set)."""
+    assert _RULE.maximum_censored_ratio is None
+    fp = _fp()
+    assert "maximum_censored_ratio" not in fp
+
+
+def test_a_configured_maximum_censored_ratio_enters_the_fingerprint_and_changes_it():
+    rule_with_ratio = dataclasses.replace(_RULE, maximum_censored_ratio=0.3)
+    fp_with_ratio = _fp(selection_rule=rule_with_ratio)
+    assert "maximum_censored_ratio" in fp_with_ratio
+    assert fp_with_ratio != _fp()
+
+
+def test_two_different_configured_ratios_produce_different_fingerprints():
+    fp_a = _fp(selection_rule=dataclasses.replace(_RULE, maximum_censored_ratio=0.2))
+    fp_b = _fp(selection_rule=dataclasses.replace(_RULE, maximum_censored_ratio=0.3))
+    assert fp_a != fp_b

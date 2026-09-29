@@ -116,13 +116,18 @@ def evaluate_invalidation_conditions(
     as `InvalidationCondition`'s own docstring specifies.
 
     Combining MULTIPLE conditions in `conditions` as an OR (any one
-    triggering invalidates the whole position) is this function's own
-    documented INFERENCE, not a verbatim quote -- no spec text states how
-    more than one simultaneously-active `InvalidationCondition` combines.
-    OR is the conservative, risk-side reading (any one broken thesis
-    condition is enough to invalidate), consistent with `advance_intrabar()`'s
-    own stop-before-target tie-break precedent (the protective/risk-side
-    signal always wins).
+    triggering invalidates the whole position) is EXPLICIT contract text,
+    not this function's own inference (an earlier version of this
+    docstring wrongly called it one -- corrected in the Batch 3 closure
+    verification): `docs/spec005_exit_amendment_v1.0.md` section 8 states
+    "Combinare OR intre conditii multiple (regula sectiunea 10 existenta)"
+    -- OR combination between multiple conditions is the EXISTING (base
+    spec) section 10 rule, reused unchanged for the new family. It also
+    happens to read as the conservative, risk-side choice (any one broken
+    thesis condition is enough to invalidate), consistent with
+    `advance_intrabar()`'s own stop-before-target tie-break precedent (the
+    protective/risk-side signal always wins) -- but that consistency is a
+    happy coincidence here, not the source of the rule.
 
     Returns `UNKNOWN` (never a false negative) when `current_observation`
     is missing entirely, when the tracked LANE ITSELF is absent from

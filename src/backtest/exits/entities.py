@@ -171,16 +171,30 @@ class StopManagedPosition:
 class LegacyPosition:
     """Spec #005 -- Discovery Integration & Legacy Exits: live simulation
     state for one TIME_EXIT or SIGNAL_INVALIDATION position -- structurally
-    much simpler than `StopManagedPosition` because neither older family
-    has a stop, a target, a partial-profit tranche, or a deferred/scheduled
-    fill: `exit_execution_policy` is fixed `BAR_CLOSE` for both (Spec #004
-    HYPOTHESIS_ENGINE_VERSION contract), so the position's own single
-    closing tranche always fills at the SAME session's close that decided
-    the exit -- there is no separate "detected at close(t), executed at
-    t+1's open" state to track at all (contrast `StopManagedPosition.
-    pending_invalidation_detected_date`, which exists ONLY because that
-    family's own execution-semantics profile, section 7 of the amendment,
-    chose a different, newer fill convention).
+    simpler than `StopManagedPosition` because neither older family has a
+    stop, a target, or a partial-profit tranche. `exit_execution_policy`
+    IS fixed `BAR_CLOSE` for both (Spec #004 HYPOTHESIS_ENGINE_VERSION
+    contract), and `TIME_EXIT`/the `max_holding_bars` cap DO close at that
+    same scheduled bar's own close, immediately (`TIME_EXIT_FILL_V1`/
+    `CAP_FILL_V1` = `SCHEDULED_..._BAR_CLOSE`, `backtest.models.entities`).
+
+    Closure verification finding (post-`9feb4a5`): an EARLIER version of
+    this module wrongly assumed `SIGNAL_INVALIDATION` shared that same
+    immediate-close behavior too. It does not. `ExecutionSemanticsProfile`
+    v1 (Spec #005 SS9, `backtest.models.entities` -- the ONE base profile
+    every exit family shares, not something `StopManagedPosition` added on
+    its own) separates `invalidation_detection = COMPLETED_BAR_CLOSE` from
+    `invalidation_fill = NEXT_SESSION_OPEN_AFTER_DETECTION`: a detected
+    invalidation is scheduled, filling at the FOLLOWING session's open,
+    exactly the same "detected at close(t), executed at t+1's open" shape
+    `StopManagedPosition.pending_invalidation_detected_date` already
+    tracks for its own family. `pending_invalidation_detected_date` below
+    is that same state, reused for this family -- consumed by
+    `backtest.exits.legacy.execute_scheduled_legacy_invalidation()`. The
+    hard `max_holding_bars` cap is unaffected: it still closes at ITS OWN
+    scheduled close, even in the same session an invalidation is also
+    detected -- there is nothing left to schedule a fill against once the
+    cap has already closed the position.
 
     `entry_session_index` is this position's own index into the stage's
     `session_dates` sequence at entry -- TIME_EXIT's holding-bar count
@@ -225,6 +239,15 @@ class LegacyPosition:
 
     invalidation_path_incomplete: bool = False
     split_reconciliation_incomplete: bool = False
+
+    # Closure verification fix (post-9feb4a5): set by
+    # `legacy.advance_legacy_position_at_close()` when SIGNAL_INVALIDATION
+    # detects INVALIDATED at this session's close; consumed by
+    # `legacy.execute_scheduled_legacy_invalidation()` at the scheduled
+    # NEXT_SESSION_OPEN_AFTER_DETECTION -- the same shape
+    # `StopManagedPosition.pending_invalidation_detected_date` already has.
+    pending_invalidation_detected_date: Optional[str] = None
+    pending_exit_note: Optional[str] = None
 
 
 @dataclass(frozen=True)

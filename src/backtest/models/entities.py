@@ -426,6 +426,21 @@ class SelectionRule:
     minimum_selection_metric: float = MINIMUM_SELECTION_METRIC_V1
     threshold_operator: str = THRESHOLD_OPERATOR_V1
     tie_break: str = TIE_BREAK_V1
+    # Amendment section 11 (closure verification gap, post-9feb4a5): named
+    # explicitly as OPTIONAL on SelectionRule -- "a declared-adequacy
+    # requirement... NOT a remedy for selection bias" (the remedy is
+    # MEDIAN_NET_RETURN_TO_EXIT_OR_STAGE_END itself, which already
+    # includes evaluable censored positions). "Optional" means a plan MAY
+    # leave it unset, never that support for the field itself may be
+    # missing -- `None` (unset) is the default and produces a
+    # byte-identical `research_plan_fingerprint()` to every plan built
+    # before this field existed (see the fingerprint function itself:
+    # only entered into the payload when not None). Enforcing this ratio
+    # against a real cohort at selection time is a SEPARATE, not yet built
+    # orchestration step (see backtest.exits.taxonomy's own censored_ratio/
+    # evaluable_ratio computation) -- this field only carries the
+    # declared threshold and its identity/validation, nothing else.
+    maximum_censored_ratio: Optional[float] = None
 
 
 def validate_selection_rule(rule: SelectionRule) -> tuple[bool, tuple[str, ...]]:
@@ -450,6 +465,12 @@ def validate_selection_rule(rule: SelectionRule) -> tuple[bool, tuple[str, ...]]
         errors.append(f"threshold_operator must be {THRESHOLD_OPERATOR_V1!r} in V1, got {rule.threshold_operator!r}")
     if rule.tie_break != TIE_BREAK_V1:
         errors.append(f"tie_break must be {TIE_BREAK_V1!r} in V1, got {rule.tie_break!r}")
+    if rule.maximum_censored_ratio is not None:
+        if not _is_finite_number(rule.maximum_censored_ratio) or not (0 <= rule.maximum_censored_ratio <= 1):
+            errors.append(
+                f"maximum_censored_ratio must be None (unset) or a finite number in [0,1], got "
+                f"{rule.maximum_censored_ratio!r} (amendment section 11 -- optional field, not optional support)"
+            )
     return (not errors, tuple(errors))
 
 
@@ -702,6 +723,10 @@ def research_plan_fingerprint(
             "minimum_selection_metric": selection_rule.minimum_selection_metric,
             "threshold_operator": selection_rule.threshold_operator,
             "tie_break": selection_rule.tie_break,
+            **(
+                {"maximum_censored_ratio": selection_rule.maximum_censored_ratio}
+                if selection_rule.maximum_censored_ratio is not None else {}
+            ),
         },
         "cost_assumptions": {
             "commission_entry_rate": cost_assumptions.commission_entry_rate,

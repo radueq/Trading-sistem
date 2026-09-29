@@ -14,14 +14,35 @@ SAME `session_dates`/cohort and merges their results (see its own
 docstring for exactly how signals are partitioned between them).
 
 Both older families use a FIXED `exit_execution_policy=BAR_CLOSE` (Spec
-#004 HYPOTHESIS_ENGINE_VERSION contract) -- unlike STOP_MANAGED_
-INVALIDATION's own, separately-versioned execution-semantics profile
-(amendment section 7), neither ever defers a decided exit to a LATER
-session's open: the closing tranche always fills at the SAME session's
-close that decided the exit. This makes the per-session mechanics here
-structurally simpler than `protection.py`/`session.py`'s own: no
-intrabar open/high/low check, no stop/target levels, no partial-profit
-tranche, no "pending, scheduled for next open" position state at all.
+#004 HYPOTHESIS_ENGINE_VERSION contract) for TIME_EXIT and the
+`max_holding_bars` cap: those two close at the SAME session's close that
+decided the exit (`TIME_EXIT_FILL_V1`/`CAP_FILL_V1` =
+`SCHEDULED_..._BAR_CLOSE`, `backtest.models.entities`, SS9).
+
+Closure verification finding (post-`9feb4a5`): SIGNAL_INVALIDATION does
+NOT share that same immediate-close behavior, and an earlier version of
+this module wrongly assumed it did. `ExecutionSemanticsProfile` v1 (SS9)
+is the ONE base profile every exit family shares -- it is not something
+STOP_MANAGED_INVALIDATION's own, separately-versioned profile (amendment
+section 7) added on its own. That base profile separates
+`invalidation_detection = COMPLETED_BAR_CLOSE` from `invalidation_fill =
+NEXT_SESSION_OPEN_AFTER_DETECTION`: an invalidation DETECTED at close(t)
+is SCHEDULED, filling only at open(t+1) -- exactly the same "detected at
+close(t), executed at t+1's open" shape `StopManagedPosition.
+pending_invalidation_detected_date`/`session.execute_scheduled_
+invalidation()` already implement for their own family. This module now
+mirrors that: `LegacyPosition.pending_invalidation_detected_date` records
+the detection; `execute_scheduled_legacy_invalidation()` consumes it at
+the next session's open (Pas 1, below). The hard `max_holding_bars` cap
+is unaffected by this fix -- it still closes at ITS OWN scheduled close,
+even in a session where an invalidation is ALSO detected: a cap that
+already closed the position leaves nothing left to schedule a fill
+against, so `advance_legacy_position_at_close()` checks the cap FIRST and
+only considers invalidation when the cap has not fired (the same
+"a position fully resolved by one mechanism this session skips any OTHER
+evaluation for that day" principle amendment regression #11 already
+establishes for `StopManagedPosition`) -- this is now how the two
+triggers interact when they coincide, not an arbitrary priority pick.
 
 TIME_EXIT (Spec #004 HORIZON_REFERENCE_POINT/`ExitHypothesis.
 time_exit_bars`): "entry at the open of the entry bar: holding bar 1 =
@@ -32,21 +53,21 @@ applies to it at all (Spec #004's own proposal validator never populates
 
 SIGNAL_INVALIDATION (Spec #004 SS110-B): "EXIT on signal invalidation OR
 mandatory max_holding_bars, whichever occurs first." Both triggers are
-checked every session at close; if BOTH fire on the exact same session,
-this module's own, explicitly stated tie-break (never given verbatim by
-any spec text for this exact simultaneity) prefers the INVALIDATION
-reason -- the same "the more specific, risk-side signal wins an exact
-tie" convention `session.advance_intrabar()` already uses for a
-same-bar stop-vs-target conflict (stop, the protective/risk-side event,
-wins over target, the opportunistic one); `max_holding_bars` is a
-backstop cap, not itself a signal about the position's own thesis.
+checked every session at close; the cap is a hard, immediate-close
+backstop (not itself a signal about the position's own thesis) and is
+checked first; invalidation, if detected, is a SCHEDULED exit (SS9, above)
+-- so a genuine same-session coincidence is resolved by the cap firing
+now while invalidation would only have fired later, never by a tie-break
+between two competing immediate fills.
 
-Neither family needs Pas 1 (STOP_MANAGED_INVALIDATION's own "execute a
-previously-scheduled exit" step) -- BAR_CLOSE execution means there is
-never anything scheduled to execute later. Pas 0 (split reconciliation)
-still applies: see `reconcile_split_for_legacy_position()`'s own docstring
-for why a LegacyPosition has exactly the same entry-price staleness
-problem `StopManagedPosition` does.
+Pas 0 (split reconciliation) still applies before either: see
+`reconcile_split_for_legacy_position()`'s own docstring for why a
+LegacyPosition has exactly the same entry-price staleness problem
+`StopManagedPosition` does. Pas 1 (execute a previously-scheduled
+invalidation fill at today's open) now also applies, for exactly the same
+reason `session.execute_scheduled_invalidation()` needs it -- run before
+Pas 2 (pending entries) and before this session's own close-based
+detection/cap step, mirroring `SessionEngine`'s own step order.
 """
 from __future__ import annotations
 
@@ -199,54 +220,99 @@ def advance_legacy_position_at_close(
     position: LegacyPosition, session_date: str, session_index: int,
     close_price: Optional[float], invalidation_status: Optional[str],
 ) -> LegacyPosition:
-    """One per-session step at close(t) -- see module docstring for why
-    BAR_CLOSE execution needs no separate intrabar/scheduled-fill step at
-    all. `invalidation_status` is `None` for TIME_EXIT (no invalidation
-    vocabulary applies); for SIGNAL_INVALIDATION it is one of
-    VALID_HOLD/INVALIDATED/UNKNOWN, the exact same contract
-    `session.check_trend_invalidation()` already uses. `UNKNOWN` taints
-    `invalidation_path_incomplete` PERMANENTLY, mirroring that same
-    persistent-incompleteness rule (section 5/10 of the amendment) for the
-    identical underlying reason: the holding condition's own forward path
-    is not fully demonstrated, whatever the root cause. `close_price` is
-    validated via `_is_usable_price()` (GPT review finding #4) -- a
-    NaN/infinite/zero/negative value is treated exactly like a missing
-    bar (EXIT_FAILED), never as a usable fill; a corrupted price is no
-    less "no real exit available" than an absent one."""
+    """One per-session step at close(t). `invalidation_status` is `None`
+    for TIME_EXIT (no invalidation vocabulary applies); for
+    SIGNAL_INVALIDATION it is one of VALID_HOLD/INVALIDATED/UNKNOWN, the
+    exact same contract `session.check_trend_invalidation()` already uses.
+
+    The `max_holding_bars` cap is checked FIRST and closes immediately, at
+    THIS close, if reached -- a hard backstop (`CAP_IS_HARD_V1`), unaffected
+    by whatever the invalidation lane says this same session (module
+    docstring: a position the cap already closes leaves nothing left to
+    schedule an invalidation fill against). Only when the cap has NOT
+    fired does invalidation get evaluated: `UNKNOWN` taints
+    `invalidation_path_incomplete` PERMANENTLY (section 5/10 of the
+    amendment's persistent-incompleteness rule); `INVALIDATED` does NOT
+    close the position here -- it records `pending_invalidation_detected_
+    date`, deferring the actual fill to `execute_scheduled_legacy_
+    invalidation()` at the NEXT session's open (SS9's
+    `NEXT_SESSION_OPEN_AFTER_DETECTION`, module docstring). A position
+    already holding a pending detection is left untouched (Pas 1 of the
+    NEXT session owns consuming it, not this step).
+
+    `close_price` is validated via `_is_usable_price()` (GPT review
+    finding #4) for the cap's OWN close fill -- a NaN/infinite/zero/
+    negative value is treated exactly like a missing bar (EXIT_FAILED),
+    never as a usable fill."""
     if position.closed or position.exit_failed:
+        return position
+    if position.pending_invalidation_detected_date is not None:
         return position
 
     holding_bar_number = session_index - position.entry_session_index + 1
-    pos = position
-    invalidated_now = False
-
-    if pos.exit_family == ExitFamily.SIGNAL_INVALIDATION.value:
-        if invalidation_status == "UNKNOWN":
-            pos = dataclasses.replace(pos, invalidation_path_incomplete=True)
-        invalidated_now = invalidation_status == "INVALIDATED"
-
     time_cap_reached = (
-        (pos.time_exit_bars is not None and holding_bar_number >= pos.time_exit_bars)
-        or (pos.max_holding_bars is not None and holding_bar_number >= pos.max_holding_bars)
+        (position.time_exit_bars is not None and holding_bar_number >= position.time_exit_bars)
+        or (position.max_holding_bars is not None and holding_bar_number >= position.max_holding_bars)
     )
 
-    if not (invalidated_now or time_cap_reached):
-        return pos
+    if time_cap_reached:
+        if not _is_usable_price(close_price):
+            return dataclasses.replace(position, exit_failed=True, exit_failed_reason=REASON_NO_EXIT_BAR)
+        reason = (
+            EXIT_REASON_TIME_EXIT if position.exit_family == ExitFamily.TIME_EXIT.value
+            else EXIT_REASON_MAX_HOLDING_BARS_FORCED_EXIT
+        )
+        holding_days = _calendar_days(position.entry_date, session_date)
+        tranche = Tranche(
+            kind="REMAINDER", exit_reason=reason, fraction_of_original=1.0,
+            exit_date=session_date, exit_fill_price=close_price, holding_days=holding_days,
+            entry_fill_price_reference=position.entry_fill_price,
+        )
+        return dataclasses.replace(position, closed=True, close_tranche=tranche)
 
-    if not _is_usable_price(close_price):
-        return dataclasses.replace(pos, exit_failed=True, exit_failed_reason=REASON_NO_EXIT_BAR)
+    if position.exit_family != ExitFamily.SIGNAL_INVALIDATION.value:
+        return position
 
-    reason = (
-        EXIT_REASON_SIGNAL_INVALIDATION if invalidated_now
-        else (EXIT_REASON_TIME_EXIT if pos.exit_family == ExitFamily.TIME_EXIT.value else EXIT_REASON_MAX_HOLDING_BARS_FORCED_EXIT)
-    )
-    holding_days = _calendar_days(pos.entry_date, session_date)
+    if invalidation_status == "UNKNOWN":
+        return dataclasses.replace(position, invalidation_path_incomplete=True)
+    if invalidation_status == "INVALIDATED":
+        return dataclasses.replace(position, pending_invalidation_detected_date=session_date)
+    return position
+
+
+def execute_scheduled_legacy_invalidation(
+    position: LegacyPosition, session_date: str, open_price: Optional[float],
+) -> LegacyPosition:
+    """Pas 1: consumes a SIGNAL_INVALIDATION detected at a PREVIOUS
+    session's close (`pending_invalidation_detected_date`) at THIS
+    session's open -- `ExecutionSemanticsProfile` v1's
+    `NEXT_SESSION_OPEN_AFTER_DETECTION` (SS9, `backtest.models.entities`),
+    the same base profile `StopManagedPosition`'s own
+    `session.execute_scheduled_invalidation()` consumes its own pending
+    invalidation against. Mirrors that function's shape exactly, narrowed
+    to a `LegacyPosition`'s single-tranche close (no partial-profit
+    fraction to account for): a missing/non-finite/non-positive open
+    (`_is_usable_price()`, GPT review finding #4) makes the scheduled exit
+    EXIT_FAILED -- it was due today and could not be realized. If this
+    engine's own `session_dates` never reach a session after the
+    detection one (invalidation detected on the STAGE's last session),
+    this function is simply never called again for that position within
+    the stage; `LegacySessionEngine.run()` stamps `pending_exit_note` on
+    it at stage end and it is classified CENSORED_AT_HORIZON, never
+    EXIT_FAILED, exactly like the STOP_MANAGED_INVALIDATION analogue
+    (amendment section 10's `CENSORED_AT_HORIZON` central case, regression
+    #9)."""
+    if position.closed or position.exit_failed or position.pending_invalidation_detected_date is None:
+        return position
+    if not _is_usable_price(open_price):
+        return dataclasses.replace(position, exit_failed=True, exit_failed_reason=REASON_NO_EXIT_BAR)
+    holding_days = _calendar_days(position.entry_date, session_date)
     tranche = Tranche(
-        kind="REMAINDER", exit_reason=reason, fraction_of_original=1.0,
-        exit_date=session_date, exit_fill_price=close_price, holding_days=holding_days,
-        entry_fill_price_reference=pos.entry_fill_price,
+        kind="REMAINDER", exit_reason=EXIT_REASON_SIGNAL_INVALIDATION, fraction_of_original=1.0,
+        exit_date=session_date, exit_fill_price=open_price, holding_days=holding_days,
+        entry_fill_price_reference=position.entry_fill_price,
     )
-    return dataclasses.replace(pos, closed=True, close_tranche=tranche)
+    return dataclasses.replace(position, closed=True, close_tranche=tranche, pending_invalidation_detected_date=None)
 
 
 def classify_legacy_position(
@@ -416,6 +482,23 @@ class LegacySessionEngine:
                     evidence = self.same_day_split_evidence(security_id, today)
                     self._open_positions[key] = reconcile_split_for_legacy_position(self.pit, pos, today, evidence)
 
+            # Pas 1 (closure verification fix, post-9feb4a5): execute any
+            # SIGNAL_INVALIDATION fill scheduled at a PREVIOUS session's
+            # close -- SS9's NEXT_SESSION_OPEN_AFTER_DETECTION, run before
+            # Pas 2 so a position closed here never also receives a new
+            # entry this session, mirroring SessionEngine's own Pas 0 ->
+            # Pas 1 -> Pas 2 order.
+            for key, pos in list(self._open_positions.items()):
+                if pos.pending_invalidation_detected_date is None:
+                    continue
+                security_id, _variant_id = key
+                bar = _find_bar(bars_for(security_id), today)
+                open_price = bar.split_adjusted_open if bar is not None else None
+                new_pos = execute_scheduled_legacy_invalidation(pos, today, open_price)
+                self._open_positions[key] = new_pos
+                if new_pos.closed or new_pos.exit_failed:
+                    self._retire(key, new_pos)
+
             # Pas 2: pending entries -- signals recorded at the PREVIOUS
             # session's close.
             if i > 0:
@@ -464,6 +547,22 @@ class LegacySessionEngine:
 
         final_closes: dict[str, Optional[float]] = {}
         for (security_id, _variant_id), pos in self._open_positions.items():
+            if pos.pending_invalidation_detected_date is not None and pos.pending_exit_note is None:
+                # This position's Pas 1 fill was never reached -- detection
+                # happened on the stage's own last session, so there is no
+                # further "today" within `session_dates` to execute it
+                # against. Amendment section 10's CENSORED_AT_HORIZON
+                # central case (regression #9), reused here: stays
+                # CENSORED_AT_HORIZON, EVALUABLE (never EXIT_FAILED), with
+                # the pending order recorded as a diagnostic note only --
+                # classify_legacy_position()/evaluate_legacy_stage_results()
+                # need no change, they already treat a still-open position
+                # with no persistent-incompleteness reason this way.
+                pos = dataclasses.replace(pos, pending_exit_note=(
+                    f"INVALIDATED at close of {pos.pending_invalidation_detected_date}, fill scheduled "
+                    f"NEXT_SESSION_OPEN_AFTER_DETECTION falls beyond this stage's own session_dates -- "
+                    f"not read, position stays CENSORED_AT_HORIZON"
+                ))
             self._all_positions.append(pos)
             observation = self._last_close_observation.get(security_id)
             final_closes[security_id] = observation[0] if observation is not None and observation[1] == last_signal_date else None

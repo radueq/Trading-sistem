@@ -963,3 +963,134 @@ one data provider (yfinance) exists at Level 1, so cross-provider
 comparison has nothing to compare against; deferred to Level 2/3 per
 Radu's approval (2026-09-20). This skip predates Spec #005 entirely and is
 unrelated to any of the deliveries described in this document.
+
+---
+
+## Closure verdict round 2: three code fixes + two report corrections
+
+Radu's verdict on the round-1 closure report: Batch 3 cannot close. He
+confirmed both gaps reported above (MAE/MFE unwired, `maximum_censored_
+ratio` missing), found a THIRD, more serious contradiction the snapshot
+itself exposed, and required two corrections to the report's own
+reasoning. This section documents the three code fixes and two report
+corrections made in response, on top of the code and documentation
+described everywhere above -- which stays exactly as it reads, as the
+historical record of the round-1 audit.
+
+**1. `LegacySessionEngine` executed `SIGNAL_INVALIDATION` at the WRONG
+session.** `ExecutionSemanticsProfile` v1 (SS9, this same file) separates
+`invalidation_detection=COMPLETED_BAR_CLOSE` from `invalidation_fill=
+NEXT_SESSION_OPEN_AFTER_DETECTION` -- ONE base profile shared by every
+exit family, never something `StopManagedPosition` added on its own (the
+profile's own docstring already said as much). `backtest/exits/legacy.py`
+wrongly assumed SIGNAL_INVALIDATION shared TIME_EXIT/cap's own immediate-
+same-close execution -- an earlier version of that module's docstring said
+so explicitly, and the code matched that wrong assumption: a detected
+invalidation closed the position at the SAME close it was detected on,
+never deferred. Radu's own repro: entry 100, detection close 130 (the
+engine's actual, wrong output: +30%), a hypothetical next open of 90
+would contractually produce -10% -- the numbers this fix's own new
+regression (`test_37::test_signal_invalidation_execution_uses_the_real_
+overnight_gap_not_the_detection_close`) uses directly.
+
+Fix: `LegacyPosition` gained `pending_invalidation_detected_date`/
+`pending_exit_note` (the exact fields `StopManagedPosition` already
+carries for its own identical mechanism). `advance_legacy_position_at_
+close()` now checks the `max_holding_bars` cap FIRST -- a hard,
+immediate-close backstop, unaffected by invalidation, closing at THIS
+close if reached -- and only evaluates invalidation when the cap has NOT
+fired; `INVALIDATED` now SCHEDULES the exit instead of closing immediately.
+A new function, `execute_scheduled_legacy_invalidation()`, consumes that
+schedule at the NEXT session's open -- a new Pas 1 step in `LegacySession
+Engine.run()`, run before Pas 2 (pending entries), mirroring `SessionEngine`'s
+own step order exactly. A genuine same-session coincidence between the cap
+and invalidation is resolved structurally now, not by an arbitrary
+tie-break: the cap fires immediately, invalidation (deferred) has nothing
+left to schedule against once the cap already closed the position -- the
+PREVIOUS test asserting the opposite ("invalidation wins the tie-break")
+encoded the old, wrong contract and was corrected to assert the cap wins.
+
+Five new/corrected regressions (`test_37`): fill at the next session's
+real open, not the detection close (deliberately different values, so the
+test cannot pass by coincidence); the real overnight-gap case (+30% at
+detection vs. the correct -10% at the real next open, Radu's own numbers);
+a missing open at the scheduled fill session -> `EXIT_FAILED`/`NO_EXIT_BAR`;
+an invalidation detected on the STAGE's own last session -> stays
+`CENSORED_AT_HORIZON`, `EVALUABLE`, never `EXIT_FAILED`, with a `pending_
+exit_note` -- the exact CENSORED_AT_HORIZON central case (amendment
+regression #9) reused for this family; the cap-vs-invalidation interaction
+in both orderings. `test_38`/`test_39` (mixed-family and real-Discovery
+integration tests) were corrected for the new exit dates/fills --
+`test_39` in particular now introduces a genuine overnight price gap
+(it previously could not have distinguished old from new behavior, since
+its synthetic price path had no gap between sessions) and its own
+previously-reported +30% is now a hand-verifiable -10%.
+
+**2. MAE/MFE (section 12) -- now wired.** `compute_tranche_mae_mfe()`
+itself is unchanged in its default behavior (new `exit_is_real_execution`
+parameter, `True` by default, byte-identical to every existing caller).
+When `False` -- a still-open remainder marked-to-market for reporting --
+the final day is no longer treated as an ambiguous intraday-exit day: its
+own high/low are used like any other day in the window, exactly as Radu
+required ("the extremes of the last fully-held day must not be excluded
+as if an intraday exit occurred there"). `COVERAGE_FULL` is reachable for
+the first time as a result. Two new functions, `evaluate_stop_managed_
+position_mae_mfe()`/`evaluate_legacy_position_mae_mfe()` (same module),
+produce one record per tranche that actually exists on a REAL position,
+without modifying `StopManagedPosition`/`LegacyPosition`/`Tranche` --
+each tranche's own bars are queried `as_of` its own resolution date and
+paired with the entry price reference frozen (or current) on that SAME
+basis, so a split between two tranches' own closures never mixes bases.
+Five new regressions (`test_40_mae_mfe_evaluation.py`): partial + rest
+across a real intervening 2-for-1 split (each tranche independently
+verified against its own as-of query); a censored remainder whose final
+day's own high is more favorable than the mark, proving the fix
+(`COVERAGE_FULL` reached); the same case with a genuine data gap on a
+non-exit day -> `PARTIAL_EXIT_DAY_EXCLUDED`; SHORT direction (sign
+flip); a position with nothing to report (`EXIT_FAILED`) -> no record.
+
+**3. `SelectionRule.maximum_censored_ratio` -- now exists.** Added with
+default `None`; `validate_selection_rule()` rejects any set value that
+is not finite and in `[0,1]`. `research_plan_fingerprint()` includes it
+in the `selection_rule` sub-payload ONLY when not `None` -- confirmed by
+a direct regression that the key is entirely ABSENT (not merely null)
+from the canonical JSON for every plan that never sets it, so every
+fingerprint computed before this field existed stays byte-identical.
+Six new tests in `test_07`, three in `test_09`. Actually enforcing this
+threshold against a real cohort remains future work, same as the
+`censored_ratio`/`evaluable_ratio` computation it would gate -- this
+field only carries the declared threshold and its identity/validation.
+
+**Report correction 1 -- OR is not an inference.** The round-1 closure
+report (and `discovery_integration.evaluate_invalidation_conditions()`'s
+own docstring) wrongly called OR-combining multiple `InvalidationCondition`s
+"this function's own documented inference, not a verbatim quote." Radu
+pointed out amendment section 8 states it directly: "Combinare OR intre
+conditii multiple (regula sectiunea 10 existenta)" -- an explicit
+contract citation, not an inference. Both the docstring and the closure
+report are corrected; the underlying tested behavior was already correct
+and needed no code change beyond the comment.
+
+**Report correction 2 -- cohort-level selection's batch assignment is
+unconfirmed, not "consistent."** The round-1 report described the missing
+cohort-selection orchestration (amendment section 11) as "consistent with
+Batch 3's own framing as mechanics-only -- never claimed to cover cohort
+selection," implying a contractual confirmation that does not exist: the
+BASE Spec #005 document (which would define batch boundaries) is not in
+this repository and was never available to check. The report is corrected
+to state plainly that this orchestration does not exist in the code today,
+without asserting which batch it contractually belongs to.
+
+**Bundle correction.** The round-1 snapshot bundle contained only
+`src/backtest`+`src/hypothesis`, which fails to import (`ModuleNotFoundError:
+No module named 'evaluation'`) for any code path touching the rest of the
+package tree. The round-2 bundle is a complete `git archive` of the whole
+repository at the new commit -- every top-level `src/` package, `tests/`,
+`docs/`, `requirements.txt`, `pyproject.toml` -- not a hand-picked subset.
+The base Spec #005 document was searched for again across all branches,
+tags, and full commit history and remains genuinely absent from this repo.
+
+**Full suite after these three fixes:** `PYTHONPATH=src:tests python3 -m
+pytest -q -rs` -> `715 passed, 1 skipped` (was 696/1; 19 new tests: 5 in
+`test_37`, 5 in `test_40` (new file), 6 in `test_07`, 3 in `test_09`) --
+self-reported, not independently verified.

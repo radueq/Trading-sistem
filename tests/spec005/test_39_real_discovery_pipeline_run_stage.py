@@ -111,17 +111,30 @@ def test_real_discovery_observations_drive_matching_invalidation_and_run_stage(c
 
     # D1/D2: flat continuation (no swing) -- volatility stays
     # EXTREME_COMPRESSION (empirically confirmed below by reading the
-    # real observation back, never assumed). D3 onward: a sharp +/-30%
-    # daily swing -- volatility flips to EXTREME_EXPANSION.
+    # real observation back, never assumed). D3: a sharp +30% swing closes
+    # the session at EXTREME_EXPANSION -- this is the session invalidation
+    # is DETECTED at (`ExecutionSemanticsProfile` v1's `invalidation_
+    # detection=COMPLETED_BAR_CLOSE`, SS9). D4 then opens with a genuine,
+    # deliberate overnight GAP DOWN (closure verification finding,
+    # post-9feb4a5) rather than continuing flat from D3's own close --
+    # this is what actually proves `invalidation_fill=
+    # NEXT_SESSION_OPEN_AFTER_DETECTION` is honored: a continuous
+    # open-equals-prior-close path could never distinguish "filled at the
+    # detection close" from "filled at the next real open" since the two
+    # would be numerically identical.
     extra_days = (D1, D2, D3, D4, D5, D6)
     rows = []
     p = last_calm_price
+    GAP_OPEN_D4 = last_calm_price * 0.90
     for i, d in enumerate(extra_days):
-        swing = 0.0 if i < 2 else 0.30
-        o = p
-        h = p * (1 + swing + 0.02)
-        l = p * (1 - swing - 0.02)
-        c = p * (1 + swing) if i % 2 == 0 else p * (1 - swing)
+        if i == 3:
+            o, h, l, c = GAP_OPEN_D4, GAP_OPEN_D4 * 1.01, GAP_OPEN_D4 * 0.99, GAP_OPEN_D4
+        else:
+            swing = 0.0 if i < 2 else 0.30
+            o = p
+            h = p * (1 + swing + 0.02)
+            l = p * (1 - swing - 0.02)
+            c = p * (1 + swing) if i % 2 == 0 else p * (1 - swing)
         rows.append((d, o, h, l, c))
         p = c
     repo.insert_price_bars(conn, [
@@ -133,8 +146,10 @@ def test_real_discovery_observations_drive_matching_invalidation_and_run_stage(c
     ])
     entry_open = rows[1][1]  # D2's own open == last_calm_price (flat through D1/D2)
     d3_close = rows[2][4]
+    d4_open = rows[3][1]
     assert entry_open == last_calm_price
     assert d3_close == last_calm_price * 1.30
+    assert d4_open == GAP_OPEN_D4
 
     calendar = build_trading_calendar(
         source=CalendarSource.SYNTHETIC_TEST_FIXTURE.value, calendar_identifier="SPEC005_REAL_PIPELINE_CALENDAR",
@@ -196,15 +211,23 @@ def test_real_discovery_observations_drive_matching_invalidation_and_run_stage(c
     assert sig_pos.entry_fill_price == entry_open
     assert sig_pos.closed is True
     assert sig_pos.close_tranche.exit_reason == EXIT_REASON_SIGNAL_INVALIDATION
-    assert sig_pos.close_tranche.exit_date == D3
-    assert sig_pos.close_tranche.exit_fill_price == d3_close
+    # Closure verification fix (post-9feb4a5): invalidation is DETECTED at
+    # D3's close (+30%, what an earlier, buggy version of this engine
+    # would have wrongly executed at) but the actual fill is SCHEDULED for
+    # D4's own open -- a real overnight gap down, not D3's close.
+    assert sig_pos.close_tranche.exit_date == D4
+    assert sig_pos.close_tranche.exit_fill_price == d4_open
+    assert sig_pos.close_tranche.exit_fill_price != d3_close
     assert sig_pos.invalidation_path_incomplete is False
+    assert sig_pos.pending_invalidation_detected_date is None  # consumed, not left dangling
 
     outcome = classify_legacy_position(sig_pos, stage_end_reached=True)
     assert outcome.lifecycle == LIFECYCLE_CLOSED and outcome.evaluability == EVALUABILITY_EVALUABLE
     (net_return,) = evaluate_legacy_stage_results([sig_pos], [outcome], _ZERO_COSTS, D6, result.final_closes)
-    expected_return = tranche_net_return("LONG", entry_open, d3_close, 0.0, 0.0, 0.0, sig_pos.close_tranche.holding_days)
+    expected_return = tranche_net_return("LONG", entry_open, d4_open, 0.0, 0.0, 0.0, sig_pos.close_tranche.holding_days)
     assert net_return == expected_return
-    # Zero costs, entry->exit +30% swing -- hand-verifiable directly,
-    # without even needing the cost-formula cross-check above.
-    assert abs(net_return - 0.30) < 1e-9
+    # Zero costs, entry 100 -> detection close +30% -> real next-open gap
+    # down to -10% from entry -- exactly the numbers this finding was
+    # reported with. The old, buggy same-close execution would have
+    # reported +30% here; the contractually correct result is -10%.
+    assert abs(net_return - (-0.10)) < 1e-9

@@ -148,13 +148,20 @@ def test_mixed_cohort_run_stage_executes_all_three_families_with_correct_costs(c
     te_expected = tranche_net_return("LONG", expected_entry_fill, te_expected_fx, 0.001, 0.002, 0.0, time_exit_pos.close_tranche.holding_days)
     assert te_return == te_expected
 
-    # -- SIGNAL_INVALIDATION: invalidated at D3 (relative_strength -> LOW),
-    # well before its own max_holding_bars=5 cap -- closes at D3's own close.
+    # -- SIGNAL_INVALIDATION: invalidated (detected) at D3's close
+    # (relative_strength -> LOW), well before its own max_holding_bars=5
+    # cap -- SS9's NEXT_SESSION_OPEN_AFTER_DETECTION schedules the actual
+    # fill at D4's own open (closure verification fix, post-9feb4a5: an
+    # earlier version of this engine wrongly closed at D3's close itself).
+    # The flat OHLC path (open == close == 100.0 every day) makes the
+    # FILL PRICE numerically identical either way -- only the exit date
+    # and holding_days actually distinguish the corrected behavior here;
+    # test_37's own dedicated regressions cover the case where they differ.
     sig_pos = by_variant[ids["signal_invalidation"]]
     assert sig_pos.entry_fill_price == expected_entry_fill
     assert sig_pos.closed is True
     assert sig_pos.close_tranche.exit_reason == EXIT_REASON_SIGNAL_INVALIDATION
-    assert sig_pos.close_tranche.exit_date == D3
+    assert sig_pos.close_tranche.exit_date == D4
     assert sig_pos.invalidation_path_incomplete is False
     sig_outcome = classify_legacy_position(sig_pos, stage_end_reached=True)
     assert sig_outcome.lifecycle == LIFECYCLE_CLOSED and sig_outcome.evaluability == EVALUABILITY_EVALUABLE

@@ -83,6 +83,52 @@ def test_nan_minimum_evaluable_ratio_is_rejected():
     assert any("minimum_evaluable_ratio" in e for e in errors)
 
 
+def test_unset_maximum_censored_ratio_is_allowed():
+    """Amendment section 11: optional field, `None` is the valid default
+    -- a plan may simply never declare this adequacy threshold."""
+    ok, errors = validate_selection_rule(_valid_rule())
+    assert ok, errors
+
+
+def test_maximum_censored_ratio_within_bounds_is_allowed():
+    ok, errors = validate_selection_rule(_valid_rule(maximum_censored_ratio=0.3))
+    assert ok, errors
+
+
+def test_maximum_censored_ratio_of_exactly_zero_or_one_is_allowed():
+    """Closed interval [0,1] -- both endpoints are valid declared
+    thresholds (0.0 = no censoring tolerated at all, 1.0 = no adequacy
+    constraint in practice)."""
+    ok, errors = validate_selection_rule(_valid_rule(maximum_censored_ratio=0.0))
+    assert ok, errors
+    ok, errors = validate_selection_rule(_valid_rule(maximum_censored_ratio=1.0))
+    assert ok, errors
+
+
+def test_maximum_censored_ratio_above_one_is_rejected():
+    ok, errors = validate_selection_rule(_valid_rule(maximum_censored_ratio=1.1))
+    assert not ok
+    assert any("maximum_censored_ratio" in e for e in errors)
+
+
+def test_negative_maximum_censored_ratio_is_rejected():
+    ok, errors = validate_selection_rule(_valid_rule(maximum_censored_ratio=-0.1))
+    assert not ok
+    assert any("maximum_censored_ratio" in e for e in errors)
+
+
+def test_nan_maximum_censored_ratio_is_rejected():
+    ok, errors = validate_selection_rule(_valid_rule(maximum_censored_ratio=float("nan")))
+    assert not ok
+    assert any("maximum_censored_ratio" in e for e in errors)
+
+
+def test_infinite_maximum_censored_ratio_is_rejected():
+    ok, errors = validate_selection_rule(_valid_rule(maximum_censored_ratio=float("inf")))
+    assert not ok
+    assert any("maximum_censored_ratio" in e for e in errors)
+
+
 def _valid_costs(**overrides) -> CostAssumptions:
     return dataclasses.replace(
         CostAssumptions(
