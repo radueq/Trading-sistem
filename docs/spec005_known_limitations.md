@@ -830,3 +830,136 @@ than silently assuming two.
 Full suite after these five fixes: 696 passed, 1 skipped (was 682/1;
 14 new tests: 7 in `test_36`, 5 in `test_37`, 1 in `test_38`, 1 new file
 `test_39`) -- self-reported, not independently verified.
+
+---
+
+## Consolidated closure status at `9feb4a5` (Batch 3 closure verification)
+
+This section is the SINGLE current-status summary requested for the Batch 3
+closure verification. It supersedes no prior section above -- every review
+round, finding, and fix described earlier in this document stands as the
+historical record of what was found and corrected, in the order it happened.
+This section only adds where things stand now, at commit `9feb4a5`, and
+names two contractual gaps this verification pass found that no earlier
+section disclosed.
+
+**Point-in-time acceptances on record for this code (`9feb4a5`) and its
+direct ancestors**, each scoped exactly as stated, none implying the others
+or the whole:
+- Batch 3 core (STOP_MANAGED_INVALIDATION mechanics, amendment sections
+  1-14): three GPT review rounds plus the narrow round-3 follow-up, the
+  follow-up's own acceptance covering only that one regression.
+- "Session Engine & Integration" (multi-security loop, mandatory plan gate,
+  exit slippage, aggregate cost evaluation): its own review closed, ACCEPTED
+  for the key/signal identity fix at `ba38a4b` -- not a statement that Batch
+  3 as a whole is accepted.
+- "Discovery Integration & Legacy Exits" (Discovery-based entry matching,
+  real `InvalidationCondition` evaluation, `TIME_EXIT`/`SIGNAL_INVALIDATION`
+  execution engine, mixed-family `run_stage()` integration): ACCEPTED for
+  all five review-round-1 findings at `9feb4a5`. This acceptance is
+  explicitly NOT a statement that Batch 3 or Spec #005 is closed.
+- The general accepted baseline remains `3cdc532` (Spec #005 Batch 1/2)
+  throughout all of the above -- unchanged by any of these point
+  acceptances.
+
+**Correction to an overclaiming statement in this document.** Line 46 above
+lists `mae_mfe.py` alongside `protection.py`, `session.py`, `costs.py`,
+`taxonomy.py`, `entities.py`, and `plan_integration.py` as modules that
+implement "the STOP_MANAGED_INVALIDATION position's own per-position
+mechanics in full" -- grouping it with modules that ARE wired into the
+running engine. This is not accurate for `mae_mfe.py`. Evidence:
+`compute_tranche_mae_mfe()` (`backtest/exits/mae_mfe.py:57`, amendment
+section 12) is a correct, independently unit-tested formula (`test_28`) --
+but it has no caller anywhere in `backtest/exits/engine.py`,
+`backtest/exits/session.py`, or `backtest/exits/legacy.py` (confirmed by
+a full-tree grep for `mae_mfe`/`compute_tranche_mae_mfe`: the only other
+hit is a docstring comment in `costs.py:48`, which merely explains why
+`Tranche.exit_fill_price` is never overwritten with a slipped value "for
+MAE/MFE" -- it does not call the function or wire it in). Neither
+`Tranche` (`backtest/exits/entities.py:79-108`) nor `StopManagedPosition`
+(`entities.py:112-167`) carries an `mae`/`mfe` field at all. Every other
+mention of MAE/MFE elsewhere in this document (lines 99-101, 150-154,
+234-243, 295) discusses the formula's own internal correctness -- partial
+coverage on an intraday-exit day, numeric validation, the known-zero
+excursion at entry -- never once disclosing that the formula is not
+reachable from any real `run_stage()` result. No `Tranche`, `StopManagedPosition`,
+or `LegacyPosition` produced by an actual stage run carries an MAE/MFE
+value today. This is a genuine integration gap against amendment section
+12, found by this closure verification, not a new defect introduced by any
+of the deliveries described above -- `mae_mfe.py` has been in this state
+since Batch 3's own initial delivery.
+
+**A second contractual gap found by this closure verification.** Amendment
+section 11 names an OPTIONAL `SelectionRule.maximum_censored_ratio` field
+(interval `[0,1]`, "a declared-adequacy requirement... NOT a remedy for
+selection bias" -- the amendment's own wording). A full-tree grep for
+`maximum_censored_ratio` across `src/`, `tests/`, and `docs/` finds it
+ONLY inside `docs/spec005_exit_amendment_v1.0.md` itself. The field does
+not exist on `SelectionRule` (`backtest/models/entities.py`), is not
+validated by `validate_selection_rule()`, and has no test. Reported here
+with evidence per instruction, regardless of the field's optional status
+in the contract text -- the decision on whether this blocks anything is
+left to review, not made here.
+
+**Selection/ranking orchestration -- scope boundary, not a new gap.**
+Section 11's mandatory `ranking_metric = MEDIAN_NET_RETURN_TO_EXIT_OR_STAGE_END`
+requirement for any cohort containing `STOP_MANAGED_INVALIDATION` variants
+IS enforced (`backtest/exits/plan_integration.py:86`, tested by `test_32`).
+What does NOT exist anywhere in the codebase is a function that actually
+COMPUTES `executed_entries_count`/`censored_ratio`/`evaluable_ratio` for a
+real cohort of variants and uses them, together with `minimum_executed_
+trades`/`minimum_evaluable_trades`/`minimum_evaluable_ratio`, to accept,
+reject, or rank that cohort. The metric computation itself exists and is
+unit-tested (`test_30`, `backtest/exits/taxonomy.py`); the orchestration
+across a real, multi-variant cohort does not. This is consistent with
+Batch 3 having never claimed to include cohort-level selection -- it is
+named here as a precise scope boundary, with its exact contractual
+reference (amendment section 11), for whichever stage takes it up next.
+
+**Conventions implemented by inference, not yet explicitly confirmed
+against contract text.** Each of these is a real, tested behavior of the
+current code; none is a verbatim quote from either amendment text or the
+(absent) base contract. Listed here once, together, so a future reviewer
+does not have to rediscover them from docstrings scattered across the
+tree:
+- **OR-combination of multiple `InvalidationCondition`s** for one exit
+  hypothesis (`discovery_integration.evaluate_invalidation_conditions()`):
+  any one triggering condition invalidates the whole position. The
+  function's own docstring states this is its documented inference, not a
+  spec quote, reasoned from `advance_intrabar()`'s own stop-before-target,
+  risk-side-wins precedent. Tested (`test_36`, multi-condition cases).
+- **Invalidation-detected-at-close vs. time-cap tie-break** and the general
+  "protective/risk side always wins" convention carried from `advance_
+  intrabar()` into the legacy engine's own invalidation-vs-cap ordering
+  (`legacy.advance_legacy_position_at_close()`).
+- **The derived entry-slippage formula** (`costs.apply_entry_slippage()`):
+  the amendment's section 9 gives an explicit exit-side slippage sub-formula
+  but never an entry-side one for `CostAssumptions.slippage_entry_bps` --
+  the entry-side formula is this codebase's own construction from the same
+  "slippage always makes the fill worse" principle, not a quoted formula.
+- **Routing an unresolvable exit-family variant to `SessionEngine` by
+  convention** (`engine._partition_entry_signals_by_family()`): a signal
+  whose variant cannot be resolved to a known exit family is routed to the
+  STOP_MANAGED path by default, where its own existing rejection logic
+  (`test_unresolvable_variant_id_is_rejected_before_any_price_read`) is
+  reused rather than duplicated for the legacy path. An implementation
+  convenience, not a documented contractual assignment.
+- **No single classify-and-evaluate dispatcher exists across a mixed-family
+  `result.positions`.** `run_stage()` returns `StopManagedPosition` and
+  `LegacyPosition` instances concatenated in one tuple; `taxonomy.
+  classify_position()`/`evaluate_stage_results()` handle the former,
+  `legacy.classify_legacy_position()`/`evaluate_legacy_stage_results()`
+  the latter -- a caller wanting one taxonomy pass over a mixed cohort must
+  call both, keyed on instance type. Both delivery review rounds treated
+  this as within scope (never raised as a finding); it is named here only
+  as a real, undocumented shape a future integration should know about.
+
+**Full suite at `9feb4a5`:** `PYTHONPATH=src:tests python3 -m pytest -q -rs`
+-> `696 passed, 1 skipped` in ~38s, re-run for this closure verification
+(not merely carried forward from the prior report) -- self-reported by
+Claude, not independently executed by Radu. The one skip is
+`tests/test_08_provider_consistency.py:12`, `PENDING_LEVEL_2_DATA`: only
+one data provider (yfinance) exists at Level 1, so cross-provider
+comparison has nothing to compare against; deferred to Level 2/3 per
+Radu's approval (2026-09-20). This skip predates Spec #005 entirely and is
+unrelated to any of the deliveries described in this document.
