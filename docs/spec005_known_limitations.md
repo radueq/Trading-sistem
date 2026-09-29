@@ -695,3 +695,138 @@ narrowed:**
   682 passed/1 skipped (44 new tests: 20 in `test_36`, 23 in `test_37`,
   1 in `test_38`) is this delivery's own self-reported full-suite result
   -- not independently verified.
+
+## Discovery Integration & Legacy Exits review corrections
+
+Review of `e5ee331` found the matching/legacy-engine substance real
+progress, but identified four defects and one further integration
+obligation. All five addressed here; none of the four already-delivered
+capabilities above (matching, invalidation evaluation, `LegacySessionEngine`,
+`run_stage()` partitioning/merge) were reopened beyond the specific fixes
+below.
+
+1. **A missing lane component produced a certain INVALIDATED instead of
+   UNKNOWN.** `evaluate_invalidation_conditions()`'s lane-based branch read
+   `state_signature.get(condition.lane) not in holds_labels` -- when the
+   lane was absent from the observation entirely (a real Discovery data
+   gap, e.g. insufficient history for that lane's own percentile window),
+   `.get()` returned `None`, and `None not in holds_labels` is `True`,
+   producing a false, certain `INVALIDATED` instead of `UNKNOWN`. Fixed:
+   the lane's PRESENCE in `state_signature` is checked first -- absent
+   contributes `saw_unknown` (the same mechanism already used for a
+   reason-code condition missing its `entry_observation`), never an
+   immediate `INVALIDATED`; a lane that IS present with a label outside
+   `holds_labels` is unaffected, still `INVALIDATED` immediately.
+   Regressions: `test_lane_missing_from_the_observation_is_unknown_not_
+   invalidated`, `test_a_definite_invalidation_from_another_lane_survives_
+   a_missing_lane` (`test_36`); `test_a_missing_lane_from_a_real_discovery_
+   observer_taints_the_engine_permanently` (`test_37`) exercises the SAME
+   fix end to end through `LegacySessionEngine` via the real
+   `build_invalidation_observer()` closure (not a hand-typed `"UNKNOWN"`
+   stub), confirming `invalidation_path_incomplete` is set and survives a
+   later, clean session.
+2. **Observations were never checked against the exact key they were
+   filed under.** Neither `build_entry_signals_from_observations()` nor
+   `build_invalidation_observer()` verified that
+   `observations_by_session[as_of][security_id]` actually carried THAT
+   `(security_id, as_of)` pair's own identity -- an observation dated or
+   attributed differently than its own dict key would silently drive a
+   match or an invalidation verdict off the wrong day or instrument.
+   `observations_by_session_from_caches()` had the same gap one level
+   down: it checked `cache.as_of` against its own dict key, but never
+   each individual observation INSIDE `cache.observations` against that
+   same `as_of`, and a dict comprehension keyed by `security_id` let a
+   duplicate silently overwrite instead of being rejected. Fixed: a new
+   `_validate_observations_by_session()` check runs eagerly, over the
+   WHOLE mapping, at the START of both builders (for
+   `build_invalidation_observer()`, at closure-BUILD time, never lazily
+   on first call); `observations_by_session_from_caches()` now checks
+   each observation's own `as_of` against its cache's `as_of` and rejects
+   two observations for the same `security_id` outright. Regressions
+   (`test_36`): `test_build_entry_signals_rejects_an_observation_dated_
+   differently_than_its_key`, `..._naming_a_different_security`,
+   `test_invalidation_observer_build_rejects_inconsistent_observations_
+   eagerly`, `test_observations_by_session_from_caches_rejects_an_
+   internally_mismatched_observation`, `..._rejects_duplicate_security_ids`.
+3. **The legacy partition's own validation ran after the STOP_MANAGED
+   simulation had already executed.** `run_stage()` constructed AND ran
+   `SessionEngine` (every PIT read and `invalidation_observer` call its
+   STOP_MANAGED signals need) BEFORE `LegacySessionEngine` was even
+   constructed -- so an inconsistent `legacy_signals` partition (the exact
+   entry_signals identity mismatch `ba38a4b` already guards against) only
+   surfaced AFTER that simulation ran, losing the "inconsistent input
+   rejected before any PIT read or position mutation" guarantee for the
+   mixed-cohort path specifically. Fixed: BOTH engines are now
+   CONSTRUCTED (where that validation happens, on a pure Python mapping,
+   with no PIT access at all) before EITHER is ever run. Regression
+   (`test_38`): `test_a_valid_stop_managed_signal_never_runs_when_a_
+   legacy_signal_fails_identity_validation` -- monkeypatches
+   `BoundedPITAccess`'s own read methods and the `invalidation_observer`
+   to raise if ever called, making "zero PIT reads, zero observer calls"
+   self-enforcing; independently confirmed to fail (catching the bug) when
+   temporarily re-ordered back to construct-then-immediately-run
+   `SessionEngine`.
+4. **`LegacySessionEngine` accepted non-finite/non-positive prices as
+   real fills.** `advance_legacy_position_at_close()` rejected only
+   `close_price is None` -- NaN, +/-infinity, zero, and negative all
+   passed straight through into a CLOSED/EVALUABLE tranche when an exit
+   was due. The same gap existed for the entry-day open (`_evaluate_
+   pending_entry()`), for the engine's own `_last_close_observation`
+   recording (a corrupted final-session close could become a still-open
+   position's censored mark), and for `evaluate_legacy_stage_results()`'s
+   own `final_closes` lookup. Fixed: a new `_is_usable_price()` helper
+   (finite AND strictly positive, mirroring `session.update_trailing_
+   stop_at_close()`'s own established rigor for `close_price`/`atr_today`)
+   is applied at all four points -- an unusable exit/entry price is
+   treated exactly like a missing bar (`EXIT_FAILED` / `ENTRY_NO_ENTRY_
+   BAR`), an unusable close is never recorded as a final-mark candidate
+   (falls through to the EXISTING `CENSORED_MARK_UNAVAILABLE` path, no
+   new machinery needed), and `evaluate_legacy_stage_results()` raises
+   rather than feeding a bad mark into `open_remainder_net_return()`.
+   Regressions (`test_37`): `test_advance_legacy_position_at_close_
+   rejects_non_finite_or_non_positive_close_prices` (NaN/+inf/-inf/0/-1,
+   direct function call), `test_entry_with_non_finite_or_non_positive_
+   open_is_rejected_as_no_entry_bar`, `test_final_close_with_a_non_finite_
+   price_is_never_used_as_the_censored_mark` (both through a real
+   `LegacySessionEngine` run), `test_evaluate_legacy_stage_results_
+   rejects_a_non_usable_final_mark`.
+5. **The real Discovery -> execution pipeline itself was never
+   traversed end to end.** `test_38`'s own hand-built observations proved
+   the matching/invalidation/execution WIRING but never `StageReadContext`
+   -> real `compute_discovery_observations()` -> the `HistoricalObservation
+   Cache` adapter -> `run_stage()`, in one run. Confirmed acceptable to
+   keep as a SEPARATE orchestrator (never fused into `run_stage()` itself)
+   -- `tests/spec005/test_39_real_discovery_pipeline_run_stage.py` is that
+   orchestrator, built once: roughly 1.5 years of smooth, deterministic
+   daily bars (no randomness) puts the real, unmodified Discovery
+   computation's own `volatility` lane at `EXTREME_COMPRESSION` throughout
+   (read off empirically from the actual computation, never assumed), then
+   a sharp price swing introduced on the stage's third session flips it to
+   `EXTREME_EXPANSION` -- a genuine state transition Discovery itself
+   detects (it also emits `STATE_TRANSITION` in `reason_codes`). A real
+   `StageReadContext` computes one `HistoricalObservationCache` per session
+   via the actual, unmodified `compute_discovery_observations()`;
+   `observations_by_session_from_caches()` reshapes them; `build_entry_
+   signals_from_observations()`/`build_invalidation_observer()` build
+   `run_stage()`'s inputs from that REAL output; `run_stage()` runs
+   unmodified. The SIGNAL_INVALIDATION position opens on the real match and
+   closes exactly on the real state-transition session, with a hand-
+   verifiable +30% zero-cost return. `test_38`'s own hand-built-observation
+   test is kept unchanged, for the exact economic-formula verification a
+   1.5-year synthetic price history would make unwieldy to hand-derive.
+
+`test_39`'s own price path also confirms an incidental, harmless
+byproduct of feeding a real, multi-day-persistent Discovery state into
+`build_entry_signals_from_observations()`: the shared entry condition
+holds on two consecutive sessions (D1 and D2), so the hypothesis's own
+auto-materialized TIME_EXIT(1) sibling variant (which exits on its very
+own entry day, freeing its `(security_id, strategy_variant_id)` key
+immediately) opens a SECOND, independent position from the second day's
+signal -- expected, correct behavior of the "one signal per day the
+condition holds, already-open positions are skipped" design, not a
+defect; the test asserts the resulting position count explicitly rather
+than silently assuming two.
+
+Full suite after these five fixes: 696 passed, 1 skipped (was 682/1;
+14 new tests: 7 in `test_36`, 5 in `test_37`, 1 in `test_38`, 1 new file
+`test_39`) -- self-reported, not independently verified.

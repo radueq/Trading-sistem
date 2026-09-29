@@ -125,16 +125,25 @@ def evaluate_invalidation_conditions(
     signal always wins).
 
     Returns `UNKNOWN` (never a false negative) when `current_observation`
-    is missing entirely, or when a reason-code condition cannot be
-    evaluated for lack of `entry_observation` -- but an INVALIDATED result
-    from any OTHER, evaluable condition is still reported: a definite
-    invalidation is never suppressed by an unrelated data gap."""
+    is missing entirely, when the tracked LANE ITSELF is absent from
+    `current_observation.state_signature` (GPT review finding #1: a lane
+    a security's own feature computation could not produce -- e.g.
+    insufficient history for that lane's percentile window -- is a DATA
+    GAP, structurally identical to a missing observation altogether, never
+    evidence that the label left `holds_labels`), or when a reason-code
+    condition cannot be evaluated for lack of `entry_observation` -- but an
+    INVALIDATED result from any OTHER, evaluable condition is still
+    reported: a definite invalidation is never suppressed by an unrelated
+    data gap."""
     if current_observation is None:
         return UNKNOWN
     saw_unknown = False
     for condition in conditions:
         if condition.lane is not None:
-            if current_observation.state_signature.get(condition.lane) not in (condition.holds_labels or ()):
+            if condition.lane not in current_observation.state_signature:
+                saw_unknown = True
+                continue
+            if current_observation.state_signature[condition.lane] not in (condition.holds_labels or ()):
                 return INVALIDATED
         else:
             if entry_observation is None:
@@ -145,14 +154,47 @@ def evaluate_invalidation_conditions(
     return UNKNOWN if saw_unknown else VALID_HOLD
 
 
+def _validate_observations_by_session(observations_by_session: ObservationsBySession) -> None:
+    """GPT review finding #2: neither builder below checked that an
+    observation filed under `observations_by_session[as_of][security_id]`
+    actually IS that exact `(security_id, as_of)` pair's own observation.
+    Inconsistent input -- an observation carrying a DIFFERENT `as_of` or
+    `security_id` than the key it is filed under, however it got there --
+    could otherwise silently produce a signal or an invalidation verdict
+    grounded in the wrong day or the wrong instrument (repro: key
+    `(SEC, 2024-01-01)` holding an observation actually dated
+    `2024-06-01`). Checked eagerly, over the WHOLE mapping, before either
+    builder does any matching/evaluation at all -- mirrors `SessionEngine.
+    __init__()`'s own entry_signals identity-mismatch discipline (Session
+    Engine & Integration review, round-2 follow-up), applied here to
+    observations instead of signals."""
+    for as_of, observations_by_security in observations_by_session.items():
+        for security_id, observation in observations_by_security.items():
+            if observation.security_id != security_id or observation.as_of != as_of:
+                raise ValueError(
+                    f"observations_by_session[{as_of!r}][{security_id!r}] holds a DiscoveryObservation "
+                    f"for (security_id={observation.security_id!r}, as_of={observation.as_of!r}) instead "
+                    f"-- every observation must match the exact (security_id, session_date) key it is "
+                    f"filed under, rejected before any matching or invalidation evaluation ever runs"
+                )
+
+
 def observations_by_session_from_caches(caches: Mapping[str, HistoricalObservationCache]) -> dict[str, dict[str, DiscoveryObservation]]:
     """Thin reshaping adapter over Batch 2's already-accepted
     `HistoricalObservationCache` (produced by `backtest.data.context.
     StageReadContext.get_or_compute_observations()`, one call per session
-    date) into the `ObservationsBySession` shape the two functions above
-    and the builder below consume -- the caller loops `session_dates`
-    itself and supplies one cache entry per date; this function does no
-    PIT access, no caching, and no Discovery computation of its own."""
+    date) into the `ObservationsBySession` shape the two functions below
+    consume -- the caller loops `session_dates` itself and supplies one
+    cache entry per date; this function does no PIT access, no caching,
+    and no Discovery computation of its own.
+
+    GPT review finding #2: the ORIGINAL version checked only `cache.as_of`
+    against its own dict key -- never each individual observation INSIDE
+    `cache.observations` against that same `as_of`, and never rejected two
+    observations for the SAME `security_id` inside one cache entry (a
+    dict comprehension keyed by `security_id` would silently let the LAST
+    one win). Both are checked here now, before the reshaped mapping is
+    ever returned."""
     result: dict[str, dict[str, DiscoveryObservation]] = {}
     for as_of, cache in caches.items():
         if cache.as_of != as_of:
@@ -160,7 +202,22 @@ def observations_by_session_from_caches(caches: Mapping[str, HistoricalObservati
                 f"caches key {as_of!r} does not match its own HistoricalObservationCache.as_of={cache.as_of!r} "
                 f"-- caches must be keyed by the exact as_of each entry was computed for"
             )
-        result[as_of] = {o.security_id: o for o in cache.observations}
+        by_security: dict[str, DiscoveryObservation] = {}
+        for observation in cache.observations:
+            if observation.as_of != as_of:
+                raise ValueError(
+                    f"HistoricalObservationCache for as_of={as_of!r} contains an observation dated "
+                    f"{observation.as_of!r} (security_id={observation.security_id!r}) -- every observation "
+                    f"inside a cache entry must match that entry's own as_of"
+                )
+            if observation.security_id in by_security:
+                raise ValueError(
+                    f"HistoricalObservationCache for as_of={as_of!r} contains two observations for "
+                    f"security_id={observation.security_id!r} -- duplicate observations for the same "
+                    f"instrument/session are rejected outright, never silently overwritten"
+                )
+            by_security[observation.security_id] = observation
+        result[as_of] = by_security
     return result
 
 
@@ -185,7 +242,12 @@ def build_entry_signals_from_observations(
     `run_stage()`'s own family-partitioning then routes each signal to
     whichever engine (`SessionEngine` or `LegacySessionEngine`) actually
     implements that variant's exit family -- this function does not need
-    to know or care which."""
+    to know or care which.
+
+    Validates `observations_by_session`'s own (security_id, as_of,
+    observation) identity FIRST (GPT review finding #2), before any
+    matching runs."""
+    _validate_observations_by_session(observations_by_session)
     signals: dict[tuple[str, str, str], EntrySignal] = {}
     for session_date, observations_by_security in observations_by_session.items():
         for hypothesis_id in accepted_hypothesis_ids:
@@ -222,7 +284,14 @@ def build_invalidation_observer(
     engine itself opened, since opening already required a resolvable,
     in-cohort variant) is treated as `UNKNOWN` rather than raising --
     an invalidation OBSERVER's job is to report what it can see, never to
-    re-litigate an entry decision that already happened."""
+    re-litigate an entry decision that already happened.
+
+    Validates `observations_by_session`'s own (security_id, as_of,
+    observation) identity FIRST (GPT review finding #2), at closure-
+    BUILD time -- before the closure is ever handed to an engine, let
+    alone called -- never lazily on the first call."""
+    _validate_observations_by_session(observations_by_session)
+
     def observer(position, session_date: str) -> str:
         variant = registry.get_variant(position.strategy_variant_id)
         if variant is None:

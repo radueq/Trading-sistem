@@ -100,6 +100,24 @@ def test_lane_condition_invalidates_when_label_leaves_holds_set():
     assert evaluate_invalidation_conditions(broken, None, conditions) == INVALIDATED
 
 
+def test_lane_missing_from_the_observation_is_unknown_not_invalidated():
+    """GPT review finding #1: a lane the security's own feature
+    computation could not produce (e.g. insufficient history for that
+    lane's percentile window) is a DATA GAP, not evidence the label left
+    `holds_labels` -- `state_signature={}` (the lane absent entirely)
+    must never read as `None not in holds_labels` -> INVALIDATED."""
+    conditions = (InvalidationCondition(lane="momentum", holds_labels=("HIGH", "VERY_HIGH")),)
+    observation_missing_lane = _obs("S", "2024-01-02", {})
+    assert evaluate_invalidation_conditions(observation_missing_lane, None, conditions) == UNKNOWN
+
+
+def test_a_definite_invalidation_from_another_lane_survives_a_missing_lane():
+    missing_lane_cond = InvalidationCondition(lane="momentum", holds_labels=("HIGH", "VERY_HIGH"))
+    broken_lane_cond = InvalidationCondition(lane="relative_strength", holds_labels=("HIGH",))
+    current = _obs("S", "2024-01-05", {"relative_strength": "LOW"})  # "momentum" absent entirely
+    assert evaluate_invalidation_conditions(current, None, (missing_lane_cond, broken_lane_cond)) == INVALIDATED
+
+
 def test_reason_code_condition_triggers_on_presence_flip():
     appears = InvalidationCondition(reason_code=ReasonCode.STATE_TRANSITION.value, triggers_on_presence=True)
     entry_obs = _obs("S", "2024-01-01", reason_codes=[])
@@ -249,3 +267,68 @@ def test_invalidation_observer_reports_unknown_for_an_unresolvable_variant():
     observer = build_invalidation_observer({}, registry)
     position = _FakePosition("SEC_A", "NOT_A_REAL_VARIANT", "2024-01-01")
     assert observer(position, "2024-01-05") == UNKNOWN
+
+
+# -- GPT review finding #2: observation identity vs. its own key --------
+
+def test_build_entry_signals_rejects_an_observation_dated_differently_than_its_key():
+    registry = HypothesisRegistry()
+    hid, _vid = build_registered_stop_managed_hypothesis(registry, signature_id="SIG_DATE_MISMATCH")
+    # Key says 2024-01-01 / SEC_A; the observation inside actually claims
+    # a completely different date -- future-leakage-shaped input.
+    mismatched = _obs("SEC_A", "2024-06-01", {"volatility": "COMPRESSION"})
+    observations_by_session = {"2024-01-01": {"SEC_A": mismatched}}
+    try:
+        build_entry_signals_from_observations(observations_by_session, registry, frozenset({hid}))
+        assert False, "expected ValueError"
+    except ValueError as e:
+        assert "must match the exact" in str(e)
+
+
+def test_build_entry_signals_rejects_an_observation_naming_a_different_security():
+    registry = HypothesisRegistry()
+    hid, _vid = build_registered_stop_managed_hypothesis(registry, signature_id="SIG_SEC_MISMATCH")
+    mismatched = _obs("SOME_OTHER_SECURITY", "2024-01-01", {"volatility": "COMPRESSION"})
+    observations_by_session = {"2024-01-01": {"SEC_A": mismatched}}
+    try:
+        build_entry_signals_from_observations(observations_by_session, registry, frozenset({hid}))
+        assert False, "expected ValueError"
+    except ValueError as e:
+        assert "must match the exact" in str(e)
+
+
+def test_invalidation_observer_build_rejects_inconsistent_observations_eagerly():
+    """Validated at CLOSURE-BUILD time -- before the closure is ever
+    handed to an engine, let alone called."""
+    registry = HypothesisRegistry()
+    mismatched = _obs("SEC_A", "2024-06-01", {"relative_strength": "HIGH"})
+    observations_by_session = {"2024-01-01": {"SEC_A": mismatched}}
+    try:
+        build_invalidation_observer(observations_by_session, registry)
+        assert False, "expected ValueError"
+    except ValueError as e:
+        assert "must match the exact" in str(e)
+
+
+def test_observations_by_session_from_caches_rejects_an_internally_mismatched_observation():
+    """The cache-level adapter's own gap: the ORIGINAL version checked
+    only `cache.as_of` against its dict key, never each individual
+    observation INSIDE `cache.observations` against that same `as_of`."""
+    mismatched = _obs("SEC_A", "2024-06-01", {"volatility": "COMPRESSION"})  # cache says 2024-01-01
+    cache = _cache("2024-01-01", (mismatched,))
+    try:
+        observations_by_session_from_caches({"2024-01-01": cache})
+        assert False, "expected ValueError"
+    except ValueError as e:
+        assert "must match that entry's own as_of" in str(e)
+
+
+def test_observations_by_session_from_caches_rejects_duplicate_security_ids():
+    dup_a = _obs("SEC_A", "2024-01-01", {"volatility": "COMPRESSION"})
+    dup_b = _obs("SEC_A", "2024-01-01", {"volatility": "EXPANSION"})
+    cache = _cache("2024-01-01", (dup_a, dup_b))
+    try:
+        observations_by_session_from_caches({"2024-01-01": cache})
+        assert False, "expected ValueError"
+    except ValueError as e:
+        assert "two observations" in str(e)

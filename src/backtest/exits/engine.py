@@ -623,23 +623,37 @@ def run_stage(
 
     stop_managed_signals, legacy_signals = _partition_entry_signals_by_family(entry_signals, registry)
 
-    pit = BoundedPITAccess(conn, boundary)
-    engine = SessionEngine(
-        pit, session_dates, registry, frozenset(plan.hypothesis_cohort_ids), stop_managed_signals, invalidation_observer,
-        plan.cost_assumptions, same_day_split_evidence, volatility_config, stage_end_date=boundary.max_as_of,
-    )
-    sm_result = engine.run()
+    # GPT review finding #3: BOTH engines must be CONSTRUCTED (which
+    # validates each partition's own entry_signals identity/ordering/
+    # stage-bound guards) before EITHER is ever run -- constructing then
+    # immediately running SessionEngine let a bad legacy_signals partition
+    # surface only after the STOP_MANAGED simulation (PIT reads,
+    # invalidation_observer calls) had already executed, losing the
+    # "inconsistent input rejected before any PIT read or position
+    # mutation" guarantee `ba38a4b` established for entry_signals identity
+    # mismatches. Neither constructor performs a PIT read or calls
+    # invalidation_observer itself (both only validate their own
+    # `entry_signals` partition, a pure Python mapping) -- so ordering
+    # these two constructions before both `.run()` calls costs nothing
+    # and closes the gap completely.
 
     # Local import: avoids a module-load-time cycle (backtest.exits.legacy
     # imports EntryDisposition/ENTRY_EXECUTED from THIS module) while
     # SessionEngine's own class body above stays completely untouched.
     from backtest.exits.legacy import LegacySessionEngine
 
+    pit = BoundedPITAccess(conn, boundary)
+    engine = SessionEngine(
+        pit, session_dates, registry, frozenset(plan.hypothesis_cohort_ids), stop_managed_signals, invalidation_observer,
+        plan.cost_assumptions, same_day_split_evidence, volatility_config, stage_end_date=boundary.max_as_of,
+    )
     legacy_pit = BoundedPITAccess(conn, boundary)
     legacy_engine = LegacySessionEngine(
         legacy_pit, session_dates, registry, frozenset(plan.hypothesis_cohort_ids), legacy_signals, invalidation_observer,
         plan.cost_assumptions, same_day_split_evidence, stage_end_date=boundary.max_as_of,
     )
+
+    sm_result = engine.run()
     legacy_result = legacy_engine.run()
 
     merged_final_closes: dict[str, Optional[float]] = dict(sm_result.final_closes)

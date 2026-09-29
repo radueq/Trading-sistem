@@ -51,6 +51,7 @@ problem `StopManagedPosition` does.
 from __future__ import annotations
 
 import dataclasses
+import math
 from datetime import date
 from typing import Callable, Mapping, Optional, Sequence
 
@@ -103,6 +104,17 @@ def _default_same_day_evidence(_security_id: str, _session_date: str) -> frozens
 
 def _calendar_days(start: str, end: str) -> int:
     return (date.fromisoformat(end) - date.fromisoformat(start)).days
+
+
+def _is_usable_price(price: Optional[float]) -> bool:
+    """GPT review finding #4: a price used for an entry fill, an exit
+    fill, or a still-open position's final mark must be finite AND
+    strictly positive -- mirrors `session.update_trailing_stop_at_close()`'s
+    own established rigor for `close_price`/`atr_today` (STOP_MANAGED
+    review round 2, finding #6a: "not just `None`"), applied here to
+    every price a `LegacyPosition` ever reads. `None` itself is also
+    rejected by this same check (never usable)."""
+    return price is not None and math.isfinite(price) and price > 0
 
 
 def reconcile_split_for_legacy_position(
@@ -196,7 +208,11 @@ def advance_legacy_position_at_close(
     `invalidation_path_incomplete` PERMANENTLY, mirroring that same
     persistent-incompleteness rule (section 5/10 of the amendment) for the
     identical underlying reason: the holding condition's own forward path
-    is not fully demonstrated, whatever the root cause."""
+    is not fully demonstrated, whatever the root cause. `close_price` is
+    validated via `_is_usable_price()` (GPT review finding #4) -- a
+    NaN/infinite/zero/negative value is treated exactly like a missing
+    bar (EXIT_FAILED), never as a usable fill; a corrupted price is no
+    less "no real exit available" than an absent one."""
     if position.closed or position.exit_failed:
         return position
 
@@ -217,7 +233,7 @@ def advance_legacy_position_at_close(
     if not (invalidated_now or time_cap_reached):
         return pos
 
-    if close_price is None:
+    if not _is_usable_price(close_price):
         return dataclasses.replace(pos, exit_failed=True, exit_failed_reason=REASON_NO_EXIT_BAR)
 
     reason = (
@@ -296,10 +312,13 @@ def evaluate_legacy_stage_results(
             ))
             continue
         mark_final = final_closes.get(position.security_id)
-        if mark_final is None:
+        if not _is_usable_price(mark_final):
             raise ValueError(
-                f"position {position.security_id!r} was classified {outcome.evaluability} but has no "
-                f"final mark in final_closes -- outcomes must be derived from THIS SAME final_closes mapping"
+                f"position {position.security_id!r} was classified {outcome.evaluability} but "
+                f"final_closes holds {mark_final!r} for it -- not a finite, strictly positive mark "
+                f"(GPT review finding #4). Either no mark exists (outcomes must be derived from THIS "
+                f"SAME final_closes mapping) or the mapping itself carries a corrupted value -- both "
+                f"are rejected rather than fed into open_remainder_net_return()"
             )
         holding_days = (date.fromisoformat(stage_end_date) - date.fromisoformat(position.entry_date)).days
         results.append(open_remainder_net_return(
@@ -415,7 +434,15 @@ class LegacySessionEngine:
                 security_id, _variant_id = key
                 bar = _find_bar(bars_for(security_id), today)
                 close_price = bar.split_adjusted_close if bar is not None else None
-                if close_price is not None:
+                # GPT review finding #4: a NaN/infinite/zero/negative close
+                # is exactly as unusable as a missing one for the "final
+                # mark" purpose -- recording it here would let a corrupted
+                # price silently become a still-open position's censored
+                # mark. Treating it as absent lets the EXISTING `final_
+                # closes[security_id] = None` / `REASON_CENSORED_MARK_
+                # UNAVAILABLE` path (below, and in `classify_legacy_
+                # position()`) catch it, with no new machinery needed.
+                if _is_usable_price(close_price):
                     self._last_close_observation[security_id] = (close_price, today)
 
                 invalidation_status = None
@@ -479,7 +506,9 @@ class LegacySessionEngine:
 
         bar = _find_bar(bars_for(security_id), entry_date)
         raw_open = bar.split_adjusted_open if bar is not None else None
-        if raw_open is None:
+        # GPT review finding #4: a NaN/infinite/zero/negative open is no
+        # more a usable entry bar than a missing one.
+        if not _is_usable_price(raw_open):
             self._dispositions.append(EntryDisposition(security_id, signal.strategy_variant_id, signal_date, entry_date, ENTRY_NO_ENTRY_BAR))
             return
 

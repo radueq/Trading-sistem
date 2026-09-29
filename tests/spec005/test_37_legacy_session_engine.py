@@ -12,9 +12,13 @@ from __future__ import annotations
 from data_foundation.model import repository as repo
 from data_foundation.model.entities import PriceBar
 
+from discovery.models.entities import DescriptiveMetrics, DiscoveryObservation
+
+from hypothesis.models.entities import InvalidationCondition
 from hypothesis.registry.hypotheses import HypothesisRegistry
 
 from backtest.exits.costs import apply_entry_slippage, apply_exit_slippage, tranche_net_return
+from backtest.exits.discovery_integration import build_invalidation_observer
 from backtest.exits.engine import ENTRY_EXECUTED, EntryDisposition, EntrySignal
 from backtest.exits.entities import (
     ENTRY_NO_ENTRY_BAR,
@@ -334,6 +338,86 @@ def test_time_exit_due_on_a_missing_bar_is_exit_failed(conn, now):
     assert outcome.evaluability == EVALUABILITY_UNEVALUABLE
 
 
+def test_advance_legacy_position_at_close_rejects_non_finite_or_non_positive_close_prices():
+    """GPT review finding #4: `advance_legacy_position_at_close()` used to
+    reject only `close_price is None` -- NaN, +/-inf, zero, and negative
+    all passed straight through into a CLOSED/EVALUABLE tranche. Every
+    one of those is exactly as unusable as a missing bar for the exit
+    that was actually due."""
+    base = LegacyPosition(
+        security_id="S", strategy_variant_id="V", exit_family="TIME_EXIT", direction="LONG",
+        signal_date=D1, entry_date=D2, entry_session_index=1, entry_fill_price=100.0, time_exit_bars=1,
+    )
+    for bad_price in (float("nan"), float("inf"), float("-inf"), 0.0, -1.0):
+        new_pos = advance_legacy_position_at_close(base, D2, session_index=1, close_price=bad_price, invalidation_status=None)
+        assert new_pos.exit_failed is True, f"price {bad_price!r} was wrongly accepted as a usable exit fill"
+        assert new_pos.exit_failed_reason == REASON_NO_EXIT_BAR
+        assert new_pos.closed is False
+
+
+def test_entry_with_non_finite_or_non_positive_open_is_rejected_as_no_entry_bar(conn, now):
+    sec = make_security(conn, "spec005:LEGACY_BAD_ENTRY_PRICE", now)
+    _insert_bars(conn, sec, now, [
+        (D1, 100.0, 101.0, 99.0, 100.0),
+        (D2, float("nan"), 101.0, 99.0, 100.0),  # entry day's own open is NaN
+        (D3, 100.0, 106.0, 99.0, 105.0),
+    ])
+    registry = HypothesisRegistry()
+    hid, vid = build_registered_time_exit_hypothesis(registry, time_exit_bars=3, signature_id="SIG_LEGACY_BAD_ENTRY")
+    signal = EntrySignal(security_id=sec, strategy_variant_id=vid)
+    engine = LegacySessionEngine(
+        pit=_UnboundedAccess(conn), session_dates=(D1, D2, D3), registry=registry,
+        accepted_hypothesis_ids=frozenset({hid}), entry_signals={(sec, vid, D1): signal},
+        invalidation_observer=_never_invalidated, cost_assumptions=_ZERO_COSTS,
+    )
+    result = engine.run()
+    assert result.positions == ()
+    assert result.entry_dispositions == (EntryDisposition(sec, vid, D1, D2, ENTRY_NO_ENTRY_BAR),)
+
+
+def test_final_close_with_a_non_finite_price_is_never_used_as_the_censored_mark(conn, now):
+    """The engine's own `_last_close_observation` recording must never
+    accept a NaN/infinite/zero/negative close as a usable final mark --
+    treated exactly like a missing bar, so `final_closes[security_id]`
+    comes back `None` (never the corrupted value) and classification
+    correctly reports CENSORED_MARK_UNAVAILABLE."""
+    sec = make_security(conn, "spec005:LEGACY_BAD_FINAL_MARK", now)
+    _insert_bars(conn, sec, now, [
+        (D1, 100.0, 101.0, 99.0, 100.0),
+        (D2, 100.0, 101.0, 99.0, 100.0),
+        (D3, 100.0, 106.0, 99.0, float("nan")),  # stage's own last close is corrupted
+    ])
+    registry = HypothesisRegistry()
+    hid, vid = build_registered_time_exit_hypothesis(registry, time_exit_bars=10, signature_id="SIG_LEGACY_BAD_FINALMARK")
+    signal = EntrySignal(security_id=sec, strategy_variant_id=vid)
+    engine = LegacySessionEngine(
+        pit=_UnboundedAccess(conn), session_dates=(D1, D2, D3), registry=registry,
+        accepted_hypothesis_ids=frozenset({hid}), entry_signals={(sec, vid, D1): signal},
+        invalidation_observer=_never_invalidated, cost_assumptions=_ZERO_COSTS,
+    )
+    result = engine.run()
+    pos = result.positions[0]
+    assert pos.closed is False
+    assert result.final_closes.get(sec) is None
+    outcome = classify_legacy_position(pos, stage_end_reached=True, final_mark_available=result.final_closes.get(sec) is not None)
+    assert outcome.lifecycle == LIFECYCLE_CENSORED_AT_HORIZON
+    assert outcome.evaluability == EVALUABILITY_UNEVALUABLE
+
+
+def test_evaluate_legacy_stage_results_rejects_a_non_usable_final_mark():
+    pos = LegacyPosition(
+        security_id="S", strategy_variant_id="V", exit_family="TIME_EXIT", direction="LONG",
+        signal_date=D1, entry_date=D2, entry_session_index=1, entry_fill_price=100.0, time_exit_bars=10,
+    )
+    outcome = classify_legacy_position(pos, stage_end_reached=True, final_mark_available=True)
+    for bad_mark in (float("nan"), float("inf"), 0.0, -5.0):
+        try:
+            evaluate_legacy_stage_results([pos], [outcome], _ZERO_COSTS, D3, {"S": bad_mark})
+            assert False, f"expected ValueError for final mark {bad_mark!r}"
+        except ValueError as e:
+            assert "final_closes" in str(e)
+
+
 def test_time_exit_still_short_of_its_bar_count_is_censored_at_horizon(conn, now):
     sec = make_security(conn, "spec005:LEGACY_TE_CENSORED", now)
     _insert_bars(conn, sec, now, [
@@ -458,6 +542,59 @@ def test_unknown_invalidation_status_taints_the_position_permanently(conn, now):
     assert pos.invalidation_path_incomplete is True
     outcome = classify_legacy_position(pos, stage_end_reached=True)
     assert outcome.lifecycle == LIFECYCLE_CLOSED
+    assert outcome.evaluability == EVALUABILITY_UNEVALUABLE
+    assert outcome.reason == REASON_INVALIDATION_PATH_INCOMPLETE
+
+
+def _obs(security_id: str, as_of: str, lane_states: dict) -> DiscoveryObservation:
+    return DiscoveryObservation(
+        security_id=security_id, ticker_as_of=security_id, as_of=as_of, timeframe="1D",
+        feature_vector={}, normalized_feature_vector={}, state_signature=lane_states,
+        transition_vector={}, active_lanes=list(lane_states.keys()),
+        descriptive_metrics=DescriptiveMetrics(extremeness=0.0, persistence=1, state_frequency=None, sample_count=1, support_status="SUFFICIENT"),
+        reason_codes=[], config_version="cfg_test", feature_engine_version="v1.0.0", discovery_engine_version="v1.0.0",
+    )
+
+
+def test_a_missing_lane_from_a_real_discovery_observer_taints_the_engine_permanently(conn, now):
+    """GPT review finding #1, exercised end to end through the REAL
+    `discovery_integration.build_invalidation_observer()` wired into
+    `LegacySessionEngine` (not a hand-typed 'UNKNOWN' stub): a session
+    whose observation exists but is simply missing the tracked lane
+    entirely (a real Discovery data gap, not a hand-typed sentinel) must
+    still taint `invalidation_path_incomplete` permanently -- surviving
+    even a later, clean session where the lane reappears within
+    `holds_labels`."""
+    sec = make_security(conn, "spec005:LEGACY_REAL_UNKNOWN", now)
+    _insert_bars(conn, sec, now, [
+        (D1, 100.0, 101.0, 99.0, 100.0),
+        (D2, 100.0, 101.0, 99.0, 100.0),  # entry, holding bar 1 -- momentum=HIGH
+        (D3, 100.0, 106.0, 99.0, 105.0),  # holding bar 2 -- "momentum" absent entirely from the observation
+        (D4, 105.0, 111.0, 104.0, 110.0),  # holding bar 3 = max_holding_bars -- momentum=HIGH again, forced exit
+    ])
+    registry = HypothesisRegistry()
+    hid, vid = build_registered_signal_invalidation_hypothesis(
+        registry, max_holding_bars=3, signature_id="SIG_LEGACY_REAL_UNKNOWN",
+        invalidation_conditions=(InvalidationCondition(lane="momentum", holds_labels=("HIGH",)),),
+    )
+    signal = EntrySignal(security_id=sec, strategy_variant_id=vid)
+    observations_by_session = {
+        D2: {sec: _obs(sec, D2, {"momentum": "HIGH"})},
+        D3: {sec: _obs(sec, D3, {})},  # "momentum" missing entirely -- a real data gap
+        D4: {sec: _obs(sec, D4, {"momentum": "HIGH"})},
+    }
+    observer = build_invalidation_observer(observations_by_session, registry)
+    engine = LegacySessionEngine(
+        pit=_UnboundedAccess(conn), session_dates=(D1, D2, D3, D4), registry=registry,
+        accepted_hypothesis_ids=frozenset({hid}), entry_signals={(sec, vid, D1): signal},
+        invalidation_observer=observer, cost_assumptions=_ZERO_COSTS,
+    )
+    result = engine.run()
+    pos = result.positions[0]
+    assert pos.closed is True  # forced exit by the time cap, never a false INVALIDATED from the gap
+    assert pos.close_tranche.exit_reason == EXIT_REASON_MAX_HOLDING_BARS_FORCED_EXIT
+    assert pos.invalidation_path_incomplete is True
+    outcome = classify_legacy_position(pos, stage_end_reached=True)
     assert outcome.evaluability == EVALUABILITY_UNEVALUABLE
     assert outcome.reason == REASON_INVALIDATION_PATH_INCOMPLETE
 

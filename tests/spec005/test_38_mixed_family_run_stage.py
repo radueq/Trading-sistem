@@ -16,6 +16,8 @@ from __future__ import annotations
 
 from datetime import date
 
+import pytest
+
 from data_foundation.model import repository as repo
 from data_foundation.model.entities import PriceBar
 
@@ -23,9 +25,10 @@ from discovery.models.entities import DescriptiveMetrics, DiscoveryObservation
 
 from hypothesis.registry.hypotheses import HypothesisRegistry
 
+from backtest.data.pit_access import BoundedPITAccess
 from backtest.exits.costs import apply_entry_slippage, apply_exit_slippage, open_remainder_net_return, tranche_net_return
 from backtest.exits.discovery_integration import build_entry_signals_from_observations, build_invalidation_observer
-from backtest.exits.engine import evaluate_stage_results, run_stage
+from backtest.exits.engine import EntrySignal, evaluate_stage_results, run_stage
 from backtest.exits.entities import (
     EVALUABILITY_EVALUABLE,
     EXIT_REASON_SIGNAL_INVALIDATION,
@@ -37,9 +40,10 @@ from backtest.exits.legacy import classify_legacy_position, evaluate_legacy_stag
 from backtest.exits.taxonomy import classify_position
 from backtest.models.entities import FORMATION_SELECTION, CostAssumptions
 
+from spec005.fixtures.legacy_variants import build_registered_time_exit_hypothesis
 from spec005.fixtures.mixed_family_variants import build_registered_mixed_family_hypothesis
 from spec005.fixtures.pit_universe import make_security
-from spec005.fixtures.stop_managed_variants import build_accepted_stop_managed_plan
+from spec005.fixtures.stop_managed_variants import build_accepted_stop_managed_plan, build_registered_stop_managed_hypothesis
 
 L1, L2, L3 = "2024-03-29", "2024-03-30", "2024-03-31"
 D1, D2, D3, D4, D5, D6 = "2024-04-01", "2024-04-02", "2024-04-03", "2024-04-04", "2024-04-05", "2024-04-06"
@@ -173,3 +177,52 @@ def test_mixed_cohort_run_stage_executes_all_three_families_with_correct_costs(c
     holding_days = (date.fromisoformat(STAGE_END_DATE) - date.fromisoformat(sm_pos.entry_date)).days
     sm_expected = open_remainder_net_return("LONG", expected_entry_fill, 100.0, 0.001, 0.0, holding_days)
     assert sm_return == sm_expected
+
+
+def test_a_valid_stop_managed_signal_never_runs_when_a_legacy_signal_fails_identity_validation(conn, now):
+    """GPT review finding #3: `run_stage()` used to construct AND run
+    `SessionEngine` (including every PIT read/invalidation_observer call
+    its STOP_MANAGED signal requires) BEFORE `LegacySessionEngine` was
+    even constructed -- so a legacy_signals partition that fails its own
+    entry_signals identity-mismatch check (the exact guarantee `ba38a4b`
+    established) only surfaced AFTER the STOP_MANAGED simulation had
+    already run. Both engines must be CONSTRUCTED (which is where that
+    validation happens, and needs no PIT access at all) before EITHER is
+    ever run. Monkeypatching `BoundedPITAccess`'s own read methods to
+    raise, plus an observer that raises if ever called, makes "zero PIT
+    reads, zero observer calls" a self-enforcing assertion rather than an
+    inference from the final result."""
+    def _raise(*_args, **_kwargs):
+        raise AssertionError("PIT must never be read before every entry_signals partition passes construction-time validation")
+
+    original_get_prices = BoundedPITAccess.get_price_series_as_of
+    original_get_actions = BoundedPITAccess.get_corporate_actions_as_of
+    BoundedPITAccess.get_price_series_as_of = _raise
+    BoundedPITAccess.get_corporate_actions_as_of = _raise
+    try:
+        def _raising_observer(position, session_date):
+            raise AssertionError("invalidation_observer must never be called before every entry_signals partition passes construction-time validation")
+
+        sec = make_security(conn, "spec005:MIXED_VALIDATION_ORDER", now)
+        registry = HypothesisRegistry()
+        hid_sm, vid_sm = build_registered_stop_managed_hypothesis(registry, signature_id="SIG_ORDER_SM")
+        hid_te_a, vid_te_a = build_registered_time_exit_hypothesis(registry, time_exit_bars=3, signature_id="SIG_ORDER_TE_A")
+        hid_te_b, vid_te_b = build_registered_time_exit_hypothesis(registry, time_exit_bars=3, signature_id="SIG_ORDER_TE_B")
+
+        entry_signals = {
+            (sec, vid_sm, D1): EntrySignal(security_id=sec, strategy_variant_id=vid_sm),
+            (sec, vid_te_b, D1): EntrySignal(security_id=sec, strategy_variant_id=vid_te_a),  # key says B, value says A
+        }
+        plan, profile, calendar = build_accepted_stop_managed_plan(
+            [hid_sm, hid_te_a, hid_te_b], formation_start=D1, formation_end=D3,
+            validation_start="2024-05-01", validation_end="2024-05-31", locked_oos_start="2024-06-01",
+            coverage_start=D1, coverage_end=D3, calendar_session_dates=(D1, D2, D3),
+        )
+        with pytest.raises(ValueError, match="does not match its own EntrySignal's identity"):
+            run_stage(
+                plan, registry, conn, FORMATION_SELECTION, calendar,
+                entry_signals=entry_signals, invalidation_observer=_raising_observer, stop_managed_profile=profile,
+            )
+    finally:
+        BoundedPITAccess.get_price_series_as_of = original_get_prices
+        BoundedPITAccess.get_corporate_actions_as_of = original_get_actions
