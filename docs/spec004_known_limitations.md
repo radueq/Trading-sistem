@@ -13,7 +13,8 @@ the temporally-stratified baseline's weighted-average-of-per-bin-
 statistics approximation, TIME_BLOCK bootstrap being a fixed/non-
 overlapping block bootstrap not a moving one, the deferred joint/paired
 resampling revisit) are not re-litigated here -- see
-`docs/spec001_known_limitations.md`, `docs/spec002_known_limitations.md`,
+`docs/known_limitations.md` (Spec #001 -- predates the `specNNN_` naming
+convention), `docs/spec002_known_limitations.md`,
 `docs/spec003_known_limitations.md`. #004 consumes whatever `EvidenceProfile`
 Evaluation produced, exactly as-is.
 
