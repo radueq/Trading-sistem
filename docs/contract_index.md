@@ -304,11 +304,29 @@ is not itself the audit.
 
 ## Next steps
 
-1. **Matrices produced by Claude; independent verification pending.**
-   `docs/audit_spec00{1,2,3,4}_requirement_code_test.md` (commit
-   `edf8dbe`), 4 parallel research passes, each spot-checked by Claude
-   against actual source before being written up. Radu's own review of
-   the findings is the step this is waiting on.
+1. **Independent audit track in progress ("Audit independent #001-#004",
+   Radu's instruction, 2026-10-03) -- Master Context does not block this;
+   only findings that would themselves depend on its text would be, and
+   none have arisen so far.** Matrices originally produced by 4 parallel
+   Claude research passes, each spot-checked (not fully re-verified) by
+   Claude before being written up. This track replaces that spot-check
+   with a full, row-by-row independent re-verification, spec by spec,
+   starting with #001.
+   - **Spec #001: done (2026-10-03).** Every file in `src/data_foundation/`
+     and all 17 of its test files independently read and traced by
+     Claude; see the "Independent audit" note and revised Top Finding 1
+     in `docs/audit_spec001_requirement_code_test.md`. One new,
+     previously-unflagged structural gap found: TEST 10's AST scan
+     (SS10-11 enforcement) is scoped only to `src/data_foundation/` and
+     cannot see the real downstream packages (`backtest/`, `discovery/`,
+     `evaluation/`, `hypothesis/`) where SS10's named consumers actually
+     live now; one licensed direct-repository-import instance already
+     exists there (`src/backtest/data/snapshot.py`, Spec #005 SS6's own
+     exception) with nothing structurally confirming it's the only one.
+   - **Spec #002-#004: not yet started this way.** Still at the original
+     spot-check level; next in this track.
+   Radu's own contractual verdict on any finding remains separate from
+   this technical re-verification throughout.
 2. **Primary evidence located for both open acceptance questions, each
    now backed by a standalone source document, not just a quoted
    excerpt:** `docs/evidence_spec002_acceptance_message.md` and
