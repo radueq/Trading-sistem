@@ -312,17 +312,39 @@ is not itself the audit.
    Claude before being written up. This track replaces that spot-check
    with a full, row-by-row independent re-verification, spec by spec,
    starting with #001.
-   - **Spec #001: done (2026-10-03).** Every file in `src/data_foundation/`
-     and all 17 of its test files independently read and traced by
-     Claude; see the "Independent audit" note and revised Top Finding 1
-     in `docs/audit_spec001_requirement_code_test.md`. One new,
-     previously-unflagged structural gap found: TEST 10's AST scan
-     (SS10-11 enforcement) is scoped only to `src/data_foundation/` and
-     cannot see the real downstream packages (`backtest/`, `discovery/`,
-     `evaluation/`, `hypothesis/`) where SS10's named consumers actually
-     live now; one licensed direct-repository-import instance already
-     exists there (`src/backtest/data/snapshot.py`, Spec #005 SS6's own
-     exception) with nothing structurally confirming it's the only one.
+   - **Spec #001: two rounds done (2026-10-03).** Round 1 (Claude, solo):
+     every file in `src/data_foundation/` and all 17 of its test files
+     independently read and traced; found the TEST 10 AST-scan scope gap
+     (SS10-11 enforcement cannot see the real downstream packages --
+     `backtest/`, `discovery/`, `evaluation/`, `hypothesis/` -- where
+     SS10's named consumers now live; one licensed exception already
+     exists at `src/backtest/data/snapshot.py`, Spec #005 SS6's own
+     carve-out, with nothing structurally confirming it's the only one).
+     Round 2 (GPT's own independent pass over the same matrix on
+     `34acd9c`, reconciled by Claude): **two further findings, both
+     independently reproduced by Claude directly against the real code
+     before being written up -- the first two DEMONSTRATED DEFECT
+     entries in this whole audit track.** (1) The PIT gateway's derived
+     `pit_status` is correct, but `PITCorporateAction`/`get_data()`
+     embed the full raw `CorporateAction` row alongside it, so a
+     consumer reading `.action.source_status` directly can see a future
+     cancellation before the derived status says it's knowable --
+     neither TEST 9 nor TEST 13 asserts on the raw embedded fields, only
+     on the derived ones, so this was invisible to the suite. (2)
+     `ingestion.ensure_security()` discards the adapter's own
+     `source_security_id` and persists the raw ticker instead, breaking
+     SS3.1's provider-ID-to-security_id mapping whenever they differ --
+     invisible today only because the one implemented adapter (yfinance)
+     happens to set its own `source_security_id` equal to the ticker.
+     Plus three secondary corrections: `DUPLICATE_BAR`/`SOURCE_DISCREPANCY`
+     have no detection code at all (not merely untested, as this
+     document previously said); TEST 12 checks self-consistency against
+     its own fixture, not the "independent reference" SS23 calls for;
+     SS20's provenance claim is narrowed given finding (2). See
+     `docs/audit_spec001_requirement_code_test.md`'s revised Top
+     Findings 1-2 (new) and 4-6, 14 for full detail and reproduction.
+     Neither DEMONSTRATED DEFECT has been fixed -- documentary only, per
+     Radu's instruction.
    - **Spec #002-#004: not yet started this way.** Still at the original
      spot-check level; next in this track.
    Radu's own contractual verdict on any finding remains separate from
