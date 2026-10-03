@@ -19,11 +19,12 @@ reproduced against the current test suite today. Retagged
 **SUSPECTED ISSUE -- VERIFICATION PENDING**, per the classification key
 in `docs/contract_index.md`: a real red flag worth a targeted check, not
 a proven, active defect. The `research_mode` gate finding (Finding 2) is
-different in kind -- Radu has endorsed it, alongside the Discovery
+different in kind -- GPT verified this one too, alongside the Discovery
 status-discard and `bucket_key` findings in `docs/audit_spec002_
-requirement_code_test.md`, as meriting contractual analysis and a
-targeted reproduction, so it keeps the same SUSPECTED ISSUE tag but
-flagged as Radu-endorsed/higher-priority within that category, not
+requirement_code_test.md`, as a confirmed structural gap; Radu's own
+verdict on its contractual significance remains separate in all three
+cases. It keeps the same SUSPECTED ISSUE tag but flagged as a
+higher-priority item within that category, pending that verdict, not
 pre-judged as settled.
 
 **Claude's own spot-check on the agent's single highest-priority
@@ -73,7 +74,7 @@ line-by-line by Claude.
 | 26 | `ExitHypothesis` entity, minimum fields | `models/entities.py:275-327` | `test_13`, `test_14` | MET |
 | 27 | Exit parameter source labeled; `BACKTEST_SELECTED` must not exist yet | `ParameterSource` enum -- no such member | `test_59` | MET |
 | 28 | Evidence-derived exit parameters written explicitly, never masked as prior | `selection_basis`+`parameter_source` propagate through `materialize_variants()` | `test_59` | MET |
-| 29 | Hypothesis Mode: EXPLORATORY vs PREREGISTERED | `HypothesisResearchMode` enum defined | Never checked by `preregister_hypothesis()`/`validate_for_preregistration()` -- Claude-verified, zero occurrences in either file | **SUSPECTED ISSUE -- VERIFICATION PENDING, Radu-endorsed for contractual analysis** -- see Finding 2 |
+| 29 | Hypothesis Mode: EXPLORATORY vs PREREGISTERED | `HypothesisResearchMode` enum defined | Never checked by `preregister_hypothesis()`/`validate_for_preregistration()` -- Claude-verified, zero occurrences in either file | **SUSPECTED ISSUE -- VERIFICATION PENDING; GPT verified the underlying fact, Radu's own verdict remains separate** -- see Finding 2 |
 | 30 | Lifecycle DRAFT->REVIEWED->PREREGISTERED->HANDOFF; no edit-after-backtest | `HypothesisStatus` enum; `register()`/`_force_register()` | `test_24`, `test_53` | MET |
 | 31 | Post-preregistration modification creates a new id, never overwrites | `create_new_version()` | `test_25` | MET |
 | 32 | Hypothesis Registry, minimum fields | `models/entities.py:381-430` (field consolidation vs. spec's separate parent/supersedes pair) | `test_25` | MET (minor semantically-equivalent consolidation) |
@@ -162,7 +163,7 @@ line-by-line by Claude.
 ## Top findings, with concrete failure scenarios
 
 1. **[SUSPECTED ISSUE -- VERIFICATION PENDING, corrected 2026-10-03 from "HIGH PRIORITY"]** Locked OOS / evaluation-mode boundary is import-level only, not value-level (SS3-4, SS98). `build_evidence_packet()` checks internal consistency of supplied `evaluation_mode` values but never checks the mode IS `FORMAL_DEVELOPMENT`, and `EvidencePacket`/`EvidenceProvenance` have no `evaluation_mode` field at all. **This is a future possibility, not a demonstrated existing contamination** -- per Radu's own correction: the failure scenario described ("if a future caller passed Locked-OOS-derived evidence in...") is hypothetical, not something reproduced against the current test suite or known to have occurred. Worth a targeted check, not yet proven either way.
-2. **[SUSPECTED ISSUE -- VERIFICATION PENDING, Radu-endorsed for contractual analysis]** `research_mode` (SS29) is never enforced at the preregistration gate (Claude-verified: zero occurrences in `registry/preregistration.py` or `validation/rules.py`). A `StrategyHypothesis` explicitly tagged `EXPLORATORY_HYPOTHESIS` ("cannot enter formal backtest validation directly") passes every other check and can still reach `PREREGISTERED` -- a real, confirmed structural gap; Radu has endorsed this one, alongside two Spec #002 findings, as meriting a targeted reproduction.
+2. **[SUSPECTED ISSUE -- VERIFICATION PENDING; GPT verified the underlying fact, Radu's own verdict remains separate]** `research_mode` (SS29) is never enforced at the preregistration gate (Claude-verified: zero occurrences in `registry/preregistration.py` or `validation/rules.py`). A `StrategyHypothesis` explicitly tagged `EXPLORATORY_HYPOTHESIS` ("cannot enter formal backtest validation directly") passes every other check and can still reach `PREREGISTERED` -- a real, confirmed structural gap, alongside two Spec #002 findings GPT verified the same way; the contractual verdict on all three is Radu's, not yet given.
 3. **[SUSPECTED ISSUE -- VERIFICATION PENDING]** Per-condition provenance (SS70) is missing -- only whole-hypothesis provenance exists, confirmed by inspection. An entry mixing conditions validated under two different Discovery config versions would be indistinguishable from one where both share the same version. Whether SS70 requires this granularity or whole-hypothesis provenance suffices is Radu's contractual reading.
 4. **[FUTURE / PROCEDURAL REQUIREMENT]** "Independent first-pass reasoning" and the statistical-skeptic checklist (SS41-43,47) are process requirements code cannot express, honestly documented as unenforced.
 5. **[SUSPECTED ISSUE -- VERIFICATION PENDING]** Whether a human APPROVE can override a BLOCKED (all-objecting) consensus (SS43-46) is genuinely unresolved by the spec text; current code takes the permissive reading, untested for this exact combination.

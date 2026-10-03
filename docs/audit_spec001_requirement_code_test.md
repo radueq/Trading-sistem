@@ -5,10 +5,12 @@ independently verified by Radu.** Produced by a Claude subagent tasked
 with reading `docs/Spec_001_Data_Foundation_v1.0.md` section-by-section
 and citing exact `src/`/`tests/` evidence for each of the 29 sections.
 
-**Revision note (2026-10-03):** Radu caught two concrete misclassifications
-in the first version of this document and a general pattern behind them
--- both fixed below, with the classification key from
-`docs/contract_index.md` now applied to every row and finding:
+**Revision note (2026-10-03):** GPT verified two concrete misclassifications
+in the first version of this document and a general pattern behind them;
+Radu's own verdict on these findings remains separate from this
+technical check. Both are fixed below regardless, with the
+classification key from `docs/contract_index.md` now applied to every
+row and finding:
 1. SS9's row and Top Finding 2 (originally) claimed `STATUS_CONFLICT`
    overlapping-window detection would "silently pass QA undetected."
    **Wrong**: the detection code exists and is active
@@ -55,7 +57,7 @@ Full suite for this spec's own tests: **34 passed, 1 skipped** (`tests/test_01_*
 | 4 | Symbol History is temporal; reuse must not merge histories | `model/entities.py:65-72`; `pit/access.py:192-207` | `tests/test_05_ticker_change.py`, `tests/test_06_ticker_reuse.py` (both sub-cases) | MET |
 | 5 | Price History minimal schema; raw never overwritten by adjusted | `model/entities.py:75-85`; `model/repository.py:132-150` (`INSERT OR IGNORE`, no update path) | `tests/test_02_split_correctness.py`, `tests/test_03_dividend_handling.py` | MET |
 | 6 | Distinguish raw/split-adjusted/total-return; explicit methodology; provider's own adjusted kept separate | `model/adjustment_engine.py:1-40,65-92`; `pit/access.py:257-305`; provider-adjusted close never used as input | Split-adjustment tested (`test_02`) | **MET** -- the contractual requirement (explicit methodology, no confusion with provider's own adjusted) is satisfied; the total-return field is itself marked `EXPERIMENTAL_NOT_APPROVED_FOR_RESEARCH`, which IS the explicit-methodology discipline the section calls for [TEST-COVERAGE GAP: the formula's own arithmetic has no correctness test, independent of its research-approval status] |
-| 7 | Corporate Actions stored separately; announcement != effective date | `storage/schema.sql:108-121`; `model/entities.py:17-24,101-125` (all 7 `ActionType` candidates) | `tests/test_11_corporate_action_timing.py` | MET for SPLIT/REVERSE_SPLIT/DIVIDEND. `MERGER/ACQUISITION/SPINOFF/OTHER` exist only as enum values, with no adapter ever producing them | **SUSPECTED ISSUE -- VERIFICATION PENDING**: whether SS7's "action_type candidates" requirement is satisfied by enum-presence alone, with no working path for 4 of 7 types, is a contractual reading for Radu, not something this audit can settle by inspection |
+| 7 | Corporate Actions stored separately; announcement != effective date | `storage/schema.sql:108-121`; `model/entities.py:17-24,101-125` (all 7 `ActionType` candidates) | `tests/test_11_corporate_action_timing.py` | MET for SPLIT/REVERSE_SPLIT/DIVIDEND (storage separation and announcement != effective date both hold). **SUSPECTED ISSUE -- VERIFICATION PENDING** for the other 4: `MERGER/ACQUISITION/SPINOFF/OTHER` exist only as enum values, with no adapter ever producing them -- whether SS7's "action_type candidates" requirement is satisfied by enum-presence alone is a contractual reading for Radu, not something this audit can settle by inspection |
 | 8 | Corporate Action Status candidates; `UNRESOLVED` = genuine ambiguity, not "announced but not yet effective" | `pit/access.py:90-116`; `entities.py:35-40` (4 of 5 candidates); `qa/engine.py:125-132` (`CORPORATE_ACTION_UNRESOLVED` reason code, narrow/correct-looking by inspection) | ANNOUNCED/EFFECTIVE/CANCELLED tested; `CORPORATE_ACTION_UNRESOLVED` reason-code mechanism itself untested | Reason-code mechanism: **MET (by inspection)** [TEST-COVERAGE GAP, including the specific "don't false-flag a valid future action" case the spec names]. Separately: `CONFIRMED` status [**KNOWN LIMITATION -- ALREADY DOCUMENTED** in `docs/known_limitations.md`]; status-level `UNRESOLVED` [**SUSPECTED ISSUE -- VERIFICATION PENDING**, not disclosed anywhere as a gap] |
 | 9 | Listing/Status History; `delisting_reason` audit-only | `model/entities.py:27-32,128-143` (all 5 candidates defined); `pit/access.py:216-242` (`get_listing_status_as_of` -- generic date-windowed lookup, not special-cased per status value) | Only `ACTIVE`/`DELISTED` ever exercised | **MET (by inspection: lookup logic is status-agnostic by design)** [TEST-COVERAGE GAP: `HALTED`/`SUSPENDED`/`PRE_IPO` transitions never exercised by any test] |
 | 10 | All research-consumer access via PIT gateway `get_data(as_of=X)` | `pit/access.py:308-322` | `tests/test_10_direct_access.py` -- real AST scan of the import graph | MET |
@@ -72,7 +74,7 @@ Full suite for this spec's own tests: **34 passed, 1 skipped** (`tests/test_01_*
 | 21 | Three data levels; Level 1 = schema/adapters/PIT/QA only | Pervasive "Level 1" framing in docstrings | `tests/test_08_provider_consistency.py` -- explicit, visible `PENDING_LEVEL_2_DATA` skip | MET -- honest, visible, Radu-approved deferral |
 | 22 | Provider bake-off before Level-3 provider choice | NOT FOUND | NOT FOUND | **FUTURE / PROCEDURAL REQUIREMENT** -- explicitly a pre-Level-3 gate, not a Level 1 deliverable; absence here is expected, not a defect in this build |
 | 23 | 12 mandatory PASS/FAIL tests | One test file per requirement, `test_01`-`test_12` | 11/12 run and pass; TEST 8 is the SS21-approved `PENDING_LEVEL_2_DATA` | MET -- the one non-PASS is the already-approved deferral from SS21, not an independent gap |
-| 24 | 12 acceptance criteria + mandatory suite pass | See rows above | Same | MET overall, inheriting the TEST-COVERAGE GAP/SUSPECTED ISSUE tags already noted on individual criteria above (SS8, SS14, SS20) |
+| 24 | 12 acceptance criteria + mandatory suite pass | See rows above | Same | Historical acceptance preserved (`a6514b0`); full re-verification of all 12 criteria against this matrix is not finished; the open findings on individual criteria (SS8, SS14, SS20) are listed separately above and in Top Findings, not resolved by this row |
 | 25 | Out-of-scope items must not appear in this module | Grep confirms no hits | No automated guard | **MET (by inspection)** [TEST-COVERAGE GAP: same no-guard pattern as SS1/SS2] |
 | 26 | Correctness/auditability before performance; no premature optimization | `storage/db.py:1-19` (plain sqlite3, explicit rationale); `schema.sql:9-15` | Not mechanically testable | **FUTURE / PROCEDURAL REQUIREMENT** -- a qualitative engineering philosophy with no pass/fail predicate, not an implementation gap |
 | 27 | Deliverables A-E (code, tests, test report, architecture note, known limitations) | All 5 present and substantive | N/A | MET |

@@ -21,9 +21,11 @@ revision note). Producing them is evidence-gathering Claude did; it is
 not Radu's own verification of their content, which is still open and is
 a distinct step from producing them.
 
-**Classification key used in all four matrices (Radu, 2026-10-03):**
-finding a gap is not the same claim as finding a defect. Every row and
-every "Top finding" in the four matrices is tagged with exactly one of:
+**Classification key used in all four matrices (2026-10-03, corrected
+2026-10-03):** finding a gap is not the same claim as finding a defect.
+Each distinct finding -- a row may raise more than one, and each gets
+its own tag rather than the row being forced into a single label -- is
+tagged with one of:
 - **DEMONSTRATED DEFECT** -- the code does the wrong thing today,
   confirmed by reading it; a concrete failure scenario is real now, not
   hypothetical.
@@ -32,11 +34,13 @@ every "Top finding" in the four matrices is tagged with exactly one of:
   contractual consequence is plausible but not yet fully traced or
   reproduced; worth a targeted check, not yet proven either way.
 - **TEST-COVERAGE GAP** -- the mechanism is present and reads correctly
-  by inspection; no regression test proves it; nothing is wrong today,
-  but a future regression could slip through unnoticed. Compliance
-  verifiable by inspection does not become "PARTIAL" merely because no
-  dedicated test exists for it -- that conflation was this round's main
-  correction.
+  by inspection; no regression test proves it. This means no defect was
+  demonstrated in the verification actually performed -- it does NOT
+  mean nothing is wrong; inspection without a test cannot rule out a
+  subtle bug the way a test would, and a future regression could slip
+  through unnoticed either way. Compliance verifiable by inspection does
+  not become "PARTIAL" merely because no dedicated test exists for it --
+  that conflation was an earlier round's main correction.
 - **KNOWN LIMITATION -- ALREADY DOCUMENTED** -- disclosed elsewhere in
   this project's own documentation (exact citation given); reporting it
   again here is a cross-reference, not a new finding.
@@ -44,6 +48,22 @@ every "Top finding" in the four matrices is tagged with exactly one of:
   (e.g. before Locked-OOS or live use) or is a human/process rule not
   expressible in code; the current build not yet being exercised against
   it is not a defect in the current build.
+
+**On attributing the verification work itself:** where these matrices
+say a fact was checked against the source this round (code exists at a
+given line, a grep returns zero hits, a field is or isn't populated),
+that checking was done by GPT as part of Radu's own review process, the
+same role GPT has had throughout this project ("GPT Review #001",
+"GPT Review #003 Round 1", etc.) -- phrases like "Radu-endorsed" or
+"Radu caught" overstate Radu's own personal involvement in that specific
+technical check. The corrected framing used from this revision onward:
+**GPT verified the fact; Radu's own verdict on what it means
+contractually remains separate** and is not implied by the verification
+alone. This does not apply to historical messages reproduced verbatim
+(e.g. in `docs/evidence_spec002_acceptance_message.md`,
+`docs/evidence_004c_verdict_status.md`, or quotes from the recovered
+`Spec_00X_*.md` files) -- those remain exactly what Radu actually sent,
+unedited.
 
 **On independent verification of git claims:** a delivered `git archive`
 snapshot (a `.tar.gz` bundle) never includes `.git/` -- it is a snapshot
@@ -119,7 +139,7 @@ against -- it is one primary source, not confirmation.
 | **Approval** | **ACCEPTED -- primary evidence now located (2026-10-03).** Found directly in this session's own transcript, Radu's own words, verbatim: *"Decizia mea / Spec #002 Discovery Engine = ACCEPTED la commit 4f36708. / Nu mai cer PATCH #002-B. / Dar înainte să pornim primul backtest real trebuie să închidem explicit: / Data Foundation: split-adjusted volume / corporate-action-consistent historical volume."* (transcript timestamp `2026-09-21T17:36:08Z`). This resolves the earlier "cited only, primary evidence not recovered" status -- it is a genuine, explicit acceptance decision, not an inference from later specs' citations. Note Radu's own "Nu mai cer PATCH #002-B" (not requesting PATCH #002-B) was superseded days later by a *different* trigger -- Spec #003's own IMPLEMENTATION BLOCKER SS74A -- which is why PATCH #002-B exists anyway; this is not a contradiction, just a later, separate reason. The full message is reproduced in `docs/evidence_spec002_acceptance_message.md` -- not only quoted here. #002 still has no self-contained `docs/ACCEPTANCE.md`-equivalent file of its own the way #001/#003/#004 do, but per Radu's own correction, that file is optional now that this index points clearly to the full message; its absence is documentation housekeeping, not missing evidence. |
 | **Amendments** | PATCH #002-A `4f36708` (cross-sectional RS eligibility-ordering fix, GPT Review #002 Round 1 mandatory finding). PATCH #002-B `136bf94` (pre-budget `DiscoveryObservation` isolation, resolving Spec #003's own IMPLEMENTATION BLOCKER SS74A -- a new trigger arising after the SS2 acceptance above, not a reopening of it). |
 | **Derived documentation** | `docs/spec002_architecture.md`, `spec002_known_limitations.md`, `spec002_test_report.md`, `spec002_examples.md`, `spec002_volume_report.md`. |
-| **Flag** | Base text present; acceptance now evidenced (see above, and see `docs/evidence_spec002_acceptance_message.md` for the full source message). Correspondence matrix: `docs/audit_spec002_requirement_code_test.md` -- status per the top of this document. Still open: no dedicated `docs/ACCEPTANCE.md`-equivalent file exists for #002. See also "Superseded rules," below, for the holding-domain figure this spec's own text carries. |
+| **Flag** | Base text present; acceptance now evidenced (see above, and see `docs/evidence_spec002_acceptance_message.md` for the full source message). Correspondence matrix: `docs/audit_spec002_requirement_code_test.md` -- status per the top of this document. No dedicated `docs/ACCEPTANCE.md`-equivalent file exists for #002, but per Radu's own correction that is optional documentation housekeeping now that this index points clearly to the full message -- not an open gap. See also "Superseded rules," below, for the holding-domain figure this spec's own text carries. |
 
 ## Spec #003 -- Outcome-Aware Evaluation Engine (Fast-Swing / Bar-Based)
 
