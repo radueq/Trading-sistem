@@ -15,10 +15,35 @@ not rename any derived document as if it were a source contract.
 **Status of the requirement→code→test correspondence check, stated once
 here and not contradicted elsewhere in this document: matrices produced
 by Claude; independent verification pending.** They exist as
-`docs/audit_spec00{1,2,3,4}_requirement_code_test.md` (commit `edf8dbe`).
-Producing them is evidence-gathering Claude did; it is not Radu's own
-verification of their content, which is still open and is a distinct
-step from producing them.
+`docs/audit_spec00{1,2,3,4}_requirement_code_test.md` (commit `edf8dbe`,
+reclassified per the key below at a later commit -- see each file's own
+revision note). Producing them is evidence-gathering Claude did; it is
+not Radu's own verification of their content, which is still open and is
+a distinct step from producing them.
+
+**Classification key used in all four matrices (Radu, 2026-10-03):**
+finding a gap is not the same claim as finding a defect. Every row and
+every "Top finding" in the four matrices is tagged with exactly one of:
+- **DEMONSTRATED DEFECT** -- the code does the wrong thing today,
+  confirmed by reading it; a concrete failure scenario is real now, not
+  hypothetical.
+- **SUSPECTED ISSUE -- VERIFICATION PENDING** -- a real red flag in code
+  or config (a dead setting, a discarded value, a missing check) whose
+  contractual consequence is plausible but not yet fully traced or
+  reproduced; worth a targeted check, not yet proven either way.
+- **TEST-COVERAGE GAP** -- the mechanism is present and reads correctly
+  by inspection; no regression test proves it; nothing is wrong today,
+  but a future regression could slip through unnoticed. Compliance
+  verifiable by inspection does not become "PARTIAL" merely because no
+  dedicated test exists for it -- that conflation was this round's main
+  correction.
+- **KNOWN LIMITATION -- ALREADY DOCUMENTED** -- disclosed elsewhere in
+  this project's own documentation (exact citation given); reporting it
+  again here is a cross-reference, not a new finding.
+- **FUTURE / PROCEDURAL REQUIREMENT** -- the spec text only bites later
+  (e.g. before Locked-OOS or live use) or is a human/process rule not
+  expressible in code; the current build not yet being exercised against
+  it is not a defect in the current build.
 
 **On independent verification of git claims:** a delivered `git archive`
 snapshot (a `.tar.gz` bundle) never includes `.git/` -- it is a snapshot
@@ -38,11 +63,16 @@ located directly in this session's own transcript, and a "Master
 Context" gap surfaced.** Searching the same transcript used to recover
 #001-#004's text (not Radu's GPT library) turned up: (1) Radu's own
 explicit acceptance message for Spec #002, and (2) Radu's own explicit
-statement that PATCH #004-C's implementation has never received a
-verdict. Both are quoted with exact transcript line/timestamp in their
-respective rows below -- this is primary evidence Claude located, not an
-inference, but it is still Claude's own search of its own transcript,
-not something Radu has independently checked. Separately: "Master
+statement, as of 2026-09-28, that PATCH #004-C's implementation had not
+yet received a verdict -- a bounded, dated claim, not proof that no
+verdict exists anywhere; Claude did not find a later one in the
+transcript it checked. Both are quoted in full in standalone files
+(`docs/evidence_spec002_acceptance_message.md`,
+`docs/evidence_004c_verdict_status.md`) and referenced with exact
+transcript line/timestamp in their respective rows below -- this is
+primary evidence Claude located, not an inference, but it is still
+Claude's own search of its own transcript, not something Radu has
+independently checked. Separately: "Master
 Context" (referenced inside the recovered #001/#002 text itself, e.g.
 "Master Context v2.0 -- Baseline 001: LOCKED") was searched for across
 the entire transcript and found to exist ONLY as these short references
@@ -86,7 +116,7 @@ against -- it is one primary source, not confirmation.
 | **Original contract file** | **PRESENT.** `docs/Spec_002_Feature_Engine_Discovery_v1.0.md` -- recovered from this session's own transcript, 2026-09-30. Sent as a single message, already final (self-labeled "Status: APPROVED FOR IMPLEMENTATION"). |
 | **Version** | v1.0, per the recovered text's own header. |
 | **Source** | This Claude Code session's transcript. Not Radu's GPT conversation history. |
-| **Approval** | **ACCEPTED -- primary evidence now located (2026-10-03).** Found directly in this session's own transcript, Radu's own words, verbatim: *"Decizia mea / Spec #002 Discovery Engine = ACCEPTED la commit 4f36708. / Nu mai cer PATCH #002-B. / Dar înainte să pornim primul backtest real trebuie să închidem explicit: / Data Foundation: split-adjusted volume / corporate-action-consistent historical volume."* (transcript timestamp `2026-09-21T17:36:08Z`). This resolves the earlier "cited only, primary evidence not recovered" status -- it is a genuine, explicit acceptance decision, not an inference from later specs' citations. Note Radu's own "Nu mai cer PATCH #002-B" (not requesting PATCH #002-B) was superseded days later by a *different* trigger -- Spec #003's own IMPLEMENTATION BLOCKER SS74A -- which is why PATCH #002-B exists anyway; this is not a contradiction, just a later, separate reason. This acceptance message exists only in this transcript -- #002 still has no self-contained `docs/ACCEPTANCE.md`-equivalent file of its own the way #001/#003/#004 do; writing one (quoting this same message) remains a documentation housekeeping item, not an open acceptance question anymore. |
+| **Approval** | **ACCEPTED -- primary evidence now located (2026-10-03).** Found directly in this session's own transcript, Radu's own words, verbatim: *"Decizia mea / Spec #002 Discovery Engine = ACCEPTED la commit 4f36708. / Nu mai cer PATCH #002-B. / Dar înainte să pornim primul backtest real trebuie să închidem explicit: / Data Foundation: split-adjusted volume / corporate-action-consistent historical volume."* (transcript timestamp `2026-09-21T17:36:08Z`). This resolves the earlier "cited only, primary evidence not recovered" status -- it is a genuine, explicit acceptance decision, not an inference from later specs' citations. Note Radu's own "Nu mai cer PATCH #002-B" (not requesting PATCH #002-B) was superseded days later by a *different* trigger -- Spec #003's own IMPLEMENTATION BLOCKER SS74A -- which is why PATCH #002-B exists anyway; this is not a contradiction, just a later, separate reason. The full message is reproduced in `docs/evidence_spec002_acceptance_message.md` -- not only quoted here. #002 still has no self-contained `docs/ACCEPTANCE.md`-equivalent file of its own the way #001/#003/#004 do, but per Radu's own correction, that file is optional now that this index points clearly to the full message; its absence is documentation housekeeping, not missing evidence. |
 | **Amendments** | PATCH #002-A `4f36708` (cross-sectional RS eligibility-ordering fix, GPT Review #002 Round 1 mandatory finding). PATCH #002-B `136bf94` (pre-budget `DiscoveryObservation` isolation, resolving Spec #003's own IMPLEMENTATION BLOCKER SS74A -- a new trigger arising after the SS2 acceptance above, not a reopening of it). |
 | **Derived documentation** | `docs/spec002_architecture.md`, `spec002_known_limitations.md`, `spec002_test_report.md`, `spec002_examples.md`, `spec002_volume_report.md`. |
 | **Flag** | Base text present; acceptance now evidenced (see above, and see `docs/evidence_spec002_acceptance_message.md` for the full source message). Correspondence matrix: `docs/audit_spec002_requirement_code_test.md` -- status per the top of this document. Still open: no dedicated `docs/ACCEPTANCE.md`-equivalent file exists for #002. See also "Superseded rules," below, for the holding-domain figure this spec's own text carries. |
@@ -113,7 +143,7 @@ against -- it is one primary source, not confirmation.
 | **Approval** | **ACCEPTED.** Base implementation `6082215`. PATCH #004-A `feb8470`. Technical baseline at acceptance: PATCH #004-B `d19dd25`. Verdict recorded in commit `74daadc` ("Spec #004 v1.0 ACCEPTED", GPT Review #004 Round 3 closure). |
 | **Amendments** | PATCH #004-A `feb8470` (7 findings, GPT Review #004 Round 1). PATCH #004-B `d19dd25` (5 findings, GPT Review #004 Round 2). PATCH #004-C `28473d0` (additive `STOP_MANAGED_INVALIDATION` exit family, entities/validation/fingerprint layer only). |
 | **Derived documentation** | `docs/spec004_architecture.md`, `spec004_known_limitations.md`, `spec004_test_report.md`, `spec004_examples.md`, `spec004_agent_interface.md`, `spec004_registry_contract.md`. |
-| **Flag** | Text now present, but not yet independently verified by Radu or audited. Separately, and unaffected by the text recovery: **PATCH #004-C's own implementation has a confirmed-pending verdict, sourced precisely.** Found in this session's own transcript, Radu's own words, verbatim, immediately after a Batch 3 CHANGES-REQUIRED verdict: *"Nu închidem Batch 3 și nu promovăm încă baseline-ul `3cdc532`. PATCH #004-C rămâne separat pentru verdict; constatările de mai sus vizează Batch 3."* (transcript timestamp `2026-09-28T16:08:13Z`; full message reproduced in `docs/evidence_004c_verdict_status.md`). **Separate verdict still pending as of the quoted date; Claude did not identify a later one in the transcript checked** -- this is a bounded claim about what was searched, not proof that no later verdict exists anywhere. The only "ACCEPTED" text on record remains the *Spec #005 Exit Amendment v1.0 document itself* (commit `2fa5575`, baseline `3cdc532`, dated BEFORE PATCH #004-C `28473d0` was even written) -- an acceptance of the contract text, not of #004-C's implementation. Its 7 tests (TEST 67-73) pass, but green tests are not the verdict Radu is withholding. Correspondence matrix for #004's own original 111 sections: `docs/audit_spec004_requirement_code_test.md` -- status per the top of this document; separate from the still-pending #004-C verdict discussed here. See also "Superseded rules," below, for the SIGNAL_INVALIDATION timing and risk-exit items this spec's own recovered text (including its final approval message) carries. |
+| **Flag** | Text now present but not yet independently verified by Radu. Correspondence matrix: `docs/audit_spec004_requirement_code_test.md` -- status per the top of this document. Separately, and unaffected by the text recovery: **PATCH #004-C's own implementation has a confirmed-pending verdict, sourced precisely.** Found in this session's own transcript, Radu's own words, verbatim, immediately after a Batch 3 CHANGES-REQUIRED verdict: *"Nu închidem Batch 3 și nu promovăm încă baseline-ul `3cdc532`. PATCH #004-C rămâne separat pentru verdict; constatările de mai sus vizează Batch 3."* (transcript timestamp `2026-09-28T16:08:13Z`; full message reproduced in `docs/evidence_004c_verdict_status.md`). **Separate verdict still pending as of the quoted date; Claude did not identify a later one in the transcript checked** -- this is a bounded claim about what was searched, not proof that no later verdict exists anywhere. The only "ACCEPTED" text on record remains the *Spec #005 Exit Amendment v1.0 document itself* (commit `2fa5575`, baseline `3cdc532`, dated BEFORE PATCH #004-C `28473d0` was even written) -- an acceptance of the contract text, not of #004-C's implementation. Its 7 tests (TEST 67-73) pass, but green tests are not the verdict Radu is withholding. See also "Superseded rules," below, for the SIGNAL_INVALIDATION timing and risk-exit items this spec's own recovered text (including its final approval message) carries. |
 
 ## Spec #005 -- Backtesting & Exit Evaluation
 
@@ -140,21 +170,23 @@ against -- it is one primary source, not confirmation.
 | **Derived documentation** | None -- no `docs/*.md` in this repo claims to be derived from or to document Master Context specifically; the individual spec architecture notes each stand on their own. |
 | **Flag** | This is a DEEPER gap than #001-#004's, not a parallel one: Master Context is the document the specs themselves say they already depend on and that any contradiction/ambiguity audit of #001-#004 would ultimately trace back to, and this repo has never had any version of it, not even a fragment. If Radu can locate and supply it, it belongs in this inventory as its own entry, parallel to the specs; until then, any "contradiction" found between a spec and Master Context cannot be checked from this repo at all -- only contradictions among the specs' own recovered texts, or between a spec and the actual code, are checkable today. |
 
-## Amendments and contractual changes -- complete inventory
+## Amendments and contractual changes -- one exhaustive search, one non-exhaustive list
 
 **Corrected framing (Radu, 2026-10-03): a keyword search for the word
 "amendament" only finds documents that use that word -- it does not
 inventory every contractual change.** The accurate statement is: **one
-standalone document titled "Amendment" has been identified; contractual
-changes are also tracked through approved clarifications/corrections
-within the conversation, not only through documents bearing that
-title.**
+standalone document titled "Amendment" has been identified (that search
+WAS exhaustive); contractual changes are also tracked through approved
+clarifications/corrections within the conversation, not only through
+documents bearing that title (that list is NOT claimed exhaustive --
+see below).**
 
-**The one standalone "Amendment" document:** the Spec #005 Exit
-Amendment v1.0 (`docs/spec005_exit_amendment_v1.0.md`), already tracked
-in the Spec #005 row above. Every occurrence of "amendament"/"amendment"
-in the transcript (42 hits across user messages) refers to this same
-document, or is this index's/Radu's own recent discussion of it.
+**The one standalone "Amendment" document (exhaustive search):** the
+Spec #005 Exit Amendment v1.0 (`docs/spec005_exit_amendment_v1.0.md`),
+already tracked in the Spec #005 row above. Every occurrence of
+"amendament"/"amendment" in the transcript (42 hits across user
+messages) refers to this same document, or is this index's/Radu's own
+recent discussion of it.
 
 **Contractual changes carried by approval/clarification messages
 instead, each already cross-referenced elsewhere in this project's own
