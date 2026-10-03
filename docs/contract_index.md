@@ -30,6 +30,22 @@ index's own commit-hash citations below are Claude's `git log` output and
 carry the same caveat -- **none of it is independently verified by Radu
 as of this revision.**
 
+**2026-10-03 update -- acceptance evidence for #002 and PATCH #004-C
+located directly in this session's own transcript, and a "Master
+Context" gap surfaced.** Searching the same transcript used to recover
+#001-#004's text (not Radu's GPT library) turned up: (1) Radu's own
+explicit acceptance message for Spec #002, and (2) Radu's own explicit
+statement that PATCH #004-C's implementation has never received a
+verdict. Both are quoted with exact transcript line/timestamp in their
+respective rows below -- this is primary evidence Claude located, not an
+inference, but it is still Claude's own search of its own transcript,
+not something Radu has independently checked. Separately: "Master
+Context" (referenced inside the recovered #001/#002 text itself, e.g.
+"Master Context v2.0 -- Baseline 001: LOCKED") was searched for across
+the entire transcript and found to exist ONLY as these short references
+-- its own full text was never pasted into this Claude Code session, in
+any version, at any point. See the new "Master Context" entry below.
+
 **2026-09-30 update -- original text recovered for #001-#004, from a
 different source than the one Radu was pursuing.** Radu was searching his
 own GPT conversation library and could not find exportable full bodies for
@@ -58,7 +74,7 @@ against -- it is one primary source, not confirmation.
 | **Amendments** | PATCH #001-C `aa56bb5` (`split_adjusted_volume`, additive, not a reopening). PATCH #001-D `b1bb301`, accepted at `cfa0809` (`split_adjusted_open/high/low`, additive, not a reopening -- surfaced while scaffolding Spec #005). |
 | **Derived documentation** | `docs/architecture.md`, `docs/known_limitations.md`, `docs/test_report.md`, `docs/ACCEPTANCE.md`. |
 | **Completeness caveat (Radu, 2026-09-30)** | All 29 numbered sections (SS1-SS29) are present. **SS29 itself ends mid-sentence** -- "începem proiectarea:" ("we begin designing:") -- with nothing after it anywhere in the transcript. Every section header is there; this one closing line is not, and it is not completed or inferred here -- it is recorded as missing, to be confirmed from source if Radu can locate a further fragment, never guessed. |
-| **Flag** | Text now present but NOT YET independently verified by Radu ("byte-for-byte" is Claude's description of its own extraction process, not something Radu can confirm without the raw transcript fragments himself), and NOT YET run through the requirement→code→test correspondence check or the contradiction/ambiguity/testability audit he requested -- both still open. Does not reopen the existing acceptance. See also "Superseded rules," below, for the SIGNAL_INVALIDATION timing and risk-exit items this spec's recovered text touches. |
+| **Flag** | Text now present but NOT YET independently verified by Radu ("byte-for-byte" is Claude's description of its own extraction process, not something Radu can confirm without the raw transcript fragments himself). The requirement→code→test correspondence check IS now done -- see `docs/audit_spec001_requirement_code_test.md` (commit `edf8dbe`) -- but that is evidence-gathering, not Radu's own verdict, which is still open. Does not reopen the existing acceptance. See also "Superseded rules," below, for the SIGNAL_INVALIDATION timing and risk-exit items this spec's recovered text touches. |
 
 ## Spec #002 -- Feature Engine + Outcome-Blind Discovery Engine
 
@@ -67,10 +83,10 @@ against -- it is one primary source, not confirmation.
 | **Original contract file** | **PRESENT.** `docs/Spec_002_Feature_Engine_Discovery_v1.0.md` -- recovered from this session's own transcript, 2026-09-30. Sent as a single message, already final (self-labeled "Status: APPROVED FOR IMPLEMENTATION"). |
 | **Version** | v1.0, per the recovered text's own header. |
 | **Source** | This Claude Code session's transcript. Not Radu's GPT conversation history. |
-| **Approval** | **Acceptance is cited in later specs' own documentation; primary evidence of that acceptance has not been recovered.** This is a precise distinction, not a downgrade to "unaccepted": `docs/spec003_architecture.md` ("Spec #002 Accepted Baseline `4f36708`") and `docs/spec004_known_limitations.md` ("#002 `4f36708`") both cite it as accepted. What is missing is a self-contained acceptance record of #002's own -- unlike #001/#003/#004, there is no `docs/ACCEPTANCE.md`-equivalent, no "ACCEPTED at commit X" line inside #002's own docs, and no dedicated acceptance-recording commit in git history for #002 specifically (`a6514b0`, `266cc6f`, `74daadc` exist for #001/#003/#004; nothing equivalent exists for #002). Radu has explicitly declined to treat the citation chain as confirmation on its own. |
-| **Amendments** | PATCH #002-A `4f36708` (cross-sectional RS eligibility-ordering fix, GPT Review #002 Round 1 mandatory finding). PATCH #002-B `136bf94` (pre-budget `DiscoveryObservation` isolation, resolving Spec #003's own IMPLEMENTATION BLOCKER SS74A). |
+| **Approval** | **ACCEPTED -- primary evidence now located (2026-10-03).** Found directly in this session's own transcript, Radu's own words, verbatim: *"Decizia mea / Spec #002 Discovery Engine = ACCEPTED la commit 4f36708. / Nu mai cer PATCH #002-B. / Dar înainte să pornim primul backtest real trebuie să închidem explicit: / Data Foundation: split-adjusted volume / corporate-action-consistent historical volume."* (transcript timestamp `2026-09-21T17:36:08Z`). This resolves the earlier "cited only, primary evidence not recovered" status -- it is a genuine, explicit acceptance decision, not an inference from later specs' citations. Note Radu's own "Nu mai cer PATCH #002-B" (not requesting PATCH #002-B) was superseded days later by a *different* trigger -- Spec #003's own IMPLEMENTATION BLOCKER SS74A -- which is why PATCH #002-B exists anyway; this is not a contradiction, just a later, separate reason. This acceptance message exists only in this transcript -- #002 still has no self-contained `docs/ACCEPTANCE.md`-equivalent file of its own the way #001/#003/#004 do; writing one (quoting this same message) remains a documentation housekeeping item, not an open acceptance question anymore. |
+| **Amendments** | PATCH #002-A `4f36708` (cross-sectional RS eligibility-ordering fix, GPT Review #002 Round 1 mandatory finding). PATCH #002-B `136bf94` (pre-budget `DiscoveryObservation` isolation, resolving Spec #003's own IMPLEMENTATION BLOCKER SS74A -- a new trigger arising after the SS2 acceptance above, not a reopening of it). |
 | **Derived documentation** | `docs/spec002_architecture.md`, `spec002_known_limitations.md`, `spec002_test_report.md`, `spec002_examples.md`, `spec002_volume_report.md`. |
-| **Flag** | Base text is now present, but the acceptance question is separate and still open: either the primary evidence of an actual acceptance decision (conversation or delivery) is located and checked, or -- per Radu's own instruction -- a fresh verification is run now and a new acceptance is recorded, explicitly dated, rather than retroactively inferring one from citations. See also "Superseded rules," below, for the holding-domain figure this spec's own text carries. |
+| **Flag** | Base text present; acceptance now evidenced (see above). The requirement→code→test correspondence check IS now done -- see `docs/audit_spec002_requirement_code_test.md` (commit `edf8dbe`) -- evidence-gathering, not Radu's own verdict. Still open: no dedicated `docs/ACCEPTANCE.md`-equivalent file exists for #002. See also "Superseded rules," below, for the holding-domain figure this spec's own text carries. |
 
 ## Spec #003 -- Outcome-Aware Evaluation Engine (Fast-Swing / Bar-Based)
 
@@ -82,7 +98,7 @@ against -- it is one primary source, not confirmation.
 | **Approval** | **ACCEPTED.** Technical baseline `d889049` (PATCH #003-B). Verdict recorded in commit `266cc6f` ("GPT Review #003 Final verdict", doc-only, immediately after the baseline commit). |
 | **Amendments** | PATCH #003-A `203233d` (6 statistical/correctness findings, GPT Review #003 Round 1). PATCH #003-B `d889049` (2 findings, GPT Review #003 Round 2). |
 | **Derived documentation** | `docs/spec003_architecture.md`, `spec003_known_limitations.md`, `spec003_test_report.md`, `spec003_examples.md`, `spec003_performance_report.md`, `spec003_multiple_testing_report.md`, `spec003_reproducibility.md`. |
-| **Flag** | Text now present but not yet independently verified by Radu, and not yet run through the requirement→code→test correspondence check or the contradiction/ambiguity/testability audit. |
+| **Flag** | Text now present but not yet independently verified by Radu. The requirement→code→test correspondence check IS now done -- see `docs/audit_spec003_requirement_code_test.md` (commit `edf8dbe`) -- but that is evidence-gathering, not Radu's own verdict, which is still open. |
 
 ## Spec #004 -- Hypothesis Generation & Strategy Definition
 
@@ -94,7 +110,7 @@ against -- it is one primary source, not confirmation.
 | **Approval** | **ACCEPTED.** Base implementation `6082215`. PATCH #004-A `feb8470`. Technical baseline at acceptance: PATCH #004-B `d19dd25`. Verdict recorded in commit `74daadc` ("Spec #004 v1.0 ACCEPTED", GPT Review #004 Round 3 closure). |
 | **Amendments** | PATCH #004-A `feb8470` (7 findings, GPT Review #004 Round 1). PATCH #004-B `d19dd25` (5 findings, GPT Review #004 Round 2). PATCH #004-C `28473d0` (additive `STOP_MANAGED_INVALIDATION` exit family, entities/validation/fingerprint layer only). |
 | **Derived documentation** | `docs/spec004_architecture.md`, `spec004_known_limitations.md`, `spec004_test_report.md`, `spec004_examples.md`, `spec004_agent_interface.md`, `spec004_registry_contract.md`. |
-| **Flag** | Text now present, but not yet independently verified by Radu or audited. Separately, and unaffected by the text recovery: **a separate verdict on PATCH #004-C's own implementation has not been identified.** Its 7 tests (TEST 67-73) pass, but green tests are not a verdict. The only "ACCEPTED" text on record covers the *Spec #005 Exit Amendment v1.0 document itself* (commit `2fa5575`, baseline `3cdc532`, dated BEFORE PATCH #004-C `28473d0` or Batch 3 `cb9d67f` were even written) -- that is an acceptance of the contract text, not evidence either way about #004-C's implementation of it. Pending verification of the relevant conversations and delivery before this can be marked either accepted or open. See also "Superseded rules," below, for the SIGNAL_INVALIDATION timing and risk-exit items this spec's own recovered text (including its final approval message) carries. |
+| **Flag** | Text now present, but not yet independently verified by Radu or audited. Separately, and unaffected by the text recovery: **PATCH #004-C's own implementation has never received a verdict -- now confirmed directly, not just by absence of evidence (2026-10-03).** Found in this session's own transcript, Radu's own words, verbatim, immediately after a Batch 3 CHANGES-REQUIRED verdict: *"Nu închidem Batch 3 și nu promovăm încă baseline-ul `3cdc532`. PATCH #004-C rămâne separat pentru verdict; constatările de mai sus vizează Batch 3."* (transcript timestamp `2026-09-28T16:08:13Z`). This is Radu explicitly setting #004-C aside as its own open item, not Claude inferring a gap from silence. Nothing later in the transcript (through 2026-10-03) gives it a verdict either way. The only "ACCEPTED" text on record remains the *Spec #005 Exit Amendment v1.0 document itself* (commit `2fa5575`, baseline `3cdc532`, dated BEFORE PATCH #004-C `28473d0` was even written) -- an acceptance of the contract text, not of #004-C's implementation. Its 7 tests (TEST 67-73) pass, but green tests are not the verdict Radu is withholding. The requirement→code→test correspondence check for #004's own original 111 sections IS now done -- see `docs/audit_spec004_requirement_code_test.md` (commit `edf8dbe`) -- evidence-gathering, not Radu's own verdict, and separate from the still-missing #004-C verdict discussed here. See also "Superseded rules," below, for the SIGNAL_INVALIDATION timing and risk-exit items this spec's own recovered text (including its final approval message) carries. |
 
 ## Spec #005 -- Backtesting & Exit Evaluation
 
@@ -107,6 +123,36 @@ against -- it is one primary source, not confirmation.
 | **Amendments** | None beyond the Exit Amendment itself. A further correction chain against the amendment's own MAE/MFE requirements is in progress: `8287ebb` -> `3aae3ef` -> `536bad7` -> `842d278`. **`842d278`'s review is explicitly still open (Radu, 2026-09-30) -- this index does not close it.** |
 | **Derived documentation** | `docs/spec005_known_limitations.md`. |
 | **Flag** | Was, until this revision, the only spec with its base contract archived verbatim in-repo -- now #001-#004 have their recovered text alongside it, from a different source (this session's transcript, not Radu's own GPT copy or upload). |
+
+## Master Context (project-level, precedes all numbered specs)
+
+| | |
+|---|---|
+| **Original contract file** | **ABSENT -- no partial trace either, unlike #001.** Searched exhaustively across the entire transcript (its full length at time of search, 2026-10-03): the phrase appears in exactly 4 places, and in every one it is a short reference to an already-existing, already-decided document, never the document's own text. |
+| **What the references say** | Spec #001's own final approval message (2026-09-20): *"Master Context v2.0 -- Baseline 001: LOCKED"* -- stated as a precondition already satisfied before Spec #001's own approval, not something being decided in this session. Spec #002's own recovered text (SS4): *"Transitions must use the dimensional representation already accepted in Master Context"* -- again treated as pre-existing, external, settled. No "Master Context v1.0" or any other version is referenced anywhere; v2.0 is the only version this transcript ever names. |
+| **Version** | v2.0, per the one reference above. Nothing else about it (scope, sections, date) is recoverable from this transcript. |
+| **Source** | Almost certainly Radu's own GPT conversation history, likely the same "Creare Master Context Trading" conversation he named as the source of #001's recovered trace -- that title is a strong match for a document literally called "Master Context." Not confirmed; Claude cannot access that conversation. |
+| **Approval** | Unknown from this transcript beyond "LOCKED" as of 2026-09-20. |
+| **Amendments** | Unknown. |
+| **Derived documentation** | None -- no `docs/*.md` in this repo claims to be derived from or to document Master Context specifically; the individual spec architecture notes each stand on their own. |
+| **Flag** | This is a DEEPER gap than #001-#004's, not a parallel one: Master Context is the document the specs themselves say they already depend on and that any contradiction/ambiguity audit of #001-#004 would ultimately trace back to, and this repo has never had any version of it, not even a fragment. If Radu can locate and supply it, it belongs in this inventory as its own entry, parallel to the specs; until then, any "contradiction" found between a spec and Master Context cannot be checked from this repo at all -- only contradictions among the specs' own recovered texts, or between a spec and the actual code, are checkable today. |
+
+## Amendments -- complete inventory (searched exhaustively)
+
+Every occurrence of "amendament"/"amendment" in the transcript (42 hits
+across user messages) was checked. **Exactly one amendment exists in
+this project**: the Spec #005 Exit Amendment v1.0
+(`docs/spec005_exit_amendment_v1.0.md`), already tracked in the Spec
+#005 row above. No amendment to #001, #002, #003, or #004 individually
+was found anywhere -- every other hit either refers to this same Exit
+Amendment in a different message, or is this index's/Radu's own recent
+discussion of it. PATCH #001-C/D, #002-A/B, #003-A/B, #004-A/B are
+GPT-review-round PATCHES (fixes against an already-accepted spec), not
+amendments to the contract text itself, and are already listed under
+each spec's own "Amendments" row above using that same word loosely --
+to be precise: only the Spec #005 Exit Amendment changes what a spec's
+*contract* requires; every PATCH listed elsewhere in this index changes
+what the *code* does to satisfy an unchanged contract.
 
 ---
 
@@ -167,18 +213,26 @@ is not itself the audit.
 
 ## Next steps
 
-1. **Radu**, if he wants an independent second source: locate his own
-   GPT-side copies of #001-#004 to cross-check against the transcript
+1. **Done (2026-10-03):** requirement→code→test correspondence matrices
+   for #001-#004 were built (4 parallel research passes, each spot-checked
+   by Claude against actual source before being written up) and delivered
+   as `docs/audit_spec00{1,2,3,4}_requirement_code_test.md`
+   (commit `edf8dbe`). This is evidence-gathering, not a verdict -- Radu's
+   own review of the findings is the step after this one.
+2. **Done (2026-10-03):** Spec #002's acceptance primary evidence located
+   (see its row above). PATCH #004-C's implementation confirmed to have
+   no verdict, by Radu's own words, not by absence (see Spec #004's row
+   above).
+3. **Open: Master Context.** Absent from this repo in any form (see its
+   own entry above) -- the one item in this whole inventory that Claude
+   cannot progress further on its own. Needs Radu to locate and supply it
+   from his GPT-side history if he wants it included; nothing to recover
+   from this transcript.
+4. **Open, if Radu wants it: an independent second source.** Locate his
+   own GPT-side copies of #001-#004 to cross-check against the transcript
    recovery above (they need not match verbatim word-for-word if the
    content is equivalent, but a material difference would matter).
-2. **Claude**, once Radu has looked at the recovered text: run the
-   requirement→code→test correspondence check plus the
-   contradiction/ambiguity/untestable-requirement audit against each of
-   #001-#004, exactly as intended for Spec #005's base contract.
-3. **Spec #002's acceptance**: either locate primary evidence of an
-   actual acceptance decision, or run a fresh verification now and record
-   a new, explicitly dated acceptance -- not a retroactive inference from
-   citations, per Radu's instruction.
-4. **PATCH #004-C's implementation**: verify against the relevant
-   conversations/delivery whether it has its own acceptance, separate
-   from the Exit Amendment document's acceptance.
+5. **Open, documentation housekeeping, not an open question anymore:**
+   write a self-contained `docs/ACCEPTANCE.md`-equivalent for Spec #002,
+   quoting the acceptance message now on record in its row above --
+   mirroring what #001/#003/#004 already have.
