@@ -49,17 +49,21 @@ tagged with one of:
   expressible in code; the current build not yet being exercised against
   it is not a defect in the current build.
 
-**On attributing the verification work itself:** where these matrices
-say a fact was checked against the source this round (code exists at a
-given line, a grep returns zero hits, a field is or isn't populated),
-that checking was done by GPT as part of Radu's own review process, the
-same role GPT has had throughout this project ("GPT Review #001",
-"GPT Review #003 Round 1", etc.) -- phrases like "Radu-endorsed" or
-"Radu caught" overstate Radu's own personal involvement in that specific
-technical check. The corrected framing used from this revision onward:
-**GPT verified the fact; Radu's own verdict on what it means
-contractually remains separate** and is not implied by the verification
-alone. This does not apply to historical messages reproduced verbatim
+**On attributing the verification work itself:** the matrices themselves
+and their initial checks against the source (code exists at a given
+line, a grep returns zero hits, a field is or isn't populated) were
+produced by Claude, not by Radu or by GPT. Separately, GPT -- the same
+reviewer role this project has used throughout ("GPT Review #001", "GPT
+Review #003 Round 1", etc.) -- has verified specific findings flagged in
+its reviews on a point-by-point basis; a full independent re-verification
+of every row by GPT has not been completed. Phrases like "Radu-endorsed"
+or "Radu caught" overstated Radu's own personal involvement in this
+technical work. The corrected framing used from this revision onward:
+**the matrices and initial verifications were produced by Claude; GPT
+has verified specific findings flagged in reviews on a point-by-point
+basis, with full independent verification not yet finished; Radu's own
+verdict on what any of this means contractually remains separate** and
+is not implied by either. This does not apply to historical messages reproduced verbatim
 (e.g. in `docs/evidence_spec002_acceptance_message.md`,
 `docs/evidence_004c_verdict_status.md`, or quotes from the recovered
 `Spec_00X_*.md` files) -- those remain exactly what Radu actually sent,
@@ -136,10 +140,10 @@ against -- it is one primary source, not confirmation.
 | **Original contract file** | **PRESENT.** `docs/Spec_002_Feature_Engine_Discovery_v1.0.md` -- recovered from this session's own transcript, 2026-09-30. Sent as a single message, already final (self-labeled "Status: APPROVED FOR IMPLEMENTATION"). |
 | **Version** | v1.0, per the recovered text's own header. |
 | **Source** | This Claude Code session's transcript. Not Radu's GPT conversation history. |
-| **Approval** | **ACCEPTED -- primary evidence now located (2026-10-03).** Found directly in this session's own transcript, Radu's own words, verbatim: *"Decizia mea / Spec #002 Discovery Engine = ACCEPTED la commit 4f36708. / Nu mai cer PATCH #002-B. / Dar înainte să pornim primul backtest real trebuie să închidem explicit: / Data Foundation: split-adjusted volume / corporate-action-consistent historical volume."* (transcript timestamp `2026-09-21T17:36:08Z`). This resolves the earlier "cited only, primary evidence not recovered" status -- it is a genuine, explicit acceptance decision, not an inference from later specs' citations. Note Radu's own "Nu mai cer PATCH #002-B" (not requesting PATCH #002-B) was superseded days later by a *different* trigger -- Spec #003's own IMPLEMENTATION BLOCKER SS74A -- which is why PATCH #002-B exists anyway; this is not a contradiction, just a later, separate reason. The full message is reproduced in `docs/evidence_spec002_acceptance_message.md` -- not only quoted here. #002 still has no self-contained `docs/ACCEPTANCE.md`-equivalent file of its own the way #001/#003/#004 do, but per Radu's own correction, that file is optional now that this index points clearly to the full message; its absence is documentation housekeeping, not missing evidence. |
+| **Approval** | **ACCEPTED -- primary evidence now located (2026-10-03).** Found directly in this session's own transcript, Radu's own words, verbatim: *"Decizia mea / Spec #002 Discovery Engine = ACCEPTED la commit 4f36708. / Nu mai cer PATCH #002-B. / Dar înainte să pornim primul backtest real trebuie să închidem explicit: / Data Foundation: split-adjusted volume / corporate-action-consistent historical volume."* (transcript timestamp `2026-09-21T17:36:08Z`). This resolves the earlier "cited only, primary evidence not recovered" status -- it is a genuine, explicit acceptance decision, not an inference from later specs' citations. Note Radu's own "Nu mai cer PATCH #002-B" (not requesting PATCH #002-B) was superseded days later by a *different* trigger -- Spec #003's own IMPLEMENTATION BLOCKER SS74A -- which is why PATCH #002-B exists anyway; this is not a contradiction, just a later, separate reason. The full message is reproduced in `docs/evidence_spec002_acceptance_message.md` -- not only quoted here. #002 still has no self-contained `docs/ACCEPTANCE.md`-equivalent file of its own the way #001/#003/#004 do, but per GPT's correction (relayed by Radu), that file is optional now that this index points clearly to the full message; its absence is documentation housekeeping, not missing evidence. |
 | **Amendments** | PATCH #002-A `4f36708` (cross-sectional RS eligibility-ordering fix, GPT Review #002 Round 1 mandatory finding). PATCH #002-B `136bf94` (pre-budget `DiscoveryObservation` isolation, resolving Spec #003's own IMPLEMENTATION BLOCKER SS74A -- a new trigger arising after the SS2 acceptance above, not a reopening of it). |
 | **Derived documentation** | `docs/spec002_architecture.md`, `spec002_known_limitations.md`, `spec002_test_report.md`, `spec002_examples.md`, `spec002_volume_report.md`. |
-| **Flag** | Base text present; acceptance now evidenced (see above, and see `docs/evidence_spec002_acceptance_message.md` for the full source message). Correspondence matrix: `docs/audit_spec002_requirement_code_test.md` -- status per the top of this document. No dedicated `docs/ACCEPTANCE.md`-equivalent file exists for #002, but per Radu's own correction that is optional documentation housekeeping now that this index points clearly to the full message -- not an open gap. See also "Superseded rules," below, for the holding-domain figure this spec's own text carries. |
+| **Flag** | Base text present; acceptance now evidenced (see above, and see `docs/evidence_spec002_acceptance_message.md` for the full source message). Correspondence matrix: `docs/audit_spec002_requirement_code_test.md` -- status per the top of this document. No dedicated `docs/ACCEPTANCE.md`-equivalent file exists for #002, but per GPT's correction (relayed by Radu) that is optional documentation housekeeping now that this index points clearly to the full message -- not an open gap. See also "Superseded rules," below, for the holding-domain figure this spec's own text carries. |
 
 ## Spec #003 -- Outcome-Aware Evaluation Engine (Fast-Swing / Bar-Based)
 
