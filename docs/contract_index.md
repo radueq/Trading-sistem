@@ -56,7 +56,12 @@ produced by Claude, not by Radu or by GPT. Separately, GPT -- the same
 reviewer role this project has used throughout ("GPT Review #001", "GPT
 Review #003 Round 1", etc.) -- has verified specific findings flagged in
 its reviews on a point-by-point basis; a full independent re-verification
-of every row by GPT has not been completed. Phrases like "Radu-endorsed"
+of every row by GPT has not been completed, **except for Spec #001,
+where GPT has now run its own full row-by-row pass over all 29 rows
+(commit `34acd9c`), reconciled against Claude's own independent pass in
+`docs/audit_spec001_requirement_code_test.md`** (status line at the top
+of that document). Specs #002-#004 remain at the point-by-point level.
+Phrases like "Radu-endorsed"
 or "Radu caught" overstated Radu's own personal involvement in this
 technical work. The corrected framing used from this revision onward:
 **the matrices and initial verifications were produced by Claude; GPT
