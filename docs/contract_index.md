@@ -38,9 +38,12 @@ same branch. Sequence: first, Claude's own fresh, high-effort
 independent re-verification pass (requested by Radu specifically to
 finish before the joint F1-F6 remediation design for #003, to surface
 cross-module dependencies first), elevating four of the matrix's own
-prior SUSPECTED ISSUE findings to DEMONSTRATED DEFECT via concrete
-reproduction through the real `preregister_hypothesis()` gate, plus one
-new TEST-COVERAGE GAP finding (the same AST parent-import blind spot
+prior SUSPECTED ISSUE findings to DEMONSTRATED DEFECT with concrete
+reproductions -- Findings 1, 2, and 11 each through the real
+`preregister_hypothesis()` gate; **Finding 10 through
+`proposals/validator.py`'s `validate_proposal()` one layer earlier,
+corrected per GPT's own review below, not through the gate** -- plus
+one new TEST-COVERAGE GAP finding (the same AST parent-import blind spot
 already found in #002's TEST 17/18 and #003's TEST 26, now in #004's
 TEST 49, renumbered Top Finding 13). **Then GPT's own actual
 independent review** delivered six further findings (GPT's own G1-G6,

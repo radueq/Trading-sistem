@@ -4,20 +4,26 @@
 Top Findings 14-19 (GPT's own G1-G6, GPT Review #004, relayed by Radu,
 against commit `d272cb8`) plus Top Finding 20 (the separate PATCH
 #004-C persistence finding). No code or test is changed by this
-document. Findings reconciliation for these six findings is recorded in
-`docs/audit_spec004_requirement_code_test.md`'s GPT-review status
-block; this document proposes remedies for Radu to evaluate, nothing
-here is pre-approved. Reconciliation of Claude's own prior Findings
-1-13 (the Claude-solo round) is also recorded there, not repeated here
--- those findings do not yet have a remediation proposal of their own;
-this document covers only the six GPT findings + P004C, per Radu's own
-explicit instruction this round.
+document. **Scope note, stated precisely (not as an instruction from
+Radu):** this document covers only these six findings + P004C --
+Claude's own choice of scope for this round, given the volume of
+material, not something Radu's relayed message required excluding.
+Claude's own prior Findings 1-13 (the Claude-solo round) still need
+their own remediation design, not yet started, and are not covered
+here.
 
-Three stages, kept separate as throughout this project: (1) findings
-reconciliation -- done for these six, recorded in the matrix; (2)
-remediation DESIGN -- this document, still open, several options listed
-per finding, none chosen; (3) implementation/acceptance -- not started,
-not authorized.
+**Current status of the three stages, precisely:** (1) findings --
+Claude has independently CONFIRMED each of the six findings + P004C,
+by code reading and by re-running GPT's own probe script against this
+repository (see the matrix's GPT-review status block). **This is
+Claude's own technical confirmation, not a closure of documentary
+reconciliation with GPT** -- `docs/contract_index.md` correctly states
+Spec #004's reconciliation remains OPEN, and that status is unchanged
+by this document; (2) remediation DESIGN -- this document, several
+options listed per finding, none chosen, and NOT a precondition for
+(1)'s status: finishing or not finishing this design has no bearing on
+whether the findings themselves are reconciled; (3) implementation/
+acceptance -- not started, not authorized.
 
 ---
 
@@ -35,47 +41,74 @@ actually declared. "Approved" currently means "an approval record
 exists whose id matches," not "an approval exists for this exact
 content."
 
-**Design options:**
+**Why comparing the draft to "the proposal passed into this call" is
+not sufficient, by itself (GPT's correction, relayed by Radu):** every
+candidate design below must bind content to something fixed BEFORE
+this call, not to another object the SAME caller supplies alongside
+the draft. `preregister_hypothesis()` receives `proposal` as a plain
+argument -- a caller (buggy or adversarial) can mutate `proposal` and
+`draft` TOGETHER, under the same `proposal_id`, before the call. A
+check that only compares draft fields against the `proposal` object
+handed to that same call proves the two agree with EACH OTHER, not
+that either one agrees with what `proposal_validation` actually
+validated or what the human `consensus` decision actually approved.
+The binding has to reach back to the VALIDATION RESULT and the HUMAN
+DECISION's own record, not to a second caller-supplied object.
+Similarly, no design below may rely on "this draft can only have been
+built by a trusted constructor" as a substitute for the gate itself
+validating the content it receives: `preregister_hypothesis()` is a
+plain function taking a `StrategyHypothesis` value: Python does not
+track or enforce how that value was constructed, so nothing strictly
+upstream of the gate can remove the need for the gate to check the
+object it was actually handed.
 
-- **(a) Direct field-by-field equality check at the gate.**
-  `preregister_hypothesis()` additionally compares
-  `draft.direction`/`draft.entry_definition`/
-  `draft.entry_execution_policy`/`draft.horizon_candidate_set` against
-  the corresponding fields on `proposal` (after `normalize_proposal()`),
-  raising if any differ. Simple, directly closes the demonstrated gap.
-  Open question: does the draft's exit-hypothesis selection also need
-  equality-checking against `proposal.exit_hypotheses`, given
-  `materialize_variants()` legitimately expands the proposal's raw exit
-  list into the full eagerly-materialized variant set (SS106-109)? A
-  naive equality check would break the normal, intended expansion. This
-  needs a precise definition of "the same content" that distinguishes
-  "faithfully derived from" (allowed) from "substituted" (forbidden).
-- **(b) Content-fingerprint the APPROVED proposal itself, and recompute
-  it at the gate.** Add a fingerprint field to `HypothesisProposal`
-  (or compute one on demand from its fields) and freeze it into
-  `consensus`/`HumanDecision` at approval time -- "radu approved
-  fingerprint X," not just "radu approved proposal_id prop_1." At the
-  gate, recompute the draft's own fingerprint-of-origin (the subset of
-  its fields that must trace back to the proposal) and compare against
-  the frozen approved fingerprint. More robust than (a) since it is
-  itself content-addressed, consistent with the rest of #004's design
-  philosophy, but requires deciding exactly which fields participate
-  (same open question as (a)).
-- **(c) Freeze the proposal object itself inside the draft's
-  provenance** (not just its id), and derive the draft deterministically
-  FROM that frozen proposal via a single trusted construction function,
-  removing the possibility of hand-building a draft with diverging
-  fields at all. Strongest guarantee, but a bigger structural change --
-  moves "which fields must match" from a runtime check into the type
-  system/construction path itself.
+**Design options, revised with the above in mind:**
 
-**Radu's open decision:** which fields of a proposal are allowed to be
-"faithfully derived into" vs. must be "identical to" the frozen draft,
-and which of (a)/(b)/(c) fits #004's existing content-addressing
-philosophy best. This also interacts with the vocabulary-recheck gap
-below (the `UNAPPROVED_RSI` reproduction) -- any of (a)/(b)/(c) that
-re-derives or re-compares `entry_definition` would incidentally need to
-re-run the Discovery-vocabulary check too, not just equality.
+- **(a) Direct field-by-field equality check against `proposal`,
+  alone -- INSUFFICIENT, kept here only to name why.** Comparing
+  `draft.direction`/`entry_definition`/etc. against the `proposal`
+  argument of the SAME call closes nothing if both can be supplied
+  together; listed for completeness, not as a candidate.
+- **(b) Freeze a content fingerprint into the human decision record AT
+  APPROVAL TIME, before this call exists at all, and recompute +
+  compare at the gate.** At the moment `consensus`/`HumanDecision` is
+  produced (i.e. when `can_preregister()`'s APPROVE is recorded), also
+  compute and freeze a fingerprint of the EXACT proposal content that
+  was reviewed and approved at that moment (direction, entry
+  definition, execution policy, horizon candidates, and the raw exit
+  hypotheses as submitted) -- `HumanDecision` or `ConsensusRecord`
+  gains an `approved_content_fingerprint` field, written once, when the
+  approval itself is recorded, never later. At the gate,
+  `preregister_hypothesis()` recomputes the SAME fingerprint from the
+  content it is now about to freeze (not from whatever `proposal`
+  object the caller also happened to pass in) and compares it against
+  `consensus.human_decision.approved_content_fingerprint`. Because that
+  field was written at approval time, mutating `proposal` and `draft`
+  together AFTER approval no longer helps -- the frozen approval record
+  itself won't match. This is the design that actually closes the gap
+  GPT described, not (a). Open question: exactly which fields
+  participate in this fingerprint, matching the same "faithfully
+  derived from" vs. "substituted" distinction below for exits/
+  horizons.
+- **(c) Derive the draft deterministically from the approved content
+  via a single construction function -- a structural aid, NOT a
+  substitute for (b).** A `build_draft_from_approved_proposal()`
+  helper that is the only INTENDED way to produce a draft reduces the
+  chance of accidental drift in normal use, but it cannot be presented
+  as removing the possibility of a hand-built, diverging draft -- the
+  gate still receives a plain object and must still validate it per
+  (b). Worth doing as good practice, not as the actual guarantee.
+
+**Radu's open decision:** which fields of the approved content
+participate in (b)'s fingerprint, with the same "faithfully derived
+from" (allowed -- e.g. `materialize_variants()`'s eager expansion of
+the proposal's raw exit list into the full variant set, SS106-109) vs.
+"substituted" (forbidden) distinction needed for exits/horizons as for
+every other field. This also interacts with the vocabulary-recheck gap
+(the `UNAPPROVED_RSI` reproduction) -- (b)'s fingerprint check does not
+by itself re-run the Discovery-vocabulary check; that needs its own
+explicit re-validation of `entry_definition` at the gate, separate from
+content-fingerprint equality.
 
 ---
 
@@ -131,38 +164,67 @@ subsequent `registry.register_variant()` raises (a conflicting
 `variant_tag` under an already-used id), the hypothesis is left
 PREREGISTERED in the registry with no rollback.
 
-**Design options:**
+**Required invariant, stated explicitly (GPT's correction, relayed by
+Radu):** on any failure inside `preregister_hypothesis()`, the ENTIRE
+registry must be in exactly the state it was in BEFORE the call --
+not merely "the hypothesis is removed." This is stricter than it
+first looks, for two reasons a rollback-only design must not skip:
 
-- **(a) Validate all variants' registerability BEFORE writing
-  anything.** Add a dry-run check inside `preregister_hypothesis()`
-  that, for each variant, verifies either (i) the id is not yet
-  registered, or (ii) it is registered with IDENTICAL content --
-  mirroring `register_variant()`'s own existing comparison logic --
-  and only if ALL variants pass this dry run does the function proceed
-  to `_force_register(frozen)` followed by the actual
-  `register_variant()` calls (which would then be guaranteed not to
-  raise, since the dry run already proved it). Minimal change, no new
-  registry capability needed, keeps the existing in-memory
-  `HypothesisRegistry` design.
-- **(b) Add a rollback path.** Wrap the write sequence in a
-  try/except that, on any `register_variant()` failure, removes the
-  just-written hypothesis from `registry._hypotheses` before
-  re-raising. Simpler to write than (a), but reaches into the
-  registry's internal dict directly from outside (or needs a new
-  `registry._rollback_hypothesis()` method), which is a less clean
-  separation of concerns than validating before writing.
+1. **Variants already written before the conflict.** If the variant
+   batch has more than one entry and the SECOND one conflicts, the
+   FIRST was already successfully written by `register_variant()`
+   before the failure -- a correct remedy must undo that write too,
+   not just the hypothesis.
+2. **A pre-existing record under the same id.** `_force_register()`
+   can legitimately overwrite an EXISTING non-PREREGISTERED record
+   (e.g. a prior DRAFT with the same `definition_hash`) with the new
+   PREREGISTERED one. If a later `register_variant()` call then fails,
+   rollback must RESTORE that original DRAFT object, not delete the
+   entry outright -- deleting would erase a pre-existing record the
+   call had no business removing, a different and equally real bug.
+
+**Design options, re-evaluated against that invariant:**
+
+- **(a) Validate everything BEFORE writing anything -- the right
+  general direction, but the dry run must cover both failure modes
+  above, not just the originally-reproduced one.** Before any write:
+  for the hypothesis itself, check `_force_register()`'s own
+  preconditions (definition_hash match if `existing` is not None;
+  not already a DIFFERENT-content PREREGISTERED record) without
+  performing the write; for EVERY variant in the batch, check
+  `register_variant()`'s own precondition (id absent, or present with
+  IDENTICAL content) against BOTH the registry's current state AND the
+  other variants already checked earlier in this same batch (so two
+  variants in the SAME call that would conflict with each other are
+  also caught, not only ones conflicting with something already in the
+  registry). Only once every check in the batch passes does the
+  function perform the actual writes. Because every precondition was
+  already verified, the actual writes are then guaranteed not to raise
+  -- this guarantee depends on the dry run covering BOTH failure modes
+  above; a dry run that only checks "is the id free" (as a naive first
+  cut might) would still miss the pre-existing-DRAFT-record case.
+- **(b) True rollback, meeting the invariant.** Capture the registry's
+  prior state for every id about to be touched (the hypothesis's own
+  prior record if any, and each variant's prior record if any) before
+  writing, and on any failure restore each one to its captured prior
+  value (which may be "did not exist," "existed as DRAFT," or
+  "existed as an identical PREREGISTERED record already") rather than
+  simply deleting. More code than (a), and still reaches into the
+  registry's internals (or needs a registry-level snapshot/restore
+  method) to capture and replay prior state correctly.
 - **(c) Make the registry itself transactional** (a `with
   registry.transaction():` context that stages writes and only commits
-  them together). Most general, but a bigger structural change than
-  this specific bug needs -- probably over-engineering unless other
-  atomicity gaps are expected elsewhere too.
+  them together, naturally satisfying the invariant by construction).
+  Most general, but a bigger structural change than this specific bug
+  needs -- probably over-engineering unless other atomicity gaps are
+  expected elsewhere too.
 
-**Radu's open decision:** (a) is the minimal fix consistent with the
-existing design (recommended by elimination, not a default); (b)/(c)
-are listed for completeness. This finding is scoped to the in-memory
-`HypothesisRegistry` only -- `JsonlAuditLog`'s own atomicity (one
-record per preregistration, PATCH #004-B finding #4) is separate and
-not affected either way.
+**Radu's open decision:** (a), done correctly against BOTH failure
+modes above, is the minimal fix; (b)/(c) are listed for completeness
+and would also need to satisfy the same invariant. This finding is
+scoped to the in-memory `HypothesisRegistry` only -- `JsonlAuditLog`'s
+own atomicity (one record per preregistration, PATCH #004-B finding
+#4) is separate and not affected either way.
 
 ---
 
@@ -257,41 +319,75 @@ computed once at load time; `HypothesisConfig.data` is a plain mutable
 dict, so nothing stops its nested values from diverging from what
 `config_version` claims to describe.
 
-**Design options -- this is the SAME underlying gap as Finding 11, so a
-shared remedy covering both is preferred over two separate ones:**
+**Why "recompute a new hash and stamp it" does not by itself prove
+freeze (GPT's correction, relayed by Radu):** a hash recomputed from
+whatever `data` currently holds correctly IDENTIFIES that content, but
+identifying current content is not the same claim as proving it is
+THE CONFIGURATION FROZEN BEFORE EXECUTION STARTED -- a freshly
+recomputed hash would happily and silently validate a config that was
+mutated five minutes ago, just as readily as the untouched original.
+A correct design needs four distinct steps, kept separate rather than
+collapsed into one recompute-and-stamp operation:
 
-- **(a) Recompute the version from `data`'s actual current content at
-  the point of use**, not from the original file text at load time:
-  `config_version = hash(json.dumps(data, sort_keys=True))`, computed
-  freshly wherever a version needs to be stamped (both at the gate for
-  `hypothesis_config_version` and in `build_research_queue()` for
-  `eligibility_config_version`), rather than carried as a frozen field
-  from load time. Closes both Finding 11 and this finding with one
-  mechanism: any mutation to `data` is immediately reflected, so a
-  tampered/mutated config can no longer masquerade as the original.
-- **(b) Make `HypothesisConfig.data` genuinely immutable** (freeze the
-  nested dict into an immutable mapping, e.g. via
-  `types.MappingProxyType` recursively, or convert to a frozen
-  dataclass/namedtuple structure at load time), so the ORIGINAL
-  load-time hash stays valid because the content literally cannot
-  change afterward. Addresses the root cause (mutability) rather than
-  recomputing around it, but is a larger structural change touching
-  every call site that currently does `config.data["section"]["key"]`
-  dict-style access.
-- **(c) Both:** immutability (b) as the primary defense, with (a)'s
-  recompute-and-compare kept as a defensive check at the two points
-  that currently stamp a version (gate + queue), in case something
-  outside this module's control still manages to hand in a divergent
-  dict (e.g. a caller constructing a `HypothesisConfig` by hand rather
-  than via `load_config()`).
+1. **Identify** the content actually in hand right now (a hash of its
+   canonical form).
+2. **Compare** that identification against an EXPECTED version --
+   one established and pinned BEFORE the operation (preregistration
+   run, queue run) began, not derived from the same live object being
+   checked.
+3. **Reject** on any mismatch between (1) and (2), rather than silently
+   accepting and re-stamping whatever is currently there.
+4. **Pin** that same snapshot for the full duration of the operation,
+   so a mutation occurring mid-run (between the gate's own check and
+   the queue's, for instance) cannot slip through either side purely
+   because each side recomputed its own fresh hash independently.
 
-**Radu's open decision:** (a) is the smaller fix and directly closes
-both Finding 11 and this finding; (b) is more structural and prevents
-the class of bug from recurring anywhere else `HypothesisConfig.data`
-is passed around, at the cost of touching more call sites. Recommend
-deciding this jointly with Finding 11's own remediation (not yet
-separately proposed) rather than fixing the Research Queue's instance
-in isolation, since they are the same root cause.
+**Design options, built around that four-step structure:**
+
+- **(a) Canonical-content hashing used for steps 1-3, with an explicit
+  pinned snapshot for step 4.** At the start of a preregistration
+  session or a Research Queue run, take ONE canonical-content hash of
+  `HypothesisConfig.data` and treat that single value as the pinned
+  "expected version" for every check performed during that run (both
+  the gate's `hypothesis_config_version` comparison and the queue's
+  `eligibility_config_version` stamp read from the SAME pinned value,
+  not from independent fresh recomputes each time). Any config object
+  handed to a check mid-run is hashed again and compared against that
+  one pinned value, rejecting on mismatch rather than accepting and
+  re-stamping. **This is a versioning-SEMANTICS change, flagged
+  explicitly, not merely a bug fix:** today's `config_version` is a
+  hash of the raw YAML file TEXT; canonical-content hashing of `data`
+  is a DIFFERENT function over different input and will produce
+  DIFFERENT version strings for the same logical config than today's
+  scheme does. Every historical `hypothesis_config_version` already
+  recorded in a frozen `HypothesisComplexitySnapshot` was computed
+  under the OLD scheme -- switching schemes must not reinterpret those
+  existing ids as if they'd always meant canonical-content hashes; this
+  needs its own explicit versioning rule (e.g. a scheme tag alongside
+  the hash, or treating the switch as a one-time config-version epoch
+  boundary), not a silent redefinition.
+- **(b) Make `HypothesisConfig.data` immutable at load** (e.g.
+  recursive `types.MappingProxyType`, or a frozen dataclass/namedtuple
+  structure) -- addresses in-process mutation after `load_config()`,
+  but **does not by itself cover the full problem**: it does nothing
+  for a `HypothesisConfig` constructed directly (bypassing
+  `load_config()`) with a `data`/`config_version` pair that is
+  mismatched from the start -- immutability only prevents CHANGE after
+  construction, not construction with already-inconsistent fields.
+  Step 1-3's identify/compare/reject still has to run at the point of
+  use regardless of whether (b) is also adopted.
+- **(c) Both, with (a) doing the actual enforcement work.** (b) as a
+  defense against accidental in-process mutation; (a)'s pinned-
+  snapshot identify/compare/reject as the mechanism that actually
+  closes both Finding 11 and this finding, since (a) alone already
+  covers the hand-built-mismatched-object case that (b) cannot.
+
+**Radu's open decision:** whether to adopt the versioning-semantics
+change in (a) (canonical-content hashing, with an explicit epoch/
+scheme-tag rule for existing historical ids) now, jointly with Finding
+11's own remediation (not yet separately proposed), rather than fixing
+the Research Queue's instance in isolation -- they share the same root
+cause and the same versioning-semantics question.
 
 ---
 
@@ -304,23 +400,80 @@ missing types on the way OUT); `from_jsonable()` raises `KeyError` on
 the way back IN, since it looks up the registry by the tagged type
 name.
 
-**Design option (this one has no real design ambiguity -- it's a
-one-line registry omission from an additive patch, not a design
-choice):**
+**Design option for the demonstrated omission itself (no real design
+ambiguity here -- a one-line registry omission from an additive patch,
+not a design choice):**
 
 - Add `StopLossRule, PartialProfitRule` to the `_TYPE_REGISTRY` tuple in
-  `registry/persistence.py`. That is the entire fix; `to_jsonable()`/
-  `from_jsonable()`'s generic recursive logic needs no other change
-  since it already handles any dataclass uniformly once its name is in
-  the registry.
+  `registry/persistence.py`. This directly closes the exact gap
+  demonstrated (the minimal round-trip probe's `KeyError`). **Scope
+  correction (GPT's review, relayed by Radu): this closes the minimal
+  probe, not necessarily the whole flow** -- whether the full
+  preregistration-then-restart-then-replay path for a complete
+  STOP_MANAGED_INVALIDATION family (hypothesis + variant + nested
+  `StopLossRule`/`PartialProfitRule`, written via `JsonlAuditLog.
+  append()` and reconstructed via `replay()`) works end-to-end once
+  this registration is added is NOT asserted here and remains to be
+  verified at implementation time, not claimed now as already settled
+  by this one-line change.
 
-**Reported and proposed separately from PATCH #004-C's own historical
-acceptance (commit `2fa5575`, the Spec #005 Exit Amendment v1.0
-document) per GPT's and Radu's explicit instruction** -- that
-acceptance covered the CONTRACT TEXT for the additive exit family, not
-this serializer path, which was added later and never updated when
-`StopLossRule`/`PartialProfitRule` were introduced. Fixing this needs
-its own approval step, not a reopening of PATCH #004-C's acceptance.
+**Reported and proposed separately from the historical acceptance
+record, stated precisely rather than abbreviated:** the Spec #005 Exit
+Amendment v1.0 document's TEXT was accepted (commit `2fa5575`);
+PATCH #004-C's own IMPLEMENTATION verdict remains separate and
+pending, per `docs/evidence_004c_verdict_status.md` and
+`docs/contract_index.md`'s own Spec #004 "Flag" row. This finding does
+not reopen either of those; it flags a persistence-layer regression in
+code added after #004's original audit scope, needing its own
+approval step.
+
+---
+
+## Required regression coverage (planned, not written -- design stage only)
+
+Whichever design option is chosen per finding, the regression suite
+added at implementation time must include AT LEAST the following
+scenarios -- listed here so the remediation design is evaluated against
+a concrete verification plan, not left to be decided ad hoc once
+implementation starts. None of these tests exist yet; none are written
+by this document.
+
+- **Finding 14 (GPT-G1):** content changed under the SAME approved id,
+  including the case where `proposal` and `draft` are mutated
+  TOGETHER under that id (not just a draft diverging from an
+  unmodified proposal) -- the chosen design must reject this, since
+  that is exactly the scenario Finding 14's own discussion above shows
+  a naive draft-vs-proposal comparison would miss.
+- **Finding 15 (GPT-G2):** both directions of incompleteness (missing
+  AND extra TIME_EXIT variants relative to `horizon_candidate_set.
+  values`) and at least one invalid exit-semantics case per field
+  (`time_exit_bars` sign, `horizon_reference_point`,
+  `exit_execution_policy`).
+- **Finding 16 (GPT-G3):** a conflict arising AFTER at least one
+  variant in the same batch has already been successfully written,
+  and a conflict where the hypothesis id pre-existed as a DRAFT before
+  the call -- both must leave the registry in the exact pre-call
+  state, per the invariant in section 3 above (not just "hypothesis
+  absent").
+- **Finding 17 (GPT-G4):** every public-API transition path into
+  PREREGISTERED (not only the exact HANDOFF_TO_BACKTEST-then-
+  PREREGISTERED sequence reproduced) is rejected, AND the legitimate
+  existing use of `register()` -- idempotently re-registering an
+  ALREADY-PREREGISTERED record with identical content (e.g. audit-log
+  replay) -- continues to succeed unchanged.
+- **Finding 18 (GPT-G5):** stability-bin values placed into the
+  `EvidencePacket` (whichever field design is chosen) are asserted to
+  actually reach it with correct values, not merely that the packet's
+  presence flag is set.
+- **Finding 19 (GPT-G6):** a config mutation occurring between when a
+  version was pinned and when a check runs is REJECTED against that
+  pinned snapshot, not silently accepted and re-stamped.
+- **Finding 20 (P004C):** both nested types round-trip
+  (`StopLossRule` AND `PartialProfitRule`, not just one), AND a full
+  STOP_MANAGED_INVALIDATION hypothesis+variant family survives a
+  complete persist-then-reload cycle through `JsonlAuditLog.append()`/
+  `replay()`, not only the minimal direct `to_jsonable`/`from_jsonable`
+  probe already reproduced.
 
 ---
 

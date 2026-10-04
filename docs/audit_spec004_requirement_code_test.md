@@ -1,7 +1,22 @@
 # Spec #004 -- Requirement -> Code -> Test Correspondence Matrix
 
 **Status: background-agent output, partially spot-checked by Claude, NOT
-independently verified by Radu.** Produced by a Claude subagent reading
+independently verified by Radu.** This opening status line, and the
+"Revision note (2026-10-03)" block immediately below it, describe this
+document's HISTORICAL starting point only -- both are superseded by
+the two later rounds further down (the Claude-solo 2026-10-04 pass and
+GPT's own 2026-10-04 independent review). Specifically superseded: the
+"SUSPECTED ISSUE -- VERIFICATION PENDING" tag given to Findings 1, 2,
+10, and 11 below (now DEMONSTRATED DEFECT, with the exact scope
+corrections GPT required -- see the "GPT independent review" status
+block and Top Findings 1, 2, 10, 11 for what changed and what did not);
+the characterization of Finding 1's failure scenario as "hypothetical,
+not something that has happened or can be reproduced" (superseded by a
+concrete reproduction, itself later narrowed by GPT's own four-point
+correction, not reopened to "hypothetical" by that narrowing). Current
+status for every finding is in the row-level table and the "Top
+findings" list below, not in this historical preamble. Produced by a
+Claude subagent reading
 `docs/Spec_004_Hypothesis_Generation_v1.0.md` section-by-section (all 111
 sections, both original messages) against `src/hypothesis/` and
 `tests/spec004/test_01_*.py`-`test_66_*.py` (in-#004-scope; tests 67-73
@@ -235,21 +250,29 @@ output:**
   `from_jsonable(to_jsonable(StopLossRule(basis="ATR_TRAILING_V1",
   atr_multiple=2.0)))` fails immediately. Reproduced exactly as
   described; not run as a full preregister-then-restart scenario, and
-  not claimed as one. PATCH #004-C's own historical acceptance (commit
-  `2fa5575`, the Spec #005 Exit Amendment v1.0 document) predates this
-  discovery and is a different thing being accepted (the contract
-  text, not this serializer path); this finding does not reopen it, it
-  flags a persistence regression in a family added after #004's
-  original audit scope.
+  not claimed as one. **Stated precisely, per `docs/contract_index.md`'s
+  own Spec #004 "Flag" row:** the Spec #005 Exit Amendment v1.0
+  document's TEXT was accepted (commit `2fa5575`); PATCH #004-C's own
+  IMPLEMENTATION verdict remains separate and pending, per
+  `docs/evidence_004c_verdict_status.md`. This finding does not reopen
+  either of those; it flags a persistence regression in a family added
+  after #004's original audit scope.
 
-**All of the above were independently reproduced by Claude**: by
+**All of the above were re-verified by Claude, precisely stated:** by
 reading the exact cited lines, and by re-running GPT's own
 `gpt_probes.py` (which explicitly layers on top of
 `claude_reproduce_spec004.py`'s fixture builder, per GPT's own
 disclosure above) directly against this repository -- not merely
-trusting GPT's self-reported output. See the delivered `gpt_probes.py`/
-`gpt_results.txt`/`claude_probes_rerun_by_gpt.txt` and Claude's own
-fresh run transcript for the exact reproduction. **GPT's own explicit
+trusting GPT's self-reported output. **Correction, 2026-10-04 (GPT
+review, relayed by Radu): this is Claude's own implementer
+re-verification of GPT's findings, valuable but distinct in kind from
+GPT's own independent review, and distinct from an independently-built
+reproduction (`gpt_probes.py` reuses Claude's own fixture, as already
+disclosed) -- it is not a second, separate confirmation by an
+unrelated method.** See the delivered `gpt_probes.py`/`gpt_results.txt`
+(GPT's own run) and `claude_rerun_gpt_probes_7651a89.txt` (Claude's own
+log of the SAME re-run, captured during the prior round, not rerun
+again for this correction) for the exact output. **GPT's own explicit
 limits on these findings, preserved precisely rather than
 generalized:** GPT-G1's probes do not call `_force_register()` and use
 a genuinely-valid `ProposalValidationResult`, not a fabricated one;
@@ -288,9 +311,19 @@ provenanced -- GPT-G1 through G6 show the artifacts' *content*
 guarantees have gaps the import scan cannot see. Finding 10
 must be described precisely as reproduced through `validate_proposal()`
 (the proposal-layer check), not generalized as "all through the real
-preregister_hypothesis() gate" -- only Findings 1, 2, 11, and GPT-G1
-through G6/P004C above were driven through the actual gate function
-itself.
+preregister_hypothesis() gate." **Correction, 2026-10-04 (GPT review,
+relayed by Radu): the prior version of this paragraph wrongly claimed
+every one of GPT-G1 through G6/P004C was driven through the real gate
+too -- false, and GPT-G4's entire point is the opposite.** Precisely:
+Findings 1, 2, 11, GPT-G1, GPT-G2, and GPT-G3 were each driven through
+the actual `preregister_hypothesis()` gate function. GPT-G4 explicitly
+does NOT call the gate -- its reproduction is two public `register()`
+calls plus `register_variant()`, bypassing `preregister_hypothesis()`
+entirely, which is the finding itself. GPT-G5 exercises only
+`build_evidence_packet()`, with no gate or registry involved. GPT-G6
+exercises only `build_research_queue()`, also with no gate involved.
+P004C exercises only `to_jsonable()`/`from_jsonable()`, a serialization
+round trip with no gate, registry, or queue involved at all.
 
 ---
 
@@ -301,7 +334,7 @@ itself.
 | 1 | Purpose: turn #003 evidence into a testable, frozen hypothesis; not a profitability test | Whole-package architecture | N/A (narrative) | N/A |
 | 2 | Outcome-aware for hypothesis formation but not a backtester; never raw returns/backtest/Locked OOS/indicator optimization | `evidence/packet.py:31` (imports only `evaluation.models.entities`) | `test_36`, `test_38` | MET |
 | 3 | A Development-derived hypothesis must be explicitly marked as such | `EvidenceProvenance` carries run/config lineage but no `evaluation_mode` field | No test asserts a DEVELOPMENT-DERIVED tag exists | **DEMONSTRATED DEFECT, 2026-10-04 (Claude's own fresh reproduction) -- see Top Finding 1, elevated from SUSPECTED ISSUE:** a hypothesis built entirely from `evaluation_mode="EXPLORATORY"` evidence reached PREREGISTERED through the real gate with zero errors; the frozen record carries no field anywhere recording which mode the evidence came from |
-| 4 | Locked OOS completely inaccessible | Import-boundary only; no allowlist restricting mode to FORMAL_DEVELOPMENT | `test_36` (import boundary only) | MET for literal Locked-OOS price inaccessibility (the import boundary is real and structural -- `hypothesis/` never imports PIT/`data_foundation`, confirmed by this round's own dependency check). **DEMONSTRATED DEFECT, 2026-10-04 (Claude's own fresh reproduction) -- see Top Finding 1, elevated from SUSPECTED ISSUE:** the narrower, related claim -- that evidence feeding a hypothesis must have gone through FORMAL_DEVELOPMENT discipline -- is not enforced anywhere; same reproduction as §3 |
+| 4 | Locked OOS completely inaccessible | Import-boundary only; no allowlist restricting mode to FORMAL_DEVELOPMENT | `test_36` (import boundary only) | MET for the verified STATIC import dependency only -- `hypothesis/` never imports PIT/`data_foundation` anywhere, confirmed by this round's own dependency check; this says nothing about the provenance of CONTENT that arrives through already-built artifacts (`EvidenceProfile`/`EvidencePacket`), which is a separate question (see GPT-G1 through G6, Top Findings 14-19). **DEMONSTRATED DEFECT, 2026-10-04 (Claude's own fresh reproduction) -- see Top Finding 1, elevated from SUSPECTED ISSUE:** no field anywhere on the frozen record marks which `evaluation_mode` the evidence came from -- this is the structural gap actually demonstrated. **Separate, still-open question, per GPT's correction (relayed by Radu):** whether the spec text itself REQUIRES an admission policy restricting hypothesis formation to FORMAL_DEVELOPMENT-sourced evidence (as opposed to merely requiring that Development-derived evidence be marked as such, SS3's own literal wording) is a distinct contractual reading this reproduction does not settle -- do not read the demonstrated absence of a marking field as proof that such a policy requirement exists and is violated |
 | 5 | No direct Price History/PIT access needed | `evidence/packet.py:31` | `test_36` | MET |
 | 6 | Worked example of what a Hypothesis is | `docs/spec004_examples.md` Example A | N/A | N/A |
 | 7 | `StrategyHypothesis` entity, minimum fields | `models/entities.py:381-430` + `433-447` (`StrategyVariant`) -- spec's single entity split into family+variant per Radu's §110-D | `test_03`, `test_41` | MET (documented restructuring) |
@@ -343,7 +376,7 @@ itself.
 | 43 | Consensus is not a vote for truth; independent perspectives reaching the same structure | `compute_consensus()` classifies shape only, never correctness | `test_32` | MET |
 | 44 | `AgentReview` entity | `models/entities.py:527-538` | `test_29` | MET |
 | 45 | `ConsensusRecord` entity | `models/entities.py:555-564` | `test_32` | MET |
-| 46 | Human authority final; AI consensus alone can't auto-preregister | `can_preregister()` | `test_30`, `test_31` | MET on the core rule that AI consensus alone cannot auto-preregister via the gate. **SUSPECTED ISSUE -- VERIFICATION PENDING**: whether a human APPROVE can override a BLOCKED (all-objecting) consensus is genuinely unresolved by the spec text and untested for that exact combination -- see Finding 5. **DEMONSTRATED DEFECT, 2026-10-04 (GPT review, relayed by Radu) -- see Top Findings 14 and 17 (GPT-G1, GPT-G4):** "human authority final" assumes the human's APPROVE actually covers the content being frozen (GPT-G1 shows it doesn't -- the gate never compares draft content to what was approved) and that the gate is the only path to PREREGISTERED (GPT-G4 shows a path with no human decision at all) |
+| 46 | Human authority final; AI consensus alone can't auto-preregister | `can_preregister()` | `test_30`, `test_31` | MET on the core rule that AI consensus alone cannot auto-preregister via the gate, AND MET on Radu's own final authority to APPROVE over a BLOCKED (all-objecting) consensus -- this is a settled project rule, not an open question (corrected per GPT's review, relayed by Radu -- see Finding 5). **TEST-COVERAGE GAP**: whether AI objections are preserved/logged on the record when such an override happens is untested for that exact combination -- see Finding 5. **DEMONSTRATED DEFECT, 2026-10-04 (GPT review, relayed by Radu) -- see Top Findings 14 and 17 (GPT-G1, GPT-G4):** "human authority final" assumes the human's APPROVE actually covers the content being frozen (GPT-G1 shows it doesn't -- the gate never compares draft content to what was approved) and that the gate is the only path to PREREGISTERED (GPT-G4 shows a path with no human decision at all) -- neither of these two findings is about whether Radu's authority is final; both are about whether the gate correctly enforces what that authority actually approved |
 | 47 | Statistical-skeptic checklist (support/concentration/FDR/horizon/regime/scarcity) | `objections` is free text; no structured checklist enforced | Nothing enforces the checklist was actually applied | **FUTURE / PROCEDURAL REQUIREMENT** -- whether the checklist was actually applied is a human-judgment question code cannot verify |
 | 48 | `HypothesisProposal` entity, minimum fields | `models/entities.py:491-524` | `test_33` | MET |
 | 49 | Rationale is interpretation, not statistics; separated from Evidence | `facts_from_evidence`/`interpretation` separate fields | `test_33` | MET |
@@ -395,7 +428,7 @@ itself.
 | 95 | Deliverables: 6 named docs | All 6 present | N/A | MET |
 | 96 | 4 controlled examples | `docs/spec004_examples.md` (real pipeline run) | Generated by a report script | MET |
 | 97 | 44 required tests | `test_01`-`test_44` all present | Same | MET |
-| 98 | Hard FAIL conditions (14 named) | Distributed across `test_05,12,16,24,26,31,35,36,37,38,53` | Same | MET on literal Locked-OOS price inaccessibility (the import boundary is real and structural, confirmed by this round's own dependency check). **DEMONSTRATED DEFECT, 2026-10-04 -- see Top Finding 1**: the narrower, related FAIL condition -- that evidence feeding a hypothesis must itself have gone through FORMAL_DEVELOPMENT discipline -- is not enforced; same reproduction as §3/§4. **Two further Hard FAIL conditions, 2026-10-04 (GPT review, relayed by Radu) -- see Top Findings 14 and 17 (GPT-G1, GPT-G4):** "no hypothesis reaches PREREGISTERED without a human-approved proposal covering that exact content" and "no hypothesis reaches PREREGISTERED without the deterministic gate" are each independently demonstrated not held, by two different code paths |
+| 98 | Hard FAIL conditions (14 named) | Distributed across `test_05,12,16,24,26,31,35,36,37,38,53` | Same | MET on the verified STATIC import dependency only (the import boundary is real and structural, confirmed by this round's own dependency check) -- this does not extend to the provenance of content arriving through already-built artifacts, a separate question (GPT-G1 through G6 below). **DEMONSTRATED DEFECT, 2026-10-04 -- see Top Finding 1**: no field anywhere marks which `evaluation_mode` a hypothesis's evidence came from -- the structural gap actually demonstrated. **Whether this specific Hard FAIL condition's text requires an admission policy, as opposed to only a marking requirement, is a separate open contractual reading**, not settled by this reproduction -- see Top Finding 1's own correction. **Two further Hard FAIL conditions, 2026-10-04 (GPT review, relayed by Radu) -- see Top Findings 14 and 17 (GPT-G1, GPT-G4):** "no hypothesis reaches PREREGISTERED without a human-approved proposal covering that exact content" and "no hypothesis reaches PREREGISTERED without the deterministic gate" are each independently demonstrated not held, by two different code paths |
 | 99 | Out-of-scope list | `NOT_DEFINED_YET` placeholders; no broker/backtest imports | `test_37,38` | MET |
 | 100 | What #004 produces at the end (not a profitability claim) | Registry accounting | N/A | N/A |
 | 101 | Example final `StrategyHypothesis` | `docs/spec004_examples.md` | N/A | N/A |
@@ -418,7 +451,7 @@ itself.
 2. **[DEMONSTRATED DEFECT, 2026-10-04 -- elevated from SUSPECTED ISSUE by Claude's own fresh reproduction]** `research_mode` (SS29) is never enforced at the preregistration gate (zero occurrences in `registry/preregistration.py` or `validation/rules.py`). **No longer a static-grep claim**: a DRAFT explicitly tagged `research_mode="EXPLORATORY_HYPOTHESIS"` ("cannot enter formal backtest validation directly") was driven through the REAL gate and reached PREREGISTERED unchanged, with no error -- alongside two Spec #002 findings GPT verified the same way by inspection; the contractual verdict on all three is Radu's, not yet given. See §29 above.
 3. **[SUSPECTED ISSUE -- VERIFICATION PENDING]** Per-condition provenance (SS70) is missing -- only whole-hypothesis provenance exists, confirmed by inspection. An entry mixing conditions validated under two different Discovery config versions would be indistinguishable from one where both share the same version. Whether SS70 requires this granularity or whole-hypothesis provenance suffices is Radu's contractual reading.
 4. **[FUTURE / PROCEDURAL REQUIREMENT]** "Independent first-pass reasoning" and the statistical-skeptic checklist (SS41-43,47) are process requirements code cannot express, honestly documented as unenforced.
-5. **[SUSPECTED ISSUE -- VERIFICATION PENDING]** Whether a human APPROVE can override a BLOCKED (all-objecting) consensus (SS43-46) is genuinely unresolved by the spec text; current code takes the permissive reading, untested for this exact combination.
+5. **[Correction, 2026-10-04 (GPT review, relayed by Radu): reframed]** Radu's final human authority to APPROVE over a BLOCKED (all-objecting) consensus is NOT an open question -- the project's own standing rule makes the human decision-maker final, and this round's code already takes that reading, correctly. **[TEST-COVERAGE GAP]** What is actually untested is narrower: whether the AI objections themselves are PRESERVED/logged on the record when a human APPROVE overrides a BLOCKED consensus, for that exact combination -- a traceability question, not a question of whether the override is allowed. Do not read this as reintroducing a mandatory-AI-consensus requirement; it is not.
 6. **[SUSPECTED ISSUE -- VERIFICATION PENDING]** `FutureResearchNote` (SS84-85) is dead code -- defined but never constructed, validated, or referenced anywhere, confirmed by inspection. Whether this leaves SS84 genuinely unmet or is acceptable unused scaffolding at this stage is Radu's call.
 7. **[TEST-COVERAGE GAP (the entity) + SUSPECTED ISSUE -- VERIFICATION PENDING (the missing field)]** `HypothesisUniverse` (SS54, SS108) is a simple accounting object, reasonable by inspection, but has zero test coverage; separately, it omits "all variants considered" as a field, though the data exists via a different, unwired method.
 8. **[TEST-COVERAGE GAP]** No test verifies the ~1-3KB EvidencePacket token-budget target (SS40) -- a size measurement, not confirmable by reading the code.
@@ -436,4 +469,4 @@ itself.
 17. **[DEMONSTRATED DEFECT, 2026-10-04 (GPT review, relayed by Radu) -- GPT's G4]** The public `HypothesisRegistry.register()` API can reach PREREGISTERED without the gate ever running. Its first-time-PREREGISTERED guard (`registry/hypotheses.py:241-249`) checks only `existing is None`; a HANDOFF_TO_BACKTEST record legitimately registered first (the docstring's own documented exception), then re-`register()`-ed under the same id with status PREREGISTERED, is NOT first-time and is NOT blocked. Reproduced: fresh registry, `register()` HANDOFF_TO_BACKTEST, `register()` the same object/id as PREREGISTERED, `register_variant()`, `build_strategy_definition()` -- all succeed, with no proposal, no consensus, no human decision, and `preregister_hypothesis()` never called. TEST 53 covers only direct PREREGISTERED insertion into an EMPTY registry, not this two-step transition. See §§29-31,35,46,63,98 above.
 18. **[DEMONSTRATED DEFECT, 2026-10-04 (GPT review, relayed by Radu) -- GPT's G5]** `EvidencePacket` discards actual stability-bin values, keeping only their presence. §39's minimum-content list names "stability bins" as its own top-level item, distinct from §57's separate "stability availability" (a Research Queue filter criterion) -- the spec text itself treats these as two different things. `build_evidence_packet()` (`evidence/packet.py:167`) and `EvidencePacket` (`entities.py:604-647`) carry only `primary_has_stability_bins: bool`. Reproduced: two profile sets, identical except a stability bin mean of +1% vs -70% (same presence flag either way), produce byte-identical `EvidencePacket`s. See §39 above.
 19. **[DEMONSTRATED DEFECT, 2026-10-04 (GPT review, relayed by Radu) -- GPT's G6]** Research Queue eligibility thresholds can change without the recorded config version changing -- the same category of gap as Finding 11, now demonstrated at the queue. `HypothesisConfig` (`config/loader.py:19-29`) is a frozen dataclass wrapping a plain MUTABLE `data` dict; `config_version` is a hash of the raw file text, fixed at load time, never recomputed from `data`'s live content. Reproduced: mutating `config.data["research_queue_eligibility"]["minimum_valid_episode_n"]` after load flips the same packet from eligible to ineligible while `eligibility_config_version` stays identical. SS110-H explicitly requires thresholds "configured, versioned and frozen before queue execution"; TEST 50 changes the version field by hand in its own fixture and so cannot detect this divergence. See §110-H above.
-20. **[Reported separately, does not reopen PATCH #004-C's historical acceptance]** `registry/persistence.py`'s `_TYPE_REGISTRY` (lines 47-53) omits `StopLossRule`/`PartialProfitRule`, the two PATCH #004-C types nested inside `ExitHypothesis` for `STOP_MANAGED_INVALIDATION`. `to_jsonable()` serializes them via generic dataclass recursion; `from_jsonable()` raises `KeyError: 'StopLossRule'` on the round trip. A persistence regression in a family added after #004's original audit scope, not a defect in #004's own text-conformance; needs its own remediation/approval step, separate from re-litigating PATCH #004-C's acceptance.
+20. **[Reported separately; does not reopen the Exit Amendment text's acceptance or PATCH #004-C's still-pending implementation verdict]** `registry/persistence.py`'s `_TYPE_REGISTRY` (lines 47-53) omits `StopLossRule`/`PartialProfitRule`, the two PATCH #004-C types nested inside `ExitHypothesis` for `STOP_MANAGED_INVALIDATION`. `to_jsonable()` serializes them via generic dataclass recursion; `from_jsonable()` raises `KeyError: 'StopLossRule'` on the round trip. A persistence regression in a family added after #004's original audit scope, not a defect in #004's own text-conformance; needs its own remediation/approval step, separate from the Exit Amendment's own text acceptance and from PATCH #004-C's separate, still-pending implementation verdict (per `docs/contract_index.md`'s own Spec #004 "Flag" row).
