@@ -506,7 +506,18 @@ is not itself the audit.
      CLOSED (GPT's side); remediation design
      (`docs/spec003_remediation_proposal_2026-10-04.md`) remains OPEN --
      F1's own OOS-classification mechanism has no working design yet;
-     implementation/acceptance of any fix is NOT AUTHORIZED.**
+     implementation/acceptance of any fix is NOT AUTHORIZED.** Now
+     joined with #004's own remediation design in
+     `docs/joint_remediation_design_003_004_2026-10-04.md` (2026-10-04,
+     per GPT's own recommendation once both audits closed) -- a
+     cross-module dependency check (the two fix sets are independent),
+     a recommended build order, a concrete recommended solution per
+     item (separated from the items that remain Radu's own call: #003
+     F1 part 2/F3/F4+F5's estimator/S1/S2's epoch marker, #004 Finding
+     14's exact field mapping/Finding 16's guarantee width/Finding 19's
+     registered-version mechanism), a consolidated regression
+     checklist, and a per-item sign-off checklist for Radu. Design
+     only, not implementation.
    - **Spec #004: two rounds done (2026-10-04).** Round 1 (Claude
      alone): a fresh, high-effort independent re-verification pass,
      requested by Radu specifically to finish before the joint F1-F6
