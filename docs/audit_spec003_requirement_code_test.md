@@ -46,17 +46,27 @@ reporting its own **60 passed** for `tests/spec003` and delivering six
 groups of findings (F1-F6) plus a set of suspicions/gaps (S1, S2, G1,
 G2) not promoted to defect status. Reconciliation against those
 findings by Claude is below (see "New findings, GPT independent audit
-round 1" and Top Findings 11-18)
-and **remains in progress, not closed** -- unlike Specs #001/#002,
-whose reconciliation rounds are done (`docs/contract_index.md`). Spec
-#004 has not been audited in full by GPT in this round. Claude
-independently re-ran the full `tests/spec003` suite on the same
-package with no code changes: **60 passed**, matching GPT's own
-figure. No code or test was modified to produce this reconciliation.
-The historical `ACCEPTED` record for Spec #003 (`docs/contract_index.md`,
-baseline `d889049`) is preserved as a historical fact, not revoked by
-this audit -- remediation of the findings below is a separate,
-not-yet-authorized step; Radu's own contractual verdict on each
+round 1" and Top Findings 11-19).
+
+**Three distinct stages, stated explicitly (2026-10-04, per GPT's own
+framing, relayed by Radu):** (1) **audit/reconciliation of the F1-F6
+findings themselves is CLOSED, from GPT's side, as of commit
+`8a0f152`** -- the mechanisms in Top Findings 11-19 are not in dispute,
+matching #001/#002's own closed reconciliation rounds
+(`docs/contract_index.md`). (2) **Remediation DESIGN remains OPEN** --
+`docs/spec003_remediation_proposal_2026-10-04.md` proposes fixes for
+each finding, but several (notably F1's `CROSSES_LOCKED_OOS`
+classification mechanism) have no working design yet; that document's
+own status line tracks this separately. (3) **Implementation and
+acceptance are NOT AUTHORIZED** -- none of the proposed fixes have been
+built or approved. Spec #004 has not been audited in full by GPT in
+this round. Claude independently re-ran the full `tests/spec003` suite
+on the `0c1d3cc` package with no code changes: **60 passed**, matching
+GPT's own figure -- this figure has not been re-verified or re-run by
+GPT itself in the rounds since. No code or test was modified to produce
+this reconciliation. The historical `ACCEPTED` record for Spec #003
+(`docs/contract_index.md`, baseline `d889049`) is preserved as a
+historical fact, not revoked by this audit; Radu's own contractual verdict on each
 finding remains his to give.**
 
 ---

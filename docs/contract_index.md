@@ -23,12 +23,20 @@ Spec #003 has now also been audited in full by GPT -- all 75 sections,
 against package `0c1d3cc` -- delivering six groups of findings (F1-F6)
 plus further suspicions/gaps (S1, S2, G1, G2); Claude's own independent
 reconciliation against that audit is recorded in
-`docs/audit_spec003_requirement_code_test.md`, but **this reconciliation
-round remains in progress, not closed** -- unlike #001/#002. Spec #004
-is not yet audited in full by GPT -- its matrix remains at the original
-point-by-point spot-check level. Radu's own contractual verdict on any
-finding -- in any of the four matrices -- remains separate from this
-technical reconciliation throughout, and has not been given.** The
+`docs/audit_spec003_requirement_code_test.md`. **As of commit `8a0f152`
+(2026-10-04), that reconciliation of the F1-F6 findings themselves is
+CLOSED from GPT's side** -- matching #001/#002's own closed rounds, and
+unlike the earlier state of this document. This closes the FINDINGS
+stage only: **remediation DESIGN for those findings
+(`docs/spec003_remediation_proposal_2026-10-04.md`) remains a separate,
+OPEN stage** -- several designs, notably F1's OOS-classification
+mechanism, have no working answer yet -- and **implementation/
+acceptance of any fix is a third, separate stage, NOT AUTHORIZED.**
+Spec #004 is not yet audited in full by GPT -- its matrix remains at
+the original point-by-point spot-check level. Radu's own contractual
+verdict on any finding -- in any of the four matrices -- remains
+separate from this technical reconciliation throughout, and has not
+been given.** The
 matrices exist as
 `docs/audit_spec00{1,2,3,4}_requirement_code_test.md` (commit `edf8dbe`,
 reclassified per the key below at a later commit -- see each file's own
@@ -182,7 +190,7 @@ against -- it is one primary source, not confirmation.
 | **Approval** | **ACCEPTED.** Technical baseline `d889049` (PATCH #003-B). Verdict recorded in commit `266cc6f` ("GPT Review #003 Final verdict", doc-only, immediately after the baseline commit). |
 | **Amendments** | PATCH #003-A `203233d` (6 statistical/correctness findings, GPT Review #003 Round 1). PATCH #003-B `d889049` (2 findings, GPT Review #003 Round 2). |
 | **Derived documentation** | `docs/spec003_architecture.md`, `spec003_known_limitations.md`, `spec003_test_report.md`, `spec003_examples.md`, `spec003_performance_report.md`, `spec003_multiple_testing_report.md`, `spec003_reproducibility.md`. |
-| **Flag** | Text now present but not yet independently verified by Radu. Correspondence matrix: `docs/audit_spec003_requirement_code_test.md` -- GPT has now audited all 75 sections independently (package `0c1d3cc`), reconciled by Claude (Top Findings 11-19: F1-F6, S1/S2, G1/G2) -- **reconciliation in progress, not closed.** The historical `ACCEPTED` status below (baseline `d889049`) is preserved as a record, not revoked or re-affirmed by this audit; remediation of the findings is a separate, not-yet-authorized step. |
+| **Flag** | Text now present but not yet independently verified by Radu. Correspondence matrix: `docs/audit_spec003_requirement_code_test.md` -- GPT audited all 75 sections independently (package `0c1d3cc`), reconciled by Claude (Top Findings 11-19: F1-F6, S1/S2, G1/G2). **As of `8a0f152`: findings reconciliation CLOSED (GPT's side); remediation design (`docs/spec003_remediation_proposal_2026-10-04.md`) OPEN; implementation/acceptance NOT AUTHORIZED** -- three distinct stages, only the first done. The historical `ACCEPTED` status below (baseline `d889049`) is preserved as a record, not revoked or re-affirmed by this audit. |
 
 ## Spec #004 -- Hypothesis Generation & Strategy Definition
 
@@ -424,8 +432,11 @@ is not itself the audit.
      weighting contradicting amendment SS74C's own text) plus S1/S2/G1/G2
      suspicions and gaps, all independently reproduced by Claude. See
      `docs/audit_spec003_requirement_code_test.md`'s own status line and
-     Top Findings 11-19. Reconciliation is in progress, not closed --
-     remediation of the findings has not been authorized or performed.
+     Top Findings 11-19. **As of `8a0f152`: findings reconciliation
+     CLOSED (GPT's side); remediation design
+     (`docs/spec003_remediation_proposal_2026-10-04.md`) remains OPEN --
+     F1's own OOS-classification mechanism has no working design yet;
+     implementation/acceptance of any fix is NOT AUTHORIZED.**
    - **Spec #004: not yet started this way.** Still at the original
      spot-check level; next in this track.
    Radu's own contractual verdict on any finding remains separate from

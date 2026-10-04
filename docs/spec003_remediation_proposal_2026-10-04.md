@@ -1,13 +1,23 @@
-# Spec #003 -- Remediation Proposal (2026-10-04, revision 3)
+# Spec #003 -- Remediation Proposal (2026-10-04, revision 4)
 
-**Revision note:** corrected twice the same day, both times from GPT's
-own review of this proposal, relayed by Radu -- not Radu's own technical
-analysis; his own contractual decisions on the open questions below
-remain separate and still pending. Revision 2 fixed: the F1 fix still
-reading OOS prices, F3's "warning" not actually fixing the population
-mismatch, F4/F5 patched independently rather than designed together,
-F2b's gate placement unsafe, and F6's own remediation missing entirely.
-Revision 3 (this one) fixed: F1's `CROSSES_LOCKED_OOS` classification
+**Status, stated explicitly per the three-stage split GPT/Radu drew on
+2026-10-04:** (1) **audit/reconciliation of the F1-F6 findings
+themselves is CLOSED, from GPT's side, as of commit `8a0f152`** -- the
+mechanisms are not in dispute. (2) **Remediation DESIGN (this document)
+remains OPEN** -- F1's classification mechanism in particular has no
+working answer yet (see F1 point 2 below). (3) **Implementation and
+acceptance are NOT AUTHORIZED** -- nothing here has been approved to
+build. These are three distinct stages; closing (1) does not advance
+(2) or (3).
+
+**Revision note:** corrected three times the same day, every time from
+GPT's own review of this proposal, relayed by Radu -- not Radu's own
+technical analysis; his own contractual decisions on the open questions
+below remain separate and still pending. Revision 2 fixed: the F1 fix
+still reading OOS prices, F3's "warning" not actually fixing the
+population mismatch, F4/F5 patched independently rather than designed
+together, F2b's gate placement unsafe, and F6's own remediation missing
+entirely. Revision 3 fixed: F1's `CROSSES_LOCKED_OOS` classification
 rule being wrong (a missing bar alone does not prove OOS), an
 overstated claim that between-bin weighting addresses none of SS74C's
 universe-size concern, the F5 estimator choice being presented as
@@ -15,11 +25,25 @@ settled rather than two genuinely different options, F6's own example
 conflating support status with BH participation, two overclaimed
 Claude reproductions (F1c's "configured value ignored" claim, and F1b's
 description), and attribution labels that credited Radu directly for
-technical findings that are GPT's. Each is marked inline with a
-"Corrected 2026-10-04 (GPT's review of <commit>, relayed by Radu)" note.
-**Not yet approved** -- these revisions address the structure/soundness
-of the proposals themselves; none constitutes Radu's sign-off on any of
-them.
+technical findings that are GPT's. **Revision 4 (this one) fixed:**
+F1's own two classification options (a)/(b) were themselves unbuildable
+-- (a) needs a calendar that can see past `development_end`, but the
+calendar it names is derived from the same bounded-fetch benchmark
+bars and structurally cannot see past the wall; (b) contradicts this
+document's own claim that TEST 27 passes unmodified, since TEST 27
+requires `CROSSES_LOCKED_OOS` to actually occur. Both withdrawn; F1's
+classification mechanism is now recorded as genuinely unresolved, not
+a choice between two working options. Also fixed: a misattribution of
+"per-security bar indexing" to SS3-4's own text (SS3-4 only says
+"timeframe + horizon_bars"; per-security indexing is the current
+implementation's own choice); and an overclaimed F4/F5 math statement
+(collapse-to-representative and reweight-all-rows give the same
+weighted mean only when the representative is specifically that
+security's own mean, not in general, and not for median). Each
+correction is marked inline with a "Corrected 2026-10-04 (GPT's review
+of <commit>, relayed by Radu)" note. **Not yet approved** -- these
+revisions address the structure/soundness of the proposals themselves;
+none constitutes Radu's sign-off on any of them.
 
 **This document proposes fixes. It does not implement them.** No code or
 test in `src/` or `tests/` has been changed to produce this proposal --
@@ -78,63 +102,62 @@ computation, not Discovery.
    depășit nici `data_as_of` cerut de apelant dacă acesta precedă
    `development_end`": `min()` already returns the caller's earlier
    value unchanged in that case.
-2. **Reclassify `CROSSES_LOCKED_OOS` using calendar proof, never by
-   reading a price past the wall -- AND never by the mere absence of a
-   bar.** `GPT's review of 07e9e15, relayed by Radu`: the previous draft's
-   rule (`development_end is not None and exit_idx >= len(bars)` ->
-   `CROSSES_LOCKED_OOS`) was itself wrong -- a bar can be missing under
-   the bounded fetch for reasons that have nothing to do with the wall:
-   `data_as_of` itself precedes `development_end` (`effective_as_of`
-   then stops short of the wall on purpose); this security's own history
-   ends earlier than `development_end` (delisting, a genuine data gap);
-   or this security simply has no bar on that one date. In every one of
-   those cases the correct status is `INSUFFICIENT_FUTURE_DATA`, not
-   `CROSSES_LOCKED_OOS` -- `INSUFFICIENT_FUTURE_DATA` must stay reachable
-   even when `development_end` is set.
+2. **Classification mechanism: UNRESOLVED, open design work -- not
+   decided by this proposal.** `GPT's review of 8a0f152, relayed by
+   Radu` found both options this section previously offered do not
+   actually work:
 
-   The only safe proof that a target horizon genuinely crosses the wall
-   is the TARGET SESSION's own date, read from a price-independent
-   session calendar, compared against `development_end` -- never
-   inferred from how many bars one particular security happened to have.
-   Spec #003 already computes such a calendar once per run
-   (`session_dates`, from `_resolve_session_dates()`'s benchmark fetch,
-   itself now bounded to `effective_as_of` per point 1). Two ways to use
-   it, with a genuine open question between them:
+   - **Option (a) is not buildable as described.** It proposed reading
+     the target session's date from `session_dates` to prove a crossing
+     into Locked OOS. But `session_dates` is derived from the
+     BENCHMARK's own PRICE bars (`_resolve_session_dates()`'s fetch) and
+     -- per point 1 above -- is itself now bounded to `effective_as_of`,
+     which is `<= development_end`. A calendar built this way can never
+     contain a date beyond `development_end` in the first place, so it
+     cannot supply the one thing option (a) needed from it: proof that
+     a target session's date EXCEEDS `development_end`. Point 1's own
+     fetch-bounding and option (a)'s own calendar requirement are in
+     direct tension -- bounding the fetch (which the fix genuinely
+     needs, to stop reading OOS prices) is exactly what removes the
+     ability to see dates past the wall that option (a) assumed would
+     still be available from the same source.
+   - **Option (b) contradicts this proposal's own claim about TEST 27.**
+     Converting every "bars ran out" case to `INSUFFICIENT_FUTURE_DATA`
+     means NO profile would ever receive `CROSSES_LOCKED_OOS` under a
+     bounded fetch -- but `test_no_valid_outcome_exits_after_development_end`
+     (TEST 27) explicitly asserts `any(p.missingness.crosses_locked_oos
+     > 0 for p in profiles)` as its own sanity check. Option (b) and the
+     "Tests needed" claim below that "TEST 27 should keep passing
+     unmodified" cannot both be true; that claim is withdrawn.
 
-   - **(a) Count forward in the shared calendar for classification
-     only, keep the per-security bar index for the actual return.**
-     From the entry date's position in `session_dates`, count
-     `horizon_bars` sessions forward; if that calendar position's own
-     date would exceed `development_end`, classify
-     `CROSSES_LOCKED_OOS` -- with certainty, regardless of whether this
-     security has a bar there. If the calendar says the target session
-     is still within `[development_start, development_end]` but this
-     security's own bar series doesn't reach it, classify
-     `INSUFFICIENT_FUTURE_DATA`. This requires threading `session_dates`
-     (or an equivalent per-entry "sessions remaining before
-     `development_end`" count) into `compute_forward_outcome()`, which
-     today only ever looks at one security's own `bars` list.
-   - **(b) Leave horizon strictly as "N bars in this security's own PIT
-     series" everywhere, including classification, and accept the
-     resulting imprecision.** Without a calendar check, there is no
-     reliable way to tell "ran out because of the wall" from "ran out
-     for an unrelated reason," so the only non-guessing choice is to
-     always report `INSUFFICIENT_FUTURE_DATA` when bars run out, and
-     track "episodes whose target session, per the calendar, falls
-     beyond `development_end`" as a separate descriptive count rather
-     than folding it into `outcome_status` at all.
+   **What this proposal now keeps as agreed, and what stays open:**
+   bounding every fetch to `effective_as_of` (point 1) remains the
+   agreed technical direction -- it correctly stops OOS prices from
+   being read and stops the knowledge-time leak. What a bounded fetch
+   removes is the AUTOMATIC ability to classify `CROSSES_LOCKED_OOS` at
+   all, since the mechanism this document proposed for that
+   classification (a calendar derived from the same bounded fetch)
+   cannot work by construction. Resolving this -- a genuinely
+   price-independent calendar source that can see dates past
+   `development_end` without reading any price there, or a different
+   classification mechanism entirely, or a revision of what TEST 27
+   itself should assert -- is **open design work for the next stage,
+   not something this proposal has a working answer for today.**
 
-   **Possible #003 contractual question, flagged rather than decided
-   here:** option (a) counts the horizon in the SHARED session calendar
-   for the purpose of this one classification, while SS3-4 defines
-   horizon as "a position in the security's own PIT bar series" for the
-   return itself -- (a) does not change the return computation's own
-   semantics (that stays per-security-bar-index, unchanged), but it does
-   mean classification and the return use two different notions of
-   "N bars forward" when a security's own series has gaps relative to
-   the calendar. Whether that split is acceptable under SS3-4, or
-   whether this needs Radu's own clarification before either option is
-   built, is recorded here as open, not assumed.
+   **Attribution correction, relevant to that next stage:** an earlier
+   version of this section said SS3-4 "defines horizon as a position in
+   the security's own PIT bar series" -- that phrase is not spec text.
+   SS3-4 itself says only "timeframe + horizon_bars." Counting the
+   horizon via each security's own bar index is the CURRENT
+   IMPLEMENTATION's own mechanism (`forward_returns.py`'s
+   `_exact_entry_index`/`exit_idx = entry_idx + horizon_bars`), not a
+   wording the contract itself dictates. Whoever designs the
+   classification mechanism next should start from that distinction --
+   whether per-security bar-indexing is a hard requirement or an
+   implementation choice open to reconsideration is exactly the kind of
+   question a #003 clarification would need to settle, not something
+   this proposal can answer by citing the spec's own words, since the
+   spec's own words don't go that far.
 3. **`research_period` wiring.** Have `run_evaluation()` read
    `evaluation_config.data["research_period"]` as the DEFAULT for
    `development_start`/`development_end` when the caller passes `None` for
@@ -146,23 +169,21 @@ computation, not Discovery.
    that needs Radu's separate approval, not a documentation-integration
    side effect of a bug fix.
 
-**Tests needed:** a regression fixing `development_end` and asserting
-that NO PIT call for that run returns a bar dated after it (spy-based, as
-in this round's reproduction); a regression planting a late-knowledge
-corporate action with an in-Development `effective_date` and asserting
-the resulting forward_return is unaffected (pre-fix: this assertion
-currently fails); TEST 27's own `test_no_valid_outcome_exits_after_development_end`
-should keep passing unmodified under whichever classification design is
-chosen (it asserts the outcome, not the mechanism); **new, per the
-classification correction above:** a regression where `data_as_of` is
-earlier than `development_end` and a security's bars simply run out
-there, asserting `INSUFFICIENT_FUTURE_DATA` (NOT `CROSSES_LOCKED_OOS`);
-a regression where a security is delisted/has a genuine data gap well
-before `development_end`, asserting the same; and, if option (a) is
-chosen, a regression confirming the calendar-based count correctly
-classifies `CROSSES_LOCKED_OOS` only when the target session's own
-calendar date exceeds `development_end`; a `research_period` wiring
-test once the precedence rule is implemented.
+**Tests needed, for what IS resolved (point 1):** a regression fixing
+`development_end` and asserting that NO PIT call for that run returns a
+bar dated after it (spy-based, as in this round's reproduction); a
+regression planting a late-knowledge corporate action with an
+in-Development `effective_date` and asserting the resulting
+forward_return is unaffected (pre-fix: this assertion currently fails).
+
+**For point 2 (classification), withdrawn:** this proposal's earlier
+claim that "TEST 27 should keep passing unmodified" is retracted --
+`GPT's review of 8a0f152, relayed by Radu` showed it is incompatible
+with option (b), and option (a) cannot be built as described. Whether
+TEST 27 itself needs to change, and what new regressions a resolved
+classification mechanism would need, depends on which design the next
+stage settles on -- not specified here. A `research_period` wiring test
+remains needed once point 3's precedence rule is implemented.
 
 ## F2a -- Frozen signature set accepted without content verification
 
@@ -375,19 +396,28 @@ distribution.
 assumes:**
 - **Within-bin estimator (F5) -- two genuinely different options, not
   one settled choice.** **(i) Collapse:** take one representative value
-  per security within the bin (e.g. that security's own mean or median
-  there), discarding the rest -- this changes the distribution's own
-  shape and variance, since multiple raw observations become one point.
-  **(ii) Reweight, keep every row:** keep all of a security's raw rows,
-  but give each one a weight of `1/(that security's own row count in
-  this bin)`, so every security's TOTAL weight within the bin is equal
-  while every raw observation still contributes to variance/IQR. (i) and
-  (ii) give the IDENTICAL weighted MEAN (by linearity), but generally
-  DIFFERENT weighted medians and DIFFERENT IQRs, because collapsing to
-  one point per security removes within-security spread that reweighting
-  preserves. Neither is "the" fix SS74C mandates -- SS74C names the
-  dominance problem to avoid, not an estimator -- and whichever is
-  chosen must be applied consistently to the point estimate, to
+  per security within the bin, discarding the rest -- this changes the
+  distribution's own shape and variance, since multiple raw observations
+  become one point. **(ii) Reweight, keep every row:** keep all of a
+  security's raw rows, but give each one a weight of `1/(that security's
+  own row count in this bin)`, so every security's TOTAL weight within
+  the bin is equal while every raw observation still contributes to
+  variance/IQR. **Mathematical precision, corrected 2026-10-04 (GPT's
+  review of 8a0f152, relayed by Radu):** (i) and (ii) give the identical
+  weighted MEAN only in the specific case where (i)'s representative
+  value IS that security's own MEAN, with weights set accordingly --
+  this does NOT hold in general, and specifically fails if (i) collapses
+  to the security's own MEDIAN instead: a security's median need not
+  equal its mean, so collapsing to the median can shift even the overall
+  weighted MEAN relative to (ii), not only the median/IQR. The earlier,
+  unqualified claim that (i) and (ii) "give the identical weighted mean
+  by linearity" is corrected to that one specific case. Independent of
+  which representative statistic (i) might use, (i) and (ii) generally
+  give DIFFERENT weighted medians and DIFFERENT IQRs, since collapsing
+  removes within-security spread that reweighting preserves. Neither
+  option is "the" fix SS74C mandates -- SS74C names the dominance
+  problem to avoid, not an estimator -- and whichever is chosen must be
+  applied consistently to the point estimate, to
   `baseline_iqr`/`standardized_effect`, AND to
   `stratified_permutation_p_value()`'s own per-security handling (today
   entirely row-based, inheriting the same choice this section makes for
