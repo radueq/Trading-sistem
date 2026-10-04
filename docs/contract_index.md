@@ -32,21 +32,44 @@ stage only: **remediation DESIGN for those findings
 OPEN stage** -- several designs, notably F1's OOS-classification
 mechanism, have no working answer yet -- and **implementation/
 acceptance of any fix is a third, separate stage, NOT AUTHORIZED.**
-Spec #004 is not yet audited in full by GPT -- that remains open. As of
-2026-10-04, Claude has completed its own fresh, high-effort independent
-re-verification pass for #004 (requested by Radu specifically to finish
-before the joint F1-F6 remediation design for #003, to surface
-cross-module dependencies first) -- **this is NOT a GPT round**, unlike
-#001/#002/#003's full GPT passes; it elevates four of the matrix's own
+Spec #004 has now also been independently reviewed by GPT (2026-10-04,
+against commit `d272cb8`), after an earlier Claude-solo pass on the
+same branch. Sequence: first, Claude's own fresh, high-effort
+independent re-verification pass (requested by Radu specifically to
+finish before the joint F1-F6 remediation design for #003, to surface
+cross-module dependencies first), elevating four of the matrix's own
 prior SUSPECTED ISSUE findings to DEMONSTRATED DEFECT via concrete
-reproduction through the real `preregister_hypothesis()` gate, and adds
-one new TEST-COVERAGE GAP finding (the same AST parent-import blind spot
+reproduction through the real `preregister_hypothesis()` gate, plus one
+new TEST-COVERAGE GAP finding (the same AST parent-import blind spot
 already found in #002's TEST 17/18 and #003's TEST 26, now in #004's
-TEST 49). See `docs/audit_spec004_requirement_code_test.md`'s own status
-update and Top Findings 1, 2, 10, 11, 13. Radu's own contractual
-verdict on any finding -- in any of the four matrices -- remains
-separate from this technical reconciliation throughout, and has not
-been given.** The
+TEST 49, renumbered Top Finding 13). **Then GPT's own actual
+independent review** delivered six further findings (GPT's own G1-G6,
+renumbered Top Findings 14-19 in the matrix to avoid colliding with the
+pre-existing Top Finding 13) plus a separate PATCH #004-C persistence
+finding (Top Finding 20) -- content binding between approval and the
+frozen draft (14), variant-set completeness/exit semantics (15),
+in-memory gate atomicity (16), a public-API path that reaches
+PREREGISTERED without the gate (17), lost stability-bin values in
+`EvidencePacket` (18), and Research Queue config-freeze integrity (19)
+-- each independently re-verified by Claude both by code reading and by
+re-running GPT's own probe script against the real repository. GPT also
+corrected two overclaims in Claude's own prior write-up: Finding 10 was
+described as reproduced "through the real gate" when it was actually
+reproduced one layer earlier, through `proposals/validator.py`'s
+`validate_proposal()`; and Finding 1 needed four separate caveats (no
+OOS price/data access demonstrated, no literal FORMAL_DEVELOPMENT
+allowlist requirement in the spec text, `evaluation_run_id` is in fact
+preserved so the mode is not unrecoverable from every source, and the
+clean import scan does not certify artifact *content* provenance). See
+`docs/audit_spec004_requirement_code_test.md`'s own GPT-review status
+block and Top Findings 1, 2, 10, 11, 13-20 for full detail. **#004's
+reconciliation remains OPEN** -- unlike #001/#002/#003's closed findings
+rounds, GPT's own verdict here does not state "findings reconciliation
+closed," only that specific findings reproduce and others need
+narrower framing; further findings could still surface. Radu's own
+contractual verdict on any finding -- in any of the four matrices --
+remains separate from this technical reconciliation throughout, and has
+not been given.** The
 matrices exist as
 `docs/audit_spec00{1,2,3,4}_requirement_code_test.md` (commit `edf8dbe`,
 reclassified per the key below at a later commit -- see each file's own
@@ -98,21 +121,26 @@ commit `0c1d3cc`), reconciled against Claude's own independent pass in
 `docs/audit_spec003_requirement_code_test.md`** (status line at the top
 of each document -- #001/#002's reconciliation rounds are closed;
 #003's findings reconciliation is closed too (as of `8a0f152`), its
-remediation DESIGN is in progress). Spec #004 has not yet had a GPT
-round, but as of 2026-10-04 has had Claude's own fresh independent
-re-verification pass (four findings elevated to DEMONSTRATED DEFECT,
-one new TEST-COVERAGE GAP found) -- see that matrix's own status update.
-Phrases like "Radu-endorsed"
+remediation DESIGN is in progress). Spec #004's own GPT round
+(2026-10-04, against `d272cb8`) is NOT the same shape as #001/#002/#003's
+full row-by-row passes -- GPT states explicitly that it does not
+certify every one of the 111 rows, only a targeted deep read of the
+evidence->proposal->preregistration->registry->export/persistence flow
+plus the sections those touch, on top of Claude's own earlier
+Claude-solo re-verification pass (four findings elevated to
+DEMONSTRATED DEFECT, one new TEST-COVERAGE GAP) -- see that matrix's own
+status blocks for both rounds, in order. Phrases like "Radu-endorsed"
 or "Radu caught" overstated Radu's own personal involvement in this
 technical work. The corrected framing used from this revision onward:
 **the matrices and initial verifications were produced by Claude; GPT
 has verified specific findings flagged in reviews on a point-by-point
-basis, with full independent verification not yet finished for Spec
-#004 (Specs #001, #002, and #003 have each had a full GPT pass
-reconciled by Claude, see above -- #001/#002/#003 findings reconciliation
-all closed, #003's remediation design in progress; #004 has instead had
-a fresh independent re-verification pass by Claude alone, not yet by
-GPT, see its own matrix status update for 2026-10-04);
+basis, with a full independent row-by-row pass completed for Specs
+#001, #002, and #003 (reconciled by Claude, see above --
+#001/#002/#003 findings reconciliation all closed, #003's remediation
+design in progress) and a targeted (not full-row) independent review
+completed for Spec #004, reconciled by Claude in
+`docs/audit_spec004_requirement_code_test.md`'s own GPT-review status
+block -- #004's reconciliation remains OPEN, not closed;
 Radu's own verdict on what any of this means contractually remains
 separate** and
 is not implied by either. This does not apply to historical messages reproduced verbatim
@@ -219,7 +247,7 @@ against -- it is one primary source, not confirmation.
 | **Approval** | **ACCEPTED.** Base implementation `6082215`. PATCH #004-A `feb8470`. Technical baseline at acceptance: PATCH #004-B `d19dd25`. Verdict recorded in commit `74daadc` ("Spec #004 v1.0 ACCEPTED", GPT Review #004 Round 3 closure). |
 | **Amendments** | PATCH #004-A `feb8470` (7 findings, GPT Review #004 Round 1). PATCH #004-B `d19dd25` (5 findings, GPT Review #004 Round 2). PATCH #004-C `28473d0` (additive `STOP_MANAGED_INVALIDATION` exit family, entities/validation/fingerprint layer only). |
 | **Derived documentation** | `docs/spec004_architecture.md`, `spec004_known_limitations.md`, `spec004_test_report.md`, `spec004_examples.md`, `spec004_agent_interface.md`, `spec004_registry_contract.md`. |
-| **Flag** | Text now present but not yet independently verified by Radu. Correspondence matrix: `docs/audit_spec004_requirement_code_test.md` -- status per the top of this document. Separately, and unaffected by the text recovery: **PATCH #004-C's own implementation has a confirmed-pending verdict, sourced precisely.** Found in this session's own transcript, Radu's own words, verbatim, immediately after a Batch 3 CHANGES-REQUIRED verdict: *"Nu închidem Batch 3 și nu promovăm încă baseline-ul `3cdc532`. PATCH #004-C rămâne separat pentru verdict; constatările de mai sus vizează Batch 3."* (transcript timestamp `2026-09-28T16:08:13Z`; full message reproduced in `docs/evidence_004c_verdict_status.md`). **Separate verdict still pending as of the quoted date; Claude did not identify a later one in the transcript checked** -- this is a bounded claim about what was searched, not proof that no later verdict exists anywhere. The only "ACCEPTED" text on record remains the *Spec #005 Exit Amendment v1.0 document itself* (commit `2fa5575`, baseline `3cdc532`, dated BEFORE PATCH #004-C `28473d0` was even written) -- an acceptance of the contract text, not of #004-C's implementation. Its 7 tests (TEST 67-73) pass, but green tests are not the verdict Radu is withholding. See also "Superseded rules," below, for the SIGNAL_INVALIDATION timing and risk-exit items this spec's own recovered text (including its final approval message) carries. |
+| **Flag** | Text now present but not yet independently verified by Radu. Correspondence matrix: `docs/audit_spec004_requirement_code_test.md` -- status per the top of this document; now includes a Claude-solo re-verification pass AND a targeted GPT independent review (2026-10-04, commit `d272cb8`), findings reconciliation OPEN (not closed). Remediation DESIGN for the six GPT findings + the separate P004C finding is proposed, not authorized, in `docs/spec004_remediation_proposal_2026-10-04.md`. Separately, and unaffected by the text recovery: **PATCH #004-C's own implementation has a confirmed-pending verdict, sourced precisely.** Found in this session's own transcript, Radu's own words, verbatim, immediately after a Batch 3 CHANGES-REQUIRED verdict: *"Nu închidem Batch 3 și nu promovăm încă baseline-ul `3cdc532`. PATCH #004-C rămâne separat pentru verdict; constatările de mai sus vizează Batch 3."* (transcript timestamp `2026-09-28T16:08:13Z`; full message reproduced in `docs/evidence_004c_verdict_status.md`). **Separate verdict still pending as of the quoted date; Claude did not identify a later one in the transcript checked** -- this is a bounded claim about what was searched, not proof that no later verdict exists anywhere. The only "ACCEPTED" text on record remains the *Spec #005 Exit Amendment v1.0 document itself* (commit `2fa5575`, baseline `3cdc532`, dated BEFORE PATCH #004-C `28473d0` was even written) -- an acceptance of the contract text, not of #004-C's implementation. Its 7 tests (TEST 67-73) pass, but green tests are not the verdict Radu is withholding. See also "Superseded rules," below, for the SIGNAL_INVALIDATION timing and risk-exit items this spec's own recovered text (including its final approval message) carries. |
 
 ## Spec #005 -- Backtesting & Exit Evaluation
 
@@ -457,12 +485,11 @@ is not itself the audit.
      (`docs/spec003_remediation_proposal_2026-10-04.md`) remains OPEN --
      F1's own OOS-classification mechanism has no working design yet;
      implementation/acceptance of any fix is NOT AUTHORIZED.**
-   - **Spec #004: Claude's own fresh, high-effort independent
-     re-verification pass done (2026-10-04)** -- requested by Radu
-     specifically to finish before the joint F1-F6 remediation design
-     for #003, so cross-module dependencies surface first. **Not yet a
-     GPT round** -- unlike #001/#002/#003, #004 has not had a full GPT
-     pass; this is Claude re-verifying its own prior background-agent
+   - **Spec #004: two rounds done (2026-10-04).** Round 1 (Claude
+     alone): a fresh, high-effort independent re-verification pass,
+     requested by Radu specifically to finish before the joint F1-F6
+     remediation design for #003, so cross-module dependencies surface
+     first. This is Claude re-verifying its own prior background-agent
      matrix against the real source on commit `fa8f257`, going further
      than that original pass by driving the REAL
      `preregister_hypothesis()` gate end-to-end with concrete fixtures
@@ -472,17 +499,23 @@ is not itself the audit.
      a hypothesis built entirely from `evaluation_mode="EXPLORATORY"`
      evidence reached PREREGISTERED through the real gate with zero
      errors, and no field anywhere records which mode the evidence came
-     from; (2) a DRAFT tagged `research_mode="EXPLORATORY_HYPOTHESIS"`
-     reached PREREGISTERED unchanged through the real gate; (10) two
-     SIGNAL_INVALIDATION variants of the same family type were rejected
-     as exceeding `max_exit_families_per_hypothesis`, confirming the
-     check counts raw variant entries, not distinct family types; (11)
+     from (GPT later added four narrowing caveats to this one, see
+     Round 2 below); (2) a DRAFT tagged
+     `research_mode="EXPLORATORY_HYPOTHESIS"` reached PREREGISTERED
+     unchanged through the real gate; (10) two SIGNAL_INVALIDATION
+     variants of the same family type were rejected as exceeding
+     `max_exit_families_per_hypothesis`, confirming the check counts
+     raw variant entries, not distinct family types -- **reproduced
+     through `proposals/validator.py`'s `validate_proposal()`, NOT the
+     real gate; an earlier draft of this entry wrongly generalized it as
+     "through the real gate," corrected per GPT's own review**; (11)
      preregistering against a tampered config (`max_hypotheses_per_
      signature` changed to `999`) still succeeded, while the frozen
      record's own `hypothesis_config_version` kept claiming the
-     original config's hash. **One new finding (G1):** `test_49`'s own
-     AST import-dependency guard has the identical parent-import blind
-     spot already found in #002's TEST 17/18 and #003's TEST 26.
+     original config's hash. One new finding, renumbered Top Finding 13
+     to avoid colliding with GPT's own later G1: `test_49`'s own AST
+     import-dependency guard has the identical parent-import blind spot
+     already found in #002's TEST 17/18 and #003's TEST 26.
      **Cross-module dependency check (Radu's specific request):**
      confirmed clean by direct grep -- `src/evaluation/`,
      `src/discovery/`, `src/data_foundation/` never import `hypothesis`
@@ -490,16 +523,63 @@ is not itself the audit.
      dataclass modules from Discovery and Evaluation, never their
      engines or `data_foundation/`; `src/backtest/` (Spec #005)
      legitimately consumes `hypothesis`'s frozen records read-only in 5
-     files. The Data Foundation -> Discovery -> Evaluation -> Hypothesis
-     direction holds; the only gap found is TEST 49's own guard
-     coverage (G1), not today's actual dependency direction. Full suite
-     re-run after this pass, no code or test modified: `tests/spec004`
-     -- 176 passed; full repository suite -- 727 passed, 1 skipped,
-     both unchanged from before. See
-     `docs/audit_spec004_requirement_code_test.md`'s own status update
-     and Top Findings 1, 2, 10, 11, 13 for full detail.
-   Radu's own contractual verdict on any finding remains separate from
-   this technical re-verification throughout.
+     files. Full suite re-run after this pass, no code or test
+     modified: `tests/spec004` -- 176 passed; full repository suite --
+     727 passed, 1 skipped, both unchanged from before.
+
+     **Round 2 (GPT's own independent review, against commit `d272cb8`,
+     relayed by Radu):** explicitly NOT a full row-by-row pass like
+     #001/#002/#003's (GPT itself says so) -- a targeted deep read of
+     the evidence->proposal->preregistration->registry->export/
+     persistence flow, reusing Claude's own fixture-builder with new
+     scenarios layered on top (disclosed as such, not an
+     independently-built-from-scratch fixture). Confirmed: only the
+     matrix and this index differ from `fa8f257` (no source/test
+     changes); GPT itself ran `tests/spec004` (176 passed); the global
+     suite was not run by GPT; all six of Claude's Round 1 probes
+     reproduced under GPT's own run. **Six new findings** (GPT's own
+     G1-G6, renumbered Top Findings 14-19 in the matrix): (14) the gate
+     verifies approval identity (proposal_id/approver/timestamp) and the
+     draft's internal content-hash self-consistency, but never that the
+     draft's actual direction/entry/horizon/exit content matches what
+     was approved -- a validly-approved LONG proposal still lets a SHORT
+     draft freeze and export under the same id; (15) variant-set
+     completeness against declared horizon candidates, and per-variant
+     exit-field semantics (sign of `time_exit_bars`,
+     `horizon_reference_point`, `exit_execution_policy`), are enforced
+     only by the normal construction path, never independently
+     re-checked at the gate; (16) the in-memory gate is not atomic --
+     if `register_variant()` raises after the hypothesis is already
+     force-registered, there is no rollback; (17) the public
+     `register()` API can reach PREREGISTERED via an intermediate
+     HANDOFF_TO_BACKTEST registration, with no proposal, consensus,
+     human decision, or gate call at all; (18) `EvidencePacket` keeps
+     only a stability-bin PRESENCE flag, never the bin values §39
+     itself lists as separate minimum content from §57's "stability
+     availability" -- two profile sets with wildly different stability
+     means produce byte-identical packets; (19) Research Queue
+     eligibility thresholds can change without `eligibility_
+     config_version` changing, because `HypothesisConfig.data` is a
+     mutable dict inside a frozen wrapper whose version is fixed at load
+     time -- the same category of gap as Finding 11, now demonstrated at
+     the queue (SS110-H). **Plus one separate finding (Top Finding 20,
+     does not reopen PATCH #004-C's acceptance):** the persistence
+     layer's type registry never lists the two PATCH #004-C entity
+     types nested in `STOP_MANAGED_INVALIDATION` exits
+     (`StopLossRule`/`PartialProfitRule`), so deserializing one raises
+     `KeyError`. All six G-findings plus the P004C finding were
+     independently re-verified by Claude, both by reading the exact
+     cited code and by re-running GPT's own probe script directly
+     against this repository. See
+     `docs/audit_spec004_requirement_code_test.md`'s own GPT-review
+     status block and Top Findings 1, 2, 10, 11, 13-20 for full detail,
+     including GPT's own explicit limits on each probe (preserved
+     precisely, not generalized).
+   **#004's reconciliation remains OPEN** -- GPT's review does not state
+   a "findings reconciliation closed" verdict the way #001/#002/#003's
+   did; remediation design and implementation/acceptance are separate,
+   not-yet-started stages. Radu's own contractual verdict on any finding
+   remains separate from this technical re-verification throughout.
 2. **Primary evidence located for both open acceptance questions, each
    now backed by a standalone source document, not just a quoted
    excerpt:** `docs/evidence_spec002_acceptance_message.md` and
