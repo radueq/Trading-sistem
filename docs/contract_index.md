@@ -19,11 +19,17 @@ GPT, reconciled against Claude's own independent pass, and closed as
 reconciliation rounds (see each matrix's own status line and revision
 history -- further findings can still surface later, but the
 reconciliation process itself is not left "in progress" for either).
-Specs #003-#004 are not yet audited in full by GPT -- their matrices
-remain at the original point-by-point spot-check level. Radu's own
-contractual verdict on any finding -- in any of the four matrices --
-remains separate from this technical reconciliation throughout, and has
-not been given.** The matrices exist as
+Spec #003 has now also been audited in full by GPT -- all 75 sections,
+against package `0c1d3cc` -- delivering six groups of findings (F1-F6)
+plus further suspicions/gaps (S1, S2, G1, G2); Claude's own independent
+reconciliation against that audit is recorded in
+`docs/audit_spec003_requirement_code_test.md`, but **this reconciliation
+round remains in progress, not closed** -- unlike #001/#002. Spec #004
+is not yet audited in full by GPT -- its matrix remains at the original
+point-by-point spot-check level. Radu's own contractual verdict on any
+finding -- in any of the four matrices -- remains separate from this
+technical reconciliation throughout, and has not been given.** The
+matrices exist as
 `docs/audit_spec00{1,2,3,4}_requirement_code_test.md` (commit `edf8dbe`,
 reclassified per the key below at a later commit -- see each file's own
 revision note). Producing and reconciling them is evidence-gathering
@@ -64,20 +70,24 @@ produced by Claude, not by Radu or by GPT. Separately, GPT -- the same
 reviewer role this project has used throughout ("GPT Review #001", "GPT
 Review #003 Round 1", etc.) -- has verified specific findings flagged in
 its reviews on a point-by-point basis; a full independent re-verification
-of every row by GPT has not been completed, **except for Specs #001 and
-#002, where GPT has now each run its own full row-by-row pass (all 29
-rows for #001 on commit `34acd9c`; all 50 rows for #002 on commit
-`d289a02`), reconciled against Claude's own independent pass in
-`docs/audit_spec001_requirement_code_test.md` and
-`docs/audit_spec002_requirement_code_test.md`** (status line at the top
-of each document). Specs #003-#004 remain at the point-by-point level.
+of every row by GPT has not been completed, **except for Specs #001,
+#002, and (as of this revision) #003, where GPT has now each run its
+own full row-by-row pass (all 29 rows for #001 on commit `34acd9c`;
+all 50 rows for #002 on commit `d289a02`; all 75 rows for #003 on
+commit `0c1d3cc`), reconciled against Claude's own independent pass in
+`docs/audit_spec001_requirement_code_test.md`,
+`docs/audit_spec002_requirement_code_test.md`, and
+`docs/audit_spec003_requirement_code_test.md`** (status line at the top
+of each document -- #001/#002's reconciliation rounds are closed,
+#003's is in progress). Spec #004 remains at the point-by-point level.
 Phrases like "Radu-endorsed"
 or "Radu caught" overstated Radu's own personal involvement in this
 technical work. The corrected framing used from this revision onward:
 **the matrices and initial verifications were produced by Claude; GPT
 has verified specific findings flagged in reviews on a point-by-point
-basis, with full independent verification not yet finished for Specs
-#003-#004 (Specs #001 and #002 are done and reconciled, see above);
+basis, with full independent verification not yet finished for Spec
+#004 (Specs #001, #002, and #003 have each had a full GPT pass
+reconciled by Claude, see above -- #001/#002 closed, #003 in progress);
 Radu's own verdict on what any of this means contractually remains
 separate** and
 is not implied by either. This does not apply to historical messages reproduced verbatim
@@ -172,7 +182,7 @@ against -- it is one primary source, not confirmation.
 | **Approval** | **ACCEPTED.** Technical baseline `d889049` (PATCH #003-B). Verdict recorded in commit `266cc6f` ("GPT Review #003 Final verdict", doc-only, immediately after the baseline commit). |
 | **Amendments** | PATCH #003-A `203233d` (6 statistical/correctness findings, GPT Review #003 Round 1). PATCH #003-B `d889049` (2 findings, GPT Review #003 Round 2). |
 | **Derived documentation** | `docs/spec003_architecture.md`, `spec003_known_limitations.md`, `spec003_test_report.md`, `spec003_examples.md`, `spec003_performance_report.md`, `spec003_multiple_testing_report.md`, `spec003_reproducibility.md`. |
-| **Flag** | Text now present but not yet independently verified by Radu. Correspondence matrix: `docs/audit_spec003_requirement_code_test.md` -- status per the top of this document. |
+| **Flag** | Text now present but not yet independently verified by Radu. Correspondence matrix: `docs/audit_spec003_requirement_code_test.md` -- GPT has now audited all 75 sections independently (package `0c1d3cc`), reconciled by Claude (Top Findings 11-19: F1-F6, S1/S2, G1/G2) -- **reconciliation in progress, not closed.** The historical `ACCEPTED` status below (baseline `d889049`) is preserved as a record, not revoked or re-affirmed by this audit; remediation of the findings is a separate, not-yet-authorized step. |
 
 ## Spec #004 -- Hypothesis Generation & Strategy Definition
 
@@ -405,7 +415,18 @@ is not itself the audit.
      report agrees with that distinction explicitly. See
      `docs/audit_spec002_requirement_code_test.md`'s own status line
      and revised Top Findings 1-5.
-   - **Spec #003-#004: not yet started this way.** Still at the original
+   - **Spec #003: now started this way (2026-10-04).** GPT's full
+     75-section independent audit against `0c1d3cc` delivered six
+     groups of findings (F1-F6: incomplete OOS isolation/knowledge-time
+     leakage into Development; frozen-signature-set integrity gaps;
+     reported-vs-tested population mismatch in the stratified baseline
+     comparison; zero-weight-bin IQR pooling; within-bin raw-row
+     weighting contradicting amendment SS74C's own text) plus S1/S2/G1/G2
+     suspicions and gaps, all independently reproduced by Claude. See
+     `docs/audit_spec003_requirement_code_test.md`'s own status line and
+     Top Findings 11-19. Reconciliation is in progress, not closed --
+     remediation of the findings has not been authorized or performed.
+   - **Spec #004: not yet started this way.** Still at the original
      spot-check level; next in this track.
    Radu's own contractual verdict on any finding remains separate from
    this technical re-verification throughout.
