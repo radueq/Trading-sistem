@@ -371,16 +371,24 @@ is not itself the audit.
      DEFECTs Claude's round 1 missed despite having already read the
      exact files involved -- (1) `engine.py`'s `_price_series_to_df()`
      mixes raw open/high/low with split-adjusted close in the same bar,
-     corrupting ATR via a Wilder-smoothed contamination that enters at
-     a security's split boundary and decays slowly across many
-     subsequent sessions (not a one-day blip; the exact magnitude at
-     any given session depends on how much decay time has elapsed --
-     demonstrated at two separate points: Claude's own reproduction
-     immediately post-split, 305→244→196→157→126→102 across five
-     sessions, and GPT's own probe 16 sessions post-split,
-     ATR_pct=0.94 against a coherent ~0.02; already disclosed as a
-     known limitation in `docs/spec005_known_limitations.md:127-135`,
-     just never carried into this matrix's own rows); (2) `config/features.yaml`'s
+     for every bar still carrying a non-1.0 split factor. The mismatch
+     is NOT a one-time boundary event -- every pre-split historical bar
+     already has raw high/low paired with an adjusted close scaled by
+     the same constant factor as every other pre-split bar, so ATR's
+     true-range calculation is already wrong throughout the pre-split
+     history. Once Wilder's recursive smoothing is seeded from that
+     already-wrong history, the accumulated error simply persists,
+     decaying slowly, across the otherwise-correct post-split sessions
+     that follow. Demonstrated at two separate points: Claude's own
+     reproduction (AAPL_SPLIT_2020), decaying 305→244→196→157→126→102
+     across five sessions immediately after its own split; GPT's own
+     probe (an 80-observation synthetic fixture, 4-for-1 split at index
+     64), measured at its own last observation 16 sessions after that
+     split: ATR_pct=0.94 against a coherent ~0.02 for that same
+     fixture -- one specific value in one specific scenario, not a
+     claim about every session. Already disclosed as a known limitation
+     in `docs/spec005_known_limitations.md:127-135`, just never carried
+     into this matrix's own rows); (2) `config/features.yaml`'s
      `relative_strength.driving_return_window` is declared configurable
      but never read -- `engine.py` hardcodes `"relative_return_63d"`
      regardless of the config value (contrast with `momentum.py`, which
