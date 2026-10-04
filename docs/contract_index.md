@@ -358,22 +358,35 @@ is not itself the audit.
      Findings 1-2 (new) and 4-6, 14 for full detail and reproduction.
      Neither DEMONSTRATED DEFECT has been fixed -- documentary only, per
      Radu's instruction.
-   - **Spec #002: done (2026-10-04), by Claude alone -- not yet seen by
-     GPT.** All 18 files in `src/discovery/`, all 4 config YAML files,
-     `config/loader.py`, and the two structural AST-scan tests read in
-     full. Outcome: the existing matrix holds up almost entirely --
-     every SUSPECTED ISSUE (dead `NormalizedFeatureObservation`/dead
-     `bucket_key` config/discarded per-feature status/missing
-     lane-contradiction reason code/`config_version` vs
-     `feature_engine_version` asymmetry) independently reproduced
-     against source. No new DEMONSTRATED DEFECT and no previously-
-     unflagged structural gap, unlike Spec #001. One precision fix (row
-     9's hand-verified field count: 5 of 11, not "4 of ~9") and one
-     clarification (TEST 18's `src/discovery/`-only scope is NOT the
-     same class of gap as Spec #001's TEST 10 -- its job is fully
-     covered by that scope; downstream-of-Discovery protection is each
-     later spec's own separate, already-confirmed AST-scan test). See
-     `docs/audit_spec002_requirement_code_test.md`'s own status line.
+   - **Spec #002: two rounds done (2026-10-04).** Round 1 (Claude alone):
+     all 18 files in `src/discovery/`, all 4 config YAML files,
+     `config/loader.py`, and both structural AST-scan tests read in
+     full; concluded "no new DEMONSTRATED DEFECT found" -- **that
+     conclusion was wrong.** Round 2 (GPT's own full pass over all 50
+     rows on `d289a02`, reconciled by Claude): two further DEMONSTRATED
+     DEFECTs Claude's round 1 missed despite having already read the
+     exact files involved -- (1) `engine.py`'s `_price_series_to_df()`
+     mixes raw open/high/low with split-adjusted close in the same bar,
+     corrupting ATR for any split security across its entire pre-split
+     history (reproduced: ATR_pct = 0.94 where the coherent value is
+     ~0.02; already disclosed as a known limitation in
+     `docs/spec005_known_limitations.md:127-135`, just never carried
+     into this matrix's own rows); (2) `config/features.yaml`'s
+     `relative_strength.driving_return_window` is declared configurable
+     but never read -- `engine.py` hardcodes `"relative_return_63d"`
+     regardless of the config value (contrast with `momentum.py`, which
+     correctly reads its own analogous key). Two of Claude's own
+     SUSPECTED ISSUE findings (SS15 normalization-type absent from
+     output; SS30/SS32 discarded per-feature status) promoted to
+     DEMONSTRATED DEFECT with concrete reproduction. TEST 17/18's AST
+     guards shown to have confirmed bypasses (TEST 17 never inspects
+     import statements at all; TEST 18 is fooled by
+     `from X import Y as Z` form) beyond the identifier-only point
+     already recorded. TEST 18's `src/discovery/`-only scope itself is
+     still NOT the same class of gap as Spec #001's TEST 10 -- GPT's own
+     report agrees with that distinction explicitly. See
+     `docs/audit_spec002_requirement_code_test.md`'s own status line
+     and revised Top Findings 1-5.
    - **Spec #003-#004: not yet started this way.** Still at the original
      spot-check level; next in this track.
    Radu's own contractual verdict on any finding remains separate from
