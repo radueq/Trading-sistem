@@ -13,13 +13,20 @@ present, what is missing, and what is merely inferred, per spec. It does
 not rename any derived document as if it were a source contract.
 
 **Status of the requirement→code→test correspondence check, stated once
-here and not contradicted elsewhere in this document: matrices produced
-by Claude; independent verification pending.** They exist as
+here and not contradicted elsewhere in this document (updated
+2026-10-04): the GPT audit of Spec #001, covering all 29 rows, is
+finalized; documentary reconciliation between Claude's and GPT's
+independent passes is in progress (multiple rounds so far, see
+`docs/audit_spec001_requirement_code_test.md`'s own status line and
+revision history). Specs #002-#004 are not yet audited in full by GPT --
+their matrices remain at the original point-by-point spot-check level.
+Radu's own contractual verdict on any finding -- in any of the four
+matrices -- remains separate from this technical reconciliation
+throughout, and has not been given.** The matrices exist as
 `docs/audit_spec00{1,2,3,4}_requirement_code_test.md` (commit `edf8dbe`,
 reclassified per the key below at a later commit -- see each file's own
-revision note). Producing them is evidence-gathering Claude did; it is
-not Radu's own verification of their content, which is still open and is
-a distinct step from producing them.
+revision note). Producing and reconciling them is evidence-gathering
+Claude and GPT have done; neither substitutes for Radu's own verdict.
 
 **Classification key used in all four matrices (2026-10-03, corrected
 2026-10-03):** finding a gap is not the same claim as finding a defect.
