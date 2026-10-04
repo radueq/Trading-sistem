@@ -8,9 +8,14 @@ document. **Scope note, stated precisely (not as an instruction from
 Radu):** this document covers only these six findings + P004C --
 Claude's own choice of scope for this round, given the volume of
 material, not something Radu's relayed message required excluding.
-Claude's own prior Findings 1-13 (the Claude-solo round, no GPT round
-yet) are not covered here. **Not all of them would need a functional
-remediation design even if covered** -- several are TEST-COVERAGE
+Claude's own prior Findings 1-13 (the Claude-solo round) are not
+covered here -- not because they lack a GPT round: **correction (GPT's
+observation, relayed by Radu): GPT's review individually addressed
+each of Findings 1-13** in its own reconciliation table (confirming
+some, narrowing others), it just was not the full remediation-design
+treatment this document gives Findings 14-20. **Not all of them would
+need a functional remediation design even if covered** -- several are
+TEST-COVERAGE
 GAPS (e.g. Finding 7's `HypothesisUniverse` test coverage, Finding 8's
 untested token-budget target), FUTURE/PROCEDURAL requirements code
 cannot express (Finding 4, the statistical-skeptic checklist), or open
@@ -259,36 +264,51 @@ first looks, for two reasons a rollback-only design must not skip:
   shared check function, not two independently-maintained copies), or
   (a-ii) be paired with (b)/(c) below as a genuine fallback for the
   residual case, not left as an implicit, unstated assumption.
-- **(b) True rollback, meeting the invariant unconditionally.** Capture
-  the registry's prior state for every id about to be touched (the
+- **(b) True rollback -- a wider guarantee than (a), but its own scope
+  must still be stated explicitly, not assumed absolute (GPT's
+  correction, relayed by Radu: naming a mechanism "rollback" does not
+  by itself prove an unconditional guarantee either).** Capture the
+  registry's prior state for every id about to be touched (the
   hypothesis's own prior record if any, and each variant's prior
-  record if any) before writing, and on ANY failure -- anticipated by
-  a dry run or not -- restore each one to its captured prior value
-  (which may be "did not exist," "existed as DRAFT," or "existed as an
-  identical PREREGISTERED record already") rather than simply
-  deleting. More code than (a), and still reaches into the registry's
-  internals (or needs a registry-level snapshot/restore method) to
-  capture and replay prior state correctly, but satisfies the stated
-  invariant against ANY failure, not only the anticipated ones.
+  record if any) before writing, and on a failure caught by this
+  mechanism's own `try`/`except` -- covering, at minimum, every
+  exception type `_force_register()`/`register_variant()` are actually
+  documented to raise today -- restore each one to its captured prior
+  value (which may be "did not exist," "existed as DRAFT," or "existed
+  as an identical PREREGISTERED record already") rather than simply
+  deleting. This widens coverage well past (a)'s anticipated-conflicts-
+  only scope, but a `try`/`except` still only catches what it names and
+  what actually executes inside its block -- it says nothing about a
+  failure outside that block (e.g. the process itself being killed
+  mid-write) or about an exception type nobody anticipated adding a
+  handler for. Whatever this mechanism's actual tested exception
+  coverage turns out to be must be stated as a bounded list in its own
+  right, verified by the regression coverage below, not asserted as
+  "any failure" by virtue of the word "rollback."
 - **(c) Make the registry itself transactional** (a `with
   registry.transaction():` context that stages writes and only commits
-  them together, naturally satisfying the invariant by construction,
-  against any failure, the same way (b) does). Most general, but a
-  bigger structural change than this specific bug needs -- probably
-  over-engineering unless other atomicity gaps are expected elsewhere
-  too.
+  them together) -- the same caveat as (b) applies: this needs its own
+  explicit statement of which failure modes the transaction boundary
+  actually catches and reverts, verified by test, not assumed complete
+  because the mechanism is named "transactional." Most general of the
+  three, but a bigger structural change than this specific bug needs --
+  probably over-engineering unless other atomicity gaps are expected
+  elsewhere too.
 
-**Radu's open decision:** whether the stated invariant ("entire
-registry restored on ANY failure") must hold unconditionally -- in
-which case only (b) or (c) actually satisfy it, and (a) is at best a
-performance optimization layered on top of one of them, not a
-replacement -- or whether (a)'s scoped guarantee (deterministic,
-anticipated conflicts only, under the current non-concurrent execution
-model) is an acceptable, explicitly-documented weaker guarantee for
-this specific module. This finding is scoped to the in-memory
-`HypothesisRegistry` only -- `JsonlAuditLog`'s own atomicity (one
-record per preregistration, PATCH #004-B finding #4) is separate and
-not affected either way.
+**Radu's open decision:** how wide the in-memory atomicity guarantee
+for this module needs to be -- (a)'s narrower, cheaper scoped guarantee
+(deterministic, anticipated conflicts only, under the current
+non-concurrent execution model) vs. (b)/(c)'s wider but still NOT
+unconditional coverage (bounded by whatever exception types their own
+`try`/`except`/transaction boundary actually catches, to be stated and
+tested explicitly, not assumed). Any choice to narrow the originally-
+stated invariant ("entire registry restored on any failure") to a
+bounded, documented set of covered failure modes must be recorded as
+an explicit decision at implementation time, not arrived at implicitly
+by whichever option gets picked. This finding is scoped to the
+in-memory `HypothesisRegistry` only -- `JsonlAuditLog`'s own atomicity
+(one record per preregistration, PATCH #004-B finding #4) is separate
+and not affected either way.
 
 ---
 
@@ -406,41 +426,69 @@ collapsed into one recompute-and-stamp operation:
    the queue's, for instance) cannot slip through either side purely
    because each side recomputed its own fresh hash independently.
 
-**Where step 2's "expected version" actually comes from -- the open
-point Radu's correction identifies (relayed by Radu):** step 1's
-identify-the-current-content hash must NOT also be the source of step
-2's expected value for the SAME object under test -- that would be
-circular (hashing a config and comparing it against "a hash of
-itself" proves nothing, and would happily freeze an already-tampered
-dict as if it were the correct baseline, exactly the Finding 11
-reproduction's own tampered-dict scenario). The expected version in
-step 2 must come from an INDEPENDENT reference: a fresh
-`load_config()` read of the actual persisted `hypothesis.yaml` source
-of truth on disk, taken at the moment the operation begins -- not from
-whatever `data`/`hypothesis_config` object a caller happens to be
-holding or passing into the function under test. Concretely: at the
-start of a preregistration run or a Research Queue run, call
-`load_config()` fresh, canonical-hash ITS `data`, and pin that as the
-one expected value (step 4) for the whole operation; every
-`hypothesis_config`/`HypothesisConfig` object subsequently handed to
-any check during that operation is identified (step 1) and compared
-(step 2) against THAT independently-sourced pinned value, never
-against a hash of itself. This also covers, explicitly, **the
-hand-built-object case**: a `HypothesisConfig` (or a bare dict)
-constructed directly with a `data`/`config_version` pair that never
-came from `load_config()` at all is still caught, because step 2's
-comparison is against the independently-loaded reference, regardless
-of what the object under test claims about its own version.
+**Where step 2's "expected version" actually comes from -- still an
+open design point, not yet a complete answer (GPT's follow-up
+correction, relayed by Radu, on an earlier draft of this section):**
+step 1's identify-the-current-content hash must NOT also be the
+source of step 2's expected value for the SAME object under test --
+that would be circular (hashing a config and comparing it against "a
+hash of itself" proves nothing, and would happily freeze an
+already-tampered dict as if it were the correct baseline, exactly the
+Finding 11 reproduction's own tampered-dict scenario). An earlier
+version of this section proposed sourcing step 2's expected value from
+a fresh `load_config()` read of `hypothesis.yaml` taken when the
+operation begins. **That by itself is not yet the complete answer,
+only a candidate building block:** "the file currently on disk" is not
+automatically the same thing as "the configuration frozen for THIS
+run" -- the file on disk can itself be edited between when a run's
+intended configuration was decided and when the run actually executes,
+so re-reading it fresh at run-start only re-introduces the same
+identify-vs-expected gap one level up, now against the filesystem
+instead of against an in-memory dict. What step 2 actually needs is a
+version EXPLICITLY REGISTERED/declared for this specific operation
+(e.g. recorded alongside the run's own identity, the way
+`EvaluationRunRegistry`/`run_registry` fixes other provenance fields
+for a run in Spec #003's own design) -- a fresh disk read may be how
+that registered value gets ESTABLISHED (one reasonable source for it),
+but the registered value itself, not "whatever load_config() returns
+right now," is what step 2 must compare against. **Three distinct
+values must be checked for concordance, not two:** (i) the actual
+content in hand (step 1's hash), (ii) the `config_version` the object
+under test itself CLAIMS (its own declared label), and (iii) the
+version registered as expected for this operation. All three must
+agree -- not only (i) vs (iii). This explicitly covers a case the
+two-way comparison alone would miss: **content that is actually
+correct, carrying a WRONG `config_version` label** (a labeling/
+bookkeeping bug, distinct from Finding 11's data-tampering scenario) --
+(i) would match (iii) correctly, but (ii) would disagree with both,
+and that mismatch must also be rejected, not waved through because the
+underlying data happened to be fine. Finally: **the operation must
+actually USE the verified, pinned snapshot from step 4 for its own
+subsequent work, not continue reading from the original mutable
+object after verification passes** -- a check-then-still-read-the-
+same-mutable-dict pattern leaves a window where the object could be
+mutated again between the check and its use; pinning (step 4) must
+mean switching to an immutable copy taken at verification time, not
+merely remembering that a check once succeeded. This also covers, as
+before, **the hand-built-object case**: a `HypothesisConfig` (or a
+bare dict) constructed directly with a `data`/`config_version` pair
+that never came from `load_config()` at all is still caught, because
+step 2/(ii)-vs-(iii)'s comparison is against the registered reference,
+regardless of what the object under test claims about its own version.
 
-**Design options, built around that four-step structure:**
+**Design options, built around that four-step structure -- proposals
+for the design stage, none settled:**
 
-- **(a) Canonical-content hashing used for steps 1-3, sourced from a
-  fresh independent `load_config()` read as described above, with an
-  explicit pinned snapshot for step 4.** Both the gate's
-  `hypothesis_config_version` comparison and the queue's
+- **(a) Canonical-content hashing for step 1, a run-registered expected
+  value for step 2 (one candidate source: a fresh `load_config()` read
+  taken when that registration happens, not re-read again later), the
+  three-way (i)/(ii)/(iii) concordance check for step 3, and switching
+  to the pinned snapshot itself for all subsequent work in step 4 --
+  not continuing to read the original mutable object.** Both the
+  gate's `hypothesis_config_version` comparison and the queue's
   `eligibility_config_version` stamp read from the SAME pinned,
-  independently-sourced value, not from independent fresh recomputes
-  of whatever object each one happens to receive. **This is a
+  registered value, not from independent fresh recomputes of whatever
+  object each one happens to receive. **This is a
   versioning-SEMANTICS change, flagged explicitly, not merely a bug
   fix:** today's `config_version` is a hash of the raw YAML file TEXT;
   canonical-content hashing of `data` is a DIFFERENT function over
@@ -554,7 +602,11 @@ by this document.
   presence flag is set.
 - **Finding 19 (GPT-G6):** a config mutation occurring between when a
   version was pinned and when a check runs is REJECTED against that
-  pinned snapshot, not silently accepted and re-stamped.
+  pinned snapshot, not silently accepted and re-stamped; the correct-
+  content-wrong-`config_version`-label case (the three-way concordance
+  check, not just content-vs-pinned-snapshot) is rejected too; and a
+  check that passes actually operates on the pinned snapshot
+  afterward, not on the original mutable object re-read a second time.
 - **Finding 20 (P004C):** both nested types round-trip
   (`StopLossRule` AND `PartialProfitRule`, not just one), AND a full
   STOP_MANAGED_INVALIDATION hypothesis+variant family survives a
@@ -570,10 +622,10 @@ by this document.
 |---|---|---|---|
 | 14 (GPT-G1) | approval checks identity, not content; (a)-style field equality against the SAME call's `proposal` argument is insufficient, withdrawn | (b): fingerprint frozen onto the human decision record at approval time, with an explicit, verifiable transformation chain from approved proposal -> validation result -> draft -> materialized variants (not raw-proposal-hash vs. final-object-hash treated as directly comparable) | -- |
 | 15 (GPT-G2) | completeness/semantics not re-checked at gate | explicit per-horizon TIME_EXIT check + exit-field validation | -- |
-| 16 (GPT-G3) | write-before-validate ordering | pre-validation of deterministic conflicts (scoped guarantee, see below), or true rollback meeting the full atomicity invariant | -- |
+| 16 (GPT-G3) | write-before-validate ordering | pre-validation of deterministic conflicts (narrower, cheaper), or rollback/transaction with its own tested exception coverage stated explicitly (wider, but not unconditional either -- see below) | -- |
 | 17 (GPT-G4) | `register()` guard scoped to "existing is None" only | (a) widen guard to any-status-to-PREREGISTERED | -- |
 | 18 (GPT-G5) | packet keeps presence flag, not values | (a) compact per-bin summary field, respecting token budget | Finding 8 (untested budget) |
-| 19 (GPT-G6) | version frozen at load, data dict mutable; recomputing from `data` at the START of an operation can freeze already-divergent content, withdrawn as the whole answer | identify / compare against a version tied to the configuration AS REGISTERED BEFORE execution / reject / pin that same snapshot for the operation's duration -- source of the "expected version" still to be defined, see below | Finding 11 (same root cause) |
+| 19 (GPT-G6) | version frozen at load, data dict mutable; recomputing from `data` at the START of an operation can freeze already-divergent content, withdrawn as the whole answer | identify content / compare a three-way concordance (actual content, the object's own claimed `config_version`, and the version registered for this operation) / reject on any mismatch / use the pinned snapshot itself afterward, not the original mutable object -- a fresh `load_config()` read is proposed as one candidate source for the registered value, not yet settled | Finding 11 (same root cause) |
 | 20 (P004C) | registry omission in an additive patch | add the two missing types to `_TYPE_REGISTRY`; full persist/reload for the complete family still unverified | -- |
 
 **None of the above is authorized for implementation.** This document

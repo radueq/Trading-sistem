@@ -344,9 +344,15 @@ per-condition provenance granularity, etc.), which stay open regardless
 of this closure. **Remediation DESIGN
 (`docs/spec004_remediation_proposal_2026-10-04.md`) and the open
 contractual questions remain a separate, OPEN stage; implementation of
-any fix is NOT AUTHORIZED.** Claude's own prior Findings 1-13 (the
-Claude-solo round) have not had a GPT round at all and are unaffected
-by this closure either way.
+any fix is NOT AUTHORIZED.** **Correction (GPT's observation, relayed
+by Radu): Claude's own prior Findings 1-13 were NOT skipped by GPT's
+review** -- GPT's review individually addressed each of them (see its
+own reconciliation table, section 4), confirming some (e.g. Finding
+2), narrowing others (e.g. Finding 10's actual reproduction layer), and
+leaving the contractual questions and gaps it flagged for them open.
+This closure does not extend further than that -- it does not certify
+all 111 rows of the matrix in full, and the open contractual questions
+on Findings 1-13 remain exactly that, open.
 
 ---
 
