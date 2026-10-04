@@ -86,8 +86,9 @@ commit `0c1d3cc`), reconciled against Claude's own independent pass in
 `docs/audit_spec001_requirement_code_test.md`,
 `docs/audit_spec002_requirement_code_test.md`, and
 `docs/audit_spec003_requirement_code_test.md`** (status line at the top
-of each document -- #001/#002's reconciliation rounds are closed,
-#003's is in progress). Spec #004 remains at the point-by-point level.
+of each document -- #001/#002's reconciliation rounds are closed;
+#003's findings reconciliation is closed too (as of `8a0f152`), its
+remediation DESIGN is in progress). Spec #004 remains at the point-by-point level.
 Phrases like "Radu-endorsed"
 or "Radu caught" overstated Radu's own personal involvement in this
 technical work. The corrected framing used from this revision onward:
@@ -95,7 +96,8 @@ technical work. The corrected framing used from this revision onward:
 has verified specific findings flagged in reviews on a point-by-point
 basis, with full independent verification not yet finished for Spec
 #004 (Specs #001, #002, and #003 have each had a full GPT pass
-reconciled by Claude, see above -- #001/#002 closed, #003 in progress);
+reconciled by Claude, see above -- #001/#002/#003 findings reconciliation
+all closed, #003's remediation design in progress);
 Radu's own verdict on what any of this means contractually remains
 separate** and
 is not implied by either. This does not apply to historical messages reproduced verbatim
@@ -430,7 +432,10 @@ is not itself the audit.
      reported-vs-tested population mismatch in the stratified baseline
      comparison; zero-weight-bin IQR pooling; within-bin raw-row
      weighting contradicting amendment SS74C's own text) plus S1/S2/G1/G2
-     suspicions and gaps, all independently reproduced by Claude. See
+     suspicions and gaps, independently reproduced by Claude with one
+     named exception (F1c's "a configured boundary is silently ignored"
+     claim rests on GPT's own probe, not an independent Claude
+     reproduction -- see that finding's own text). See
      `docs/audit_spec003_requirement_code_test.md`'s own status line and
      Top Findings 11-19. **As of `8a0f152`: findings reconciliation
      CLOSED (GPT's side); remediation design
