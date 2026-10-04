@@ -14,15 +14,16 @@ not rename any derived document as if it were a source contract.
 
 **Status of the requirement→code→test correspondence check, stated once
 here and not contradicted elsewhere in this document (updated
-2026-10-04): the GPT audit of Spec #001, covering all 29 rows, is
-finalized; documentary reconciliation between Claude's and GPT's
-independent passes is in progress (multiple rounds so far, see
-`docs/audit_spec001_requirement_code_test.md`'s own status line and
-revision history). Specs #002-#004 are not yet audited in full by GPT --
-their matrices remain at the original point-by-point spot-check level.
-Radu's own contractual verdict on any finding -- in any of the four
-matrices -- remains separate from this technical reconciliation
-throughout, and has not been given.** The matrices exist as
+2026-10-04): Spec #001 and Spec #002 have each been audited in full by
+GPT, reconciled against Claude's own independent pass, and closed as
+reconciliation rounds (see each matrix's own status line and revision
+history -- further findings can still surface later, but the
+reconciliation process itself is not left "in progress" for either).
+Specs #003-#004 are not yet audited in full by GPT -- their matrices
+remain at the original point-by-point spot-check level. Radu's own
+contractual verdict on any finding -- in any of the four matrices --
+remains separate from this technical reconciliation throughout, and has
+not been given.** The matrices exist as
 `docs/audit_spec00{1,2,3,4}_requirement_code_test.md` (commit `edf8dbe`,
 reclassified per the key below at a later commit -- see each file's own
 revision note). Producing and reconciling them is evidence-gathering
@@ -63,19 +64,22 @@ produced by Claude, not by Radu or by GPT. Separately, GPT -- the same
 reviewer role this project has used throughout ("GPT Review #001", "GPT
 Review #003 Round 1", etc.) -- has verified specific findings flagged in
 its reviews on a point-by-point basis; a full independent re-verification
-of every row by GPT has not been completed, **except for Spec #001,
-where GPT has now run its own full row-by-row pass over all 29 rows
-(commit `34acd9c`), reconciled against Claude's own independent pass in
-`docs/audit_spec001_requirement_code_test.md`** (status line at the top
-of that document). Specs #002-#004 remain at the point-by-point level.
+of every row by GPT has not been completed, **except for Specs #001 and
+#002, where GPT has now each run its own full row-by-row pass (all 29
+rows for #001 on commit `34acd9c`; all 50 rows for #002 on commit
+`d289a02`), reconciled against Claude's own independent pass in
+`docs/audit_spec001_requirement_code_test.md` and
+`docs/audit_spec002_requirement_code_test.md`** (status line at the top
+of each document). Specs #003-#004 remain at the point-by-point level.
 Phrases like "Radu-endorsed"
 or "Radu caught" overstated Radu's own personal involvement in this
 technical work. The corrected framing used from this revision onward:
 **the matrices and initial verifications were produced by Claude; GPT
 has verified specific findings flagged in reviews on a point-by-point
 basis, with full independent verification not yet finished for Specs
-#002-#004 (Spec #001's is done and reconciled, see above); Radu's own
-verdict on what any of this means contractually remains separate** and
+#003-#004 (Specs #001 and #002 are done and reconciled, see above);
+Radu's own verdict on what any of this means contractually remains
+separate** and
 is not implied by either. This does not apply to historical messages reproduced verbatim
 (e.g. in `docs/evidence_spec002_acceptance_message.md`,
 `docs/evidence_004c_verdict_status.md`, or quotes from the recovered
@@ -367,11 +371,16 @@ is not itself the audit.
      DEFECTs Claude's round 1 missed despite having already read the
      exact files involved -- (1) `engine.py`'s `_price_series_to_df()`
      mixes raw open/high/low with split-adjusted close in the same bar,
-     corrupting ATR for any split security across its entire pre-split
-     history (reproduced: ATR_pct = 0.94 where the coherent value is
-     ~0.02; already disclosed as a known limitation in
-     `docs/spec005_known_limitations.md:127-135`, just never carried
-     into this matrix's own rows); (2) `config/features.yaml`'s
+     corrupting ATR via a Wilder-smoothed contamination that enters at
+     a security's split boundary and decays slowly across many
+     subsequent sessions (not a one-day blip; the exact magnitude at
+     any given session depends on how much decay time has elapsed --
+     demonstrated at two separate points: Claude's own reproduction
+     immediately post-split, 305→244→196→157→126→102 across five
+     sessions, and GPT's own probe 16 sessions post-split,
+     ATR_pct=0.94 against a coherent ~0.02; already disclosed as a
+     known limitation in `docs/spec005_known_limitations.md:127-135`,
+     just never carried into this matrix's own rows); (2) `config/features.yaml`'s
      `relative_strength.driving_return_window` is declared configurable
      but never read -- `engine.py` hardcodes `"relative_return_63d"`
      regardless of the config value (contrast with `momentum.py`, which
