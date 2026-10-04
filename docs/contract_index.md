@@ -509,23 +509,29 @@ is not itself the audit.
      implementation/acceptance of any fix is NOT AUTHORIZED.** Now
      joined with #004's own remediation design in
      `docs/joint_remediation_design_003_004_2026-10-04.md`
-     (2026-10-04, revision 2, per GPT's own recommendation once both
-     audits closed) -- a compatibility matrix (field-level, not just
-     import-level: F3/F4+F5 change values #004's `standardized_effect`
-     consumes, S2's run-id feeds directly into #004's own content-
-     addressing); a complete F1 mechanism (a price-independent
-     calendar reused read-only from Spec #005's own `TradingCalendar`,
-     an explicit OOS/not-yet-available/data-gap three-way split,
-     naming the SS11 reinterpretation this requires for Radu's own
-     sign-off); a complete F3+F4+F5 mathematical design with a worked
-     numeric example and a permutation-test extension; concrete
-     mechanisms (not left open) for #004 Findings 1/2/10/11/14-20; a
-     complete AST import-resolution algorithm and test matrix for G1;
-     a revised build order and sign-off checklist covering every item.
-     Design only, not implementation; several items still name a
-     genuinely open choice for Radu (listed in the document's own
-     checklist), separated from the items with a complete, ready-to-
-     approve mechanism.
+     (2026-10-04, revision 3, per GPT's own recommendation once both
+     audits closed). **Revision 3 corrects eight substantive problems
+     GPT's own follow-up review found in revision 2's claimed-complete
+     mechanisms** -- a genuine arithmetic error in the weighted-IQR
+     worked example (verified by direct execution this round: the
+     original example's claimed direction was backwards), F1's
+     classification and return calculation resolving to two different,
+     uncoordinated exits under a data-gap scenario (now fixed by using
+     one target session for both), the reused calendar object being a
+     plain constructor rather than a verified data source (and
+     importing it from `backtest` reversing this project's own
+     one-way module dependency direction), the per-security baseline
+     weighting leaving within-bin cross-session universe-size variation
+     unaddressed, the permutation-test extension's null hypothesis
+     never having been stated, #004 Finding 14's fingerprint omitting
+     exit content entirely, Finding 15's uniqueness key being too
+     coarse, and two further mechanism gaps (config immutability,
+     the AST guard's matcher logic). The sign-off checklist now
+     separates genuinely complete, ready-to-approve mechanisms from
+     those downgraded back to "design advanced, not complete" --
+     several of revision 2's rows moved to the second category. Design
+     only, not implementation; no code or test changed, no tests
+     rerun.
    - **Spec #004: two rounds done (2026-10-04).** Round 1 (Claude
      alone): a fresh, high-effort independent re-verification pass,
      requested by Radu specifically to finish before the joint F1-F6
