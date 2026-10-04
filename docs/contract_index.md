@@ -383,8 +383,9 @@ is not itself the audit.
      reproduction (AAPL_SPLIT_2020), decaying 305→244→196→157→126→102
      across five sessions immediately after its own split; GPT's own
      probe (an 80-observation synthetic fixture, 4-for-1 split at index
-     64), measured at its own last observation 16 sessions after that
-     split: ATR_pct=0.94 against a coherent ~0.02 for that same
+     64), measured at its own last observation -- 16 observations
+     starting with the split session itself, inclusive (indices
+     64-79): ATR_pct=0.94 against a coherent ~0.02 for that same
      fixture -- one specific value in one specific scenario, not a
      claim about every session. Already disclosed as a known limitation
      in `docs/spec005_known_limitations.md:127-135`, just never carried
