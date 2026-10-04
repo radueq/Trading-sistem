@@ -73,7 +73,8 @@ or "Radu caught" overstated Radu's own personal involvement in this
 technical work. The corrected framing used from this revision onward:
 **the matrices and initial verifications were produced by Claude; GPT
 has verified specific findings flagged in reviews on a point-by-point
-basis, with full independent verification not yet finished; Radu's own
+basis, with full independent verification not yet finished for Specs
+#002-#004 (Spec #001's is done and reconciled, see above); Radu's own
 verdict on what any of this means contractually remains separate** and
 is not implied by either. This does not apply to historical messages reproduced verbatim
 (e.g. in `docs/evidence_spec002_acceptance_message.md`,
@@ -357,7 +358,23 @@ is not itself the audit.
      Findings 1-2 (new) and 4-6, 14 for full detail and reproduction.
      Neither DEMONSTRATED DEFECT has been fixed -- documentary only, per
      Radu's instruction.
-   - **Spec #002-#004: not yet started this way.** Still at the original
+   - **Spec #002: done (2026-10-04), by Claude alone -- not yet seen by
+     GPT.** All 18 files in `src/discovery/`, all 4 config YAML files,
+     `config/loader.py`, and the two structural AST-scan tests read in
+     full. Outcome: the existing matrix holds up almost entirely --
+     every SUSPECTED ISSUE (dead `NormalizedFeatureObservation`/dead
+     `bucket_key` config/discarded per-feature status/missing
+     lane-contradiction reason code/`config_version` vs
+     `feature_engine_version` asymmetry) independently reproduced
+     against source. No new DEMONSTRATED DEFECT and no previously-
+     unflagged structural gap, unlike Spec #001. One precision fix (row
+     9's hand-verified field count: 5 of 11, not "4 of ~9") and one
+     clarification (TEST 18's `src/discovery/`-only scope is NOT the
+     same class of gap as Spec #001's TEST 10 -- its job is fully
+     covered by that scope; downstream-of-Discovery protection is each
+     later spec's own separate, already-confirmed AST-scan test). See
+     `docs/audit_spec002_requirement_code_test.md`'s own status line.
+   - **Spec #003-#004: not yet started this way.** Still at the original
      spot-check level; next in this track.
    Radu's own contractual verdict on any finding remains separate from
    this technical re-verification throughout.

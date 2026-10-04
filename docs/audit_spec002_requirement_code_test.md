@@ -1,11 +1,35 @@
 # Spec #002 -- Requirement -> Code -> Test Correspondence Matrix
 
-**Status: background-agent output, partially spot-checked by Claude, NOT
-independently verified by Radu.** Produced by a Claude subagent reading
+**Status (updated 2026-10-04): independently re-verified directly by
+Claude, row-by-row** -- every one of the 18 files in `src/discovery/`
+read in full, all 4 config YAML files and `config/loader.py` read, and
+the two structural AST-scan tests (`test_17_no_outcome_fields.py`,
+`test_18_pit_gateway_enforcement.py`) plus `test_04`, `test_22`,
+`test_24` read and traced against their own claimed assertions, not
+re-trusted from the original subagent's citations. **This document has
+NOT yet had a GPT pass** (unlike Spec #001's matrix, which completed a
+full GPT round-by-row reconciliation on 2026-10-03/04) -- Radu's own
+"#002-#004 nu sunt încă auditate integral de GPT" status holds for this
+file specifically. Originally produced by a Claude subagent reading
 `docs/Spec_002_Feature_Engine_Discovery_v1.0.md` section-by-section (all
 50 sections) against `src/discovery/` and `tests/spec002/`. The agent ran
 `python -m pytest tests/spec002/ -q` itself twice and reports **38
 passed, 0 failed**.
+
+**Independent audit outcome (Claude, 2026-10-04):** the subagent's
+original matrix holds up overwhelmingly well under full direct
+re-verification. No new DEMONSTRATED DEFECT and no previously-unflagged
+structural gap were found (unlike Spec #001's audit, which surfaced a
+genuine new finding on TEST 10's scope). Nothing in this pass depends on
+Master Context. Two precise corrections below: a field-count fix on row
+9, and an explicit clarification that TEST 18's `src/discovery/`-only
+scope is NOT the same kind of gap as Spec #001's TEST 10 -- TEST 18's
+own job (guard against Discovery bypassing the PIT gateway) is fully
+covered by that scope; protecting against a *different* package (e.g.
+Hypothesis) reaching into Discovery's internals is a separate concern
+already covered by each later spec's own dedicated AST-scan test
+(`tests/spec004/test_36_no_pit_raw_price_imports.py` and siblings,
+confirmed present by direct read during the Spec #001 audit).
 
 **Revision note (2026-10-03):** Radu's correction on §48 (below) is
 applied: the acceptance-evidence question for Spec #002 is resolved (see
@@ -47,7 +71,7 @@ All three held up.
 | 6 | 3-30 day horizon is not an exit rule; no outcomes computed | No outcome/exit code anywhere | `test_17` | MET (figure itself superseded by #003 -- already documented in `docs/contract_index.md`) |
 | 7 | PIT-only data access; architectural test required | `engine.py:39` (only PIT import) | `test_18` (AST import scan) | MET |
 | 8 | #001's QA/listing-status limitations remain hard gates | Zero references to `qa_pass`/`listing_status` anywhere in `src/discovery/` | No structural test enforces this | **MET (by inspection)** [TEST-COVERAGE GAP: no AST guard against a future regression] |
-| 9 | Lane A Trend: full field list, no trend_score | `features/trend.py:17-38` (generic per-window computation, same formula for every window) | `test_04` hand-verifies 4 of ~9 fields explicitly | **MET (by inspection: the untested fields use the same generic per-window code path as the tested ones)** [TEST-COVERAGE GAP: the other ~5 fields are not individually hand-verified] |
+| 9 | Lane A Trend: full field list, no trend_score | `features/trend.py:17-38` (generic per-window computation, same formula for every window) | **Corrected 2026-10-04 (exact count verified by reading `test_04` directly): 5 of 11 fields hand-verified** (`return_20d`, `return_63d`, `sma_20`, `distance_sma20`, `slope_sma20`), not "4 of ~9" | **MET (by inspection: the untested fields use the same generic per-window code path as the tested ones)** [TEST-COVERAGE GAP: the other 6 fields -- `return_126d`, `sma_50`, `sma_200`, `distance_sma50`, `distance_sma200`, `slope_sma50` -- are not individually hand-verified] |
 | 10 | Lane B RS: benchmark-configurable, cross-sectional percentile | `features/relative_strength.py:20-32`; `engine.py:247-253`; `normalization/cross_sectional.py` (used throughout the real pipeline, exercised indirectly by every RS-bearing test) | `test_05` (63d only); `test_20` | **MET (by inspection, exercised indirectly throughout)** [TEST-COVERAGE GAP: `cross_sectional_percentile()` has no direct unit test of its own] |
 | 11 | Lane C Volatility: ATR/BB-width/realized-vol, ATR != BBWidth | `features/volatility.py:19-68` | `test_06`, `test_07` (Wilder formula hand-verified) | MET -- spec-text ambiguity noted, not an implementation gap: the spec doesn't say whether "ATR_percentile" means percentile-of-ATR_14 or of-ATR_pct; code chose the latter, a defensible reading Radu should confirm |
 | 12 | Lane D Volume: ADV/volume_ratio/percentile/RVOL | `features/volume.py:21-33` | `test_08` | MET |
