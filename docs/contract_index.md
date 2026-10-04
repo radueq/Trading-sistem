@@ -32,8 +32,18 @@ stage only: **remediation DESIGN for those findings
 OPEN stage** -- several designs, notably F1's OOS-classification
 mechanism, have no working answer yet -- and **implementation/
 acceptance of any fix is a third, separate stage, NOT AUTHORIZED.**
-Spec #004 is not yet audited in full by GPT -- its matrix remains at
-the original point-by-point spot-check level. Radu's own contractual
+Spec #004 is not yet audited in full by GPT -- that remains open. As of
+2026-10-04, Claude has completed its own fresh, high-effort independent
+re-verification pass for #004 (requested by Radu specifically to finish
+before the joint F1-F6 remediation design for #003, to surface
+cross-module dependencies first) -- **this is NOT a GPT round**, unlike
+#001/#002/#003's full GPT passes; it elevates four of the matrix's own
+prior SUSPECTED ISSUE findings to DEMONSTRATED DEFECT via concrete
+reproduction through the real `preregister_hypothesis()` gate, and adds
+one new TEST-COVERAGE GAP finding (the same AST parent-import blind spot
+already found in #002's TEST 17/18 and #003's TEST 26, now in #004's
+TEST 49). See `docs/audit_spec004_requirement_code_test.md`'s own status
+update and Top Findings 1, 2, 10, 11, 13. Radu's own contractual
 verdict on any finding -- in any of the four matrices -- remains
 separate from this technical reconciliation throughout, and has not
 been given.** The
@@ -88,7 +98,10 @@ commit `0c1d3cc`), reconciled against Claude's own independent pass in
 `docs/audit_spec003_requirement_code_test.md`** (status line at the top
 of each document -- #001/#002's reconciliation rounds are closed;
 #003's findings reconciliation is closed too (as of `8a0f152`), its
-remediation DESIGN is in progress). Spec #004 remains at the point-by-point level.
+remediation DESIGN is in progress). Spec #004 has not yet had a GPT
+round, but as of 2026-10-04 has had Claude's own fresh independent
+re-verification pass (four findings elevated to DEMONSTRATED DEFECT,
+one new TEST-COVERAGE GAP found) -- see that matrix's own status update.
 Phrases like "Radu-endorsed"
 or "Radu caught" overstated Radu's own personal involvement in this
 technical work. The corrected framing used from this revision onward:
@@ -97,7 +110,9 @@ has verified specific findings flagged in reviews on a point-by-point
 basis, with full independent verification not yet finished for Spec
 #004 (Specs #001, #002, and #003 have each had a full GPT pass
 reconciled by Claude, see above -- #001/#002/#003 findings reconciliation
-all closed, #003's remediation design in progress);
+all closed, #003's remediation design in progress; #004 has instead had
+a fresh independent re-verification pass by Claude alone, not yet by
+GPT, see its own matrix status update for 2026-10-04);
 Radu's own verdict on what any of this means contractually remains
 separate** and
 is not implied by either. This does not apply to historical messages reproduced verbatim
@@ -442,8 +457,47 @@ is not itself the audit.
      (`docs/spec003_remediation_proposal_2026-10-04.md`) remains OPEN --
      F1's own OOS-classification mechanism has no working design yet;
      implementation/acceptance of any fix is NOT AUTHORIZED.**
-   - **Spec #004: not yet started this way.** Still at the original
-     spot-check level; next in this track.
+   - **Spec #004: Claude's own fresh, high-effort independent
+     re-verification pass done (2026-10-04)** -- requested by Radu
+     specifically to finish before the joint F1-F6 remediation design
+     for #003, so cross-module dependencies surface first. **Not yet a
+     GPT round** -- unlike #001/#002/#003, #004 has not had a full GPT
+     pass; this is Claude re-verifying its own prior background-agent
+     matrix against the real source on commit `fa8f257`, going further
+     than that original pass by driving the REAL
+     `preregister_hypothesis()` gate end-to-end with concrete fixtures
+     instead of reading code or using the test suite's own bypass
+     helper. Four of the matrix's prior SUSPECTED ISSUE findings are
+     elevated to DEMONSTRATED DEFECT with concrete reproductions: (1)
+     a hypothesis built entirely from `evaluation_mode="EXPLORATORY"`
+     evidence reached PREREGISTERED through the real gate with zero
+     errors, and no field anywhere records which mode the evidence came
+     from; (2) a DRAFT tagged `research_mode="EXPLORATORY_HYPOTHESIS"`
+     reached PREREGISTERED unchanged through the real gate; (10) two
+     SIGNAL_INVALIDATION variants of the same family type were rejected
+     as exceeding `max_exit_families_per_hypothesis`, confirming the
+     check counts raw variant entries, not distinct family types; (11)
+     preregistering against a tampered config (`max_hypotheses_per_
+     signature` changed to `999`) still succeeded, while the frozen
+     record's own `hypothesis_config_version` kept claiming the
+     original config's hash. **One new finding (G1):** `test_49`'s own
+     AST import-dependency guard has the identical parent-import blind
+     spot already found in #002's TEST 17/18 and #003's TEST 26.
+     **Cross-module dependency check (Radu's specific request):**
+     confirmed clean by direct grep -- `src/evaluation/`,
+     `src/discovery/`, `src/data_foundation/` never import `hypothesis`
+     anywhere; `src/hypothesis/` itself imports only plain config/enum/
+     dataclass modules from Discovery and Evaluation, never their
+     engines or `data_foundation/`; `src/backtest/` (Spec #005)
+     legitimately consumes `hypothesis`'s frozen records read-only in 5
+     files. The Data Foundation -> Discovery -> Evaluation -> Hypothesis
+     direction holds; the only gap found is TEST 49's own guard
+     coverage (G1), not today's actual dependency direction. Full suite
+     re-run after this pass, no code or test modified: `tests/spec004`
+     -- 176 passed; full repository suite -- 727 passed, 1 skipped,
+     both unchanged from before. See
+     `docs/audit_spec004_requirement_code_test.md`'s own status update
+     and Top Findings 1, 2, 10, 11, 13 for full detail.
    Radu's own contractual verdict on any finding remains separate from
    this technical re-verification throughout.
 2. **Primary evidence located for both open acceptance questions, each

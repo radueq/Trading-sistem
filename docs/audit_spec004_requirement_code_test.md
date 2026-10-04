@@ -40,6 +40,53 @@ gate.
 This held up. The rest of the table was not independently re-verified
 line-by-line by Claude.
 
+**Status update (2026-10-04): Claude's own fresh, high-effort
+independent re-verification pass**, requested by Radu specifically to
+finish before the joint F1-F6 remediation design for Spec #003 (to
+surface cross-module dependencies first). **This is NOT yet a GPT
+round** -- unlike Specs #001/#002/#003, which have each had a full GPT
+pass reconciled by Claude, #004 has not yet been independently audited
+by GPT; this round is Claude's own re-verification against the real
+source on commit `fa8f257` (branch `claude/spec004-audit`), going
+further than the original background-agent pass by driving the REAL
+`preregister_hypothesis()` gate end-to-end with concrete fixtures,
+not just reading code or using the test-only bypass helper in
+`conftest.py`.
+
+**Four of the original "SUSPECTED ISSUE" findings are elevated to
+DEMONSTRATED DEFECT below**, each with a concrete reproduction through
+the actual gate (not a hypothetical future caller): Finding 1
+(Locked-OOS/evaluation-mode boundary), Finding 2 (research_mode never
+enforced), Finding 10 (`max_exit_families_per_hypothesis` counts
+variants, not family types), and Finding 11
+(`hypothesis_config_version` never cross-checked). **One new finding**
+(G1): TEST 49's own AST import-dependency guard has the identical
+parent-import blind spot already found and documented in Spec #002's
+TEST 17/18 and Spec #003's TEST 26 -- found while specifically checking
+cross-module dependencies per Radu's request.
+
+**Cross-module dependency check (Radu's specific request before the
+joint remediation design):** confirmed directly by grep across
+`src/evaluation/`, `src/discovery/`, `src/data_foundation/` -- none
+import `hypothesis` anywhere, preserving the one-way Data Foundation ->
+Discovery -> Evaluation -> Hypothesis chain. `src/hypothesis/` itself
+imports only `discovery.config.loader`, `discovery.candidate.
+reason_codes`, and `evaluation.models.entities` -- plain config/enum/
+dataclass modules, never `discovery.engine`, `evaluation.engine`, or
+anything under `data_foundation/`, matching SS5/SS110-F structurally.
+`src/backtest/` (Spec #005) legitimately imports from `hypothesis.
+models.entities`/`hypothesis.registry.hypotheses` in 5 files (exit
+engine, discovery/plan integration, legacy exits, provenance) to
+consume already-frozen `StrategyVariant`/`StrategyHypothesis` records
+and reuse `check_provenance_matches_run()` -- reading-only consumption
+of registry-stored objects, no bypass found. The one structural gap
+found in this check is TEST 49 itself (G1 below), not the dependency
+direction.
+
+Full suite re-run after this pass (no code or test modified):
+`tests/spec004` -- **176 passed**; full repository suite -- **727
+passed, 1 skipped**, both unchanged from before this round.
+
 ---
 
 ## Section-by-section table
@@ -48,8 +95,8 @@ line-by-line by Claude.
 |---|---|---|---|---|
 | 1 | Purpose: turn #003 evidence into a testable, frozen hypothesis; not a profitability test | Whole-package architecture | N/A (narrative) | N/A |
 | 2 | Outcome-aware for hypothesis formation but not a backtester; never raw returns/backtest/Locked OOS/indicator optimization | `evidence/packet.py:31` (imports only `evaluation.models.entities`) | `test_36`, `test_38` | MET |
-| 3 | A Development-derived hypothesis must be explicitly marked as such | `EvidenceProvenance` carries run/config lineage but no `evaluation_mode` field | No test asserts a DEVELOPMENT-DERIVED tag exists | **SUSPECTED ISSUE -- VERIFICATION PENDING** -- see Finding 1 (not a demonstrated gap: no failure has been reproduced against the current suite) |
-| 4 | Locked OOS completely inaccessible | Import-boundary only; no allowlist restricting mode to FORMAL_DEVELOPMENT | `test_36` (import boundary only) | **SUSPECTED ISSUE -- VERIFICATION PENDING** -- see Finding 1, same correction |
+| 3 | A Development-derived hypothesis must be explicitly marked as such | `EvidenceProvenance` carries run/config lineage but no `evaluation_mode` field | No test asserts a DEVELOPMENT-DERIVED tag exists | **DEMONSTRATED DEFECT, 2026-10-04 (Claude's own fresh reproduction) -- see Top Finding 1, elevated from SUSPECTED ISSUE:** a hypothesis built entirely from `evaluation_mode="EXPLORATORY"` evidence reached PREREGISTERED through the real gate with zero errors; the frozen record carries no field anywhere recording which mode the evidence came from |
+| 4 | Locked OOS completely inaccessible | Import-boundary only; no allowlist restricting mode to FORMAL_DEVELOPMENT | `test_36` (import boundary only) | MET for literal Locked-OOS price inaccessibility (the import boundary is real and structural -- `hypothesis/` never imports PIT/`data_foundation`, confirmed by this round's own dependency check). **DEMONSTRATED DEFECT, 2026-10-04 (Claude's own fresh reproduction) -- see Top Finding 1, elevated from SUSPECTED ISSUE:** the narrower, related claim -- that evidence feeding a hypothesis must have gone through FORMAL_DEVELOPMENT discipline -- is not enforced anywhere; same reproduction as §3 |
 | 5 | No direct Price History/PIT access needed | `evidence/packet.py:31` | `test_36` | MET |
 | 6 | Worked example of what a Hypothesis is | `docs/spec004_examples.md` Example A | N/A | N/A |
 | 7 | `StrategyHypothesis` entity, minimum fields | `models/entities.py:381-430` + `433-447` (`StrategyVariant`) -- spec's single entity split into family+variant per Radu's §110-D | `test_03`, `test_41` | MET (documented restructuring) |
@@ -74,7 +121,7 @@ line-by-line by Claude.
 | 26 | `ExitHypothesis` entity, minimum fields | `models/entities.py:275-327` | `test_13`, `test_14` | MET |
 | 27 | Exit parameter source labeled; `BACKTEST_SELECTED` must not exist yet | `ParameterSource` enum -- no such member | `test_59` | MET |
 | 28 | Evidence-derived exit parameters written explicitly, never masked as prior | `selection_basis`+`parameter_source` propagate through `materialize_variants()` | `test_59` | MET |
-| 29 | Hypothesis Mode: EXPLORATORY vs PREREGISTERED | `HypothesisResearchMode` enum defined | Never checked by `preregister_hypothesis()`/`validate_for_preregistration()` -- Claude-verified, zero occurrences in either file | **SUSPECTED ISSUE -- VERIFICATION PENDING; GPT verified the underlying fact, Radu's own verdict remains separate** -- see Finding 2 |
+| 29 | Hypothesis Mode: EXPLORATORY vs PREREGISTERED | `HypothesisResearchMode` enum defined | Never checked by `preregister_hypothesis()`/`validate_for_preregistration()` -- Claude-verified, zero occurrences in either file | **DEMONSTRATED DEFECT, 2026-10-04 (Claude's own fresh reproduction) -- see Top Finding 2, elevated from SUSPECTED ISSUE:** a DRAFT explicitly tagged `research_mode="EXPLORATORY_HYPOTHESIS"` was driven through the REAL `preregister_hypothesis()` gate (not the test-only bypass helper) and reached PREREGISTERED unchanged, with no error |
 | 30 | Lifecycle DRAFT->REVIEWED->PREREGISTERED->HANDOFF; no edit-after-backtest | `HypothesisStatus` enum; `register()`/`_force_register()` | `test_24`, `test_53` | MET |
 | 31 | Post-preregistration modification creates a new id, never overwrites | `create_new_version()` | `test_25` | MET |
 | 32 | Hypothesis Registry, minimum fields | `models/entities.py:381-430` (field consolidation vs. spec's separate parent/supersedes pair) | `test_25` | MET (minor semantically-equivalent consolidation) |
@@ -97,7 +144,7 @@ line-by-line by Claude.
 | 49 | Rationale is interpretation, not statistics; separated from Evidence | `facts_from_evidence`/`interpretation` separate fields | `test_33` | MET |
 | 50 | Output distinguishes FACTS from INTERPRETATION | Same as §49 | `test_33` | MET |
 | 51 | Hypothesis Budget protects against combinatorial explosion | `config/hypothesis.yaml:54-57` | `test_27` | MET |
-| 52 | Level-1 budget values | `config/hypothesis.yaml:50-57`; `validator.py:256-270` | `test_27`, `test_08` | MET on the budget mechanism. **SUSPECTED ISSUE -- VERIFICATION PENDING**: `max_exit_families_per_hypothesis` counts proposal entries, not distinct family types -- confirmed code behavior, contractual severity open -- see Finding 10 |
+| 52 | Level-1 budget values | `config/hypothesis.yaml:50-57`; `validator.py:256-270` | `test_27`, `test_08` | MET on the budget mechanism. **DEMONSTRATED DEFECT, 2026-10-04 (Claude's own fresh reproduction) -- see Top Finding 10, elevated from SUSPECTED ISSUE:** two SIGNAL_INVALIDATION variants (differing only by `max_holding_bars`/`invalidation_conditions`, both the SAME family TYPE) were rejected as "exceeds max_exit_families_per_hypothesis" even though only 2 distinct family types (TIME_EXIT + SIGNAL_INVALIDATION) are present -- `validator.py:256` counts `len(proposal.exit_hypotheses)`, a raw entry count, not `len({e.exit_family for e in proposal.exit_hypotheses})` |
 | 53 | Budget rejection doesn't hide hypotheses | `mark_proposal_rejected()` never deletes | `test_28` | MET |
 | 54 | `HypothesisUniverse` entity for one research cycle | `models/entities.py:688-697`; `build_hypothesis_universe()` (generic accounting -- collects existing proposals/rejected/preregistered into one object) | No test file exercises this function at all | **MET (by inspection: generic aggregation, no complex logic)** [TEST-COVERAGE GAP] |
 | 55 | Why keep rejected proposals | Same evidence as §53 | `test_26` | MET |
@@ -116,7 +163,7 @@ line-by-line by Claude.
 | 68 | Daily->4H readiness: timeframe/horizon_bars, never holding_days | Forbidden-token scan on entity fields | `test_40` | MET |
 | 69 | Multi-timeframe future needs no registry redesign | Generic `timeframe: str` field | Implied by §68's test | MET (forward-looking, reasonably supported) |
 | 70 | Each condition carries its own source_feature/engine/version | No per-condition provenance fields exist -- only whole-hypothesis provenance | `test_41`'s docstring cites this but assertions never check it | **SUSPECTED ISSUE -- VERIFICATION PENDING** -- see Finding 3: absence confirmed, contractual necessity for Radu to judge |
-| 71 | Deterministic validation before PREREGISTERED (full checklist) | Split across `validator.py:227-279` and `rules.py:137-257` | `test_04,07,09,10,15,18-20,41-43` | MET (two-layer implementation) |
+| 71 | Deterministic validation before PREREGISTERED (full checklist) | Split across `validator.py:227-279` and `rules.py:137-257` | `test_04,07,09,10,15,18-20,41-43` | MET (two-layer implementation) on every checklist item the two layers actually implement. **DEMONSTRATED DEFECT, 2026-10-04 (Claude's own fresh reproduction) -- see Top Finding 11, elevated from SUSPECTED ISSUE:** `validate_for_preregistration()` receives `hypothesis_config` as a plain `dict` (never the `HypothesisConfig` wrapper carrying `config_version`) and never compares it against `hypothesis.constraints.hypothesis_config_version` -- preregistering against a config dict with `max_hypotheses_per_signature` changed to `999` still succeeded while the frozen record's own `constraints.hypothesis_config_version` kept claiming the ORIGINAL, unmodified config's hash |
 | 72 | Outcome contamination forbidden in entry/exit conditions | `FORBIDDEN_OUTCOME_FIELD_NAMES` + scan function; also the Discovery-lane allowlist | `test_18,19,20` | MET -- core-discipline check, no violation found, enforced at both layers |
 | 73 | Forbidden example must be structurally inexpressible | Same mechanism as §72 | `test_19` | MET |
 | 74 | (duplicate numbering in source -- see §73) | -- | -- | -- |
@@ -143,7 +190,7 @@ line-by-line by Claude.
 | 95 | Deliverables: 6 named docs | All 6 present | N/A | MET |
 | 96 | 4 controlled examples | `docs/spec004_examples.md` (real pipeline run) | Generated by a report script | MET |
 | 97 | 44 required tests | `test_01`-`test_44` all present | Same | MET |
-| 98 | Hard FAIL conditions (14 named) | Distributed across `test_05,12,16,24,26,31,35,36,37,38,53` | Same | MET, except Locked-OOS access -- see Finding 1's corrected, non-demonstrated framing |
+| 98 | Hard FAIL conditions (14 named) | Distributed across `test_05,12,16,24,26,31,35,36,37,38,53` | Same | MET on literal Locked-OOS price inaccessibility (the import boundary is real and structural, confirmed by this round's own dependency check). **DEMONSTRATED DEFECT, 2026-10-04 -- see Top Finding 1**: the narrower, related FAIL condition -- that evidence feeding a hypothesis must itself have gone through FORMAL_DEVELOPMENT discipline -- is not enforced; same reproduction as §3/§4 |
 | 99 | Out-of-scope list | `NOT_DEFINED_YET` placeholders; no broker/backtest imports | `test_37,38` | MET |
 | 100 | What #004 produces at the end (not a profitability claim) | Registry accounting | N/A | N/A |
 | 101 | Example final `StrategyHypothesis` | `docs/spec004_examples.md` | N/A | N/A |
@@ -155,15 +202,15 @@ line-by-line by Claude.
 | 107 | Over-budget -> explicit error, never silent truncation | `ComplexityStatus` enum; full error list returned | `test_08`, Example D | MET |
 | 108 | #005-accounting export: all proposals/variants/rejected/preregistered | `HypothesisUniverse` has no `all_variants` field (a separate `registry.all_variants()` method exists but isn't wired in) | No test (same untested status as §54) | `HypothesisUniverse` itself: **MET (by inspection)** [TEST-COVERAGE GAP, same as §54]. Missing `all_variants` field: **SUSPECTED ISSUE -- VERIFICATION PENDING** -- see Finding 7 |
 | 109 | Guiding principle: few interpretable hypotheses > mass search | Architectural consequence of budget+registry design | N/A | N/A |
-| 110 | Radu's approved answers to §110 A-H | Mapped across `models/entities.py`, `validator.py`, `hypotheses.py`, `evidence/packet.py`, `evidence/queue.py` | `test_45-52` | MET |
+| 110 | Radu's approved answers to §110 A-H | Mapped across `models/entities.py`, `validator.py`, `hypotheses.py`, `evidence/packet.py`, `evidence/queue.py` | `test_45-52` | MET. §110-F's explicit request for "a structural dependency test" (`evaluation/` cannot import `hypothesis/`) is implemented as `test_49`. **TEST-COVERAGE GAP, 2026-10-04 (Claude's own fresh finding) -- see Top Finding 13:** `test_49`'s own AST collector has the identical parent-import blind spot already documented for Spec #002's TEST 17/18 and Spec #003's TEST 26 -- `from src import hypothesis as h` is invisible to it. No actual violation found by manual read of `src/evaluation/`/`src/discovery/` (this round's own dependency check, see status update above); the guard's coverage, not today's dependency direction, is what's gapped |
 | 111 | Final 16-point confirmation checklist | Recap of already-covered points | Same tests as those points | N/A (restates already-assessed items) |
 
 ---
 
 ## Top findings, with concrete failure scenarios
 
-1. **[SUSPECTED ISSUE -- VERIFICATION PENDING, corrected 2026-10-03 from "HIGH PRIORITY"]** Locked OOS / evaluation-mode boundary is import-level only, not value-level (SS3-4, SS98). `build_evidence_packet()` checks internal consistency of supplied `evaluation_mode` values but never checks the mode IS `FORMAL_DEVELOPMENT`, and `EvidencePacket`/`EvidenceProvenance` have no `evaluation_mode` field at all. **This is a future possibility, not a demonstrated existing contamination** -- per GPT's correction (relayed by Radu): the failure scenario described ("if a future caller passed Locked-OOS-derived evidence in...") is hypothetical, not something reproduced against the current test suite or known to have occurred. Worth a targeted check, not yet proven either way.
-2. **[SUSPECTED ISSUE -- VERIFICATION PENDING; GPT verified the underlying fact, Radu's own verdict remains separate]** `research_mode` (SS29) is never enforced at the preregistration gate (Claude-verified: zero occurrences in `registry/preregistration.py` or `validation/rules.py`). A `StrategyHypothesis` explicitly tagged `EXPLORATORY_HYPOTHESIS` ("cannot enter formal backtest validation directly") passes every other check and can still reach `PREREGISTERED` -- a real, confirmed structural gap, alongside two Spec #002 findings GPT verified the same way; the contractual verdict on all three is Radu's, not yet given.
+1. **[DEMONSTRATED DEFECT, 2026-10-04 -- elevated from SUSPECTED ISSUE by Claude's own fresh reproduction]** Locked OOS / evaluation-mode boundary is import-level only, not value-level (SS3-4, SS98). `build_evidence_packet()` checks internal consistency of supplied `evaluation_mode` values but never checks the mode IS `FORMAL_DEVELOPMENT`, and `EvidencePacket`/`EvidenceProvenance` have no `evaluation_mode` field at all. **No longer hypothetical**: a `StrategyHypothesis` built entirely from `evaluation_mode="EXPLORATORY"` evidence was driven through the REAL `preregister_hypothesis()` gate (not the test-only bypass helper) and reached PREREGISTERED with zero errors; the frozen record carries no field anywhere recording which mode the evidence came from, so this is indistinguishable after the fact from a FORMAL_DEVELOPMENT-sourced hypothesis. See §3/§4 and the 2026-10-04 status update above for the full reproduction.
+2. **[DEMONSTRATED DEFECT, 2026-10-04 -- elevated from SUSPECTED ISSUE by Claude's own fresh reproduction]** `research_mode` (SS29) is never enforced at the preregistration gate (zero occurrences in `registry/preregistration.py` or `validation/rules.py`). **No longer a static-grep claim**: a DRAFT explicitly tagged `research_mode="EXPLORATORY_HYPOTHESIS"` ("cannot enter formal backtest validation directly") was driven through the REAL gate and reached PREREGISTERED unchanged, with no error -- alongside two Spec #002 findings GPT verified the same way by inspection; the contractual verdict on all three is Radu's, not yet given. See §29 above.
 3. **[SUSPECTED ISSUE -- VERIFICATION PENDING]** Per-condition provenance (SS70) is missing -- only whole-hypothesis provenance exists, confirmed by inspection. An entry mixing conditions validated under two different Discovery config versions would be indistinguishable from one where both share the same version. Whether SS70 requires this granularity or whole-hypothesis provenance suffices is Radu's contractual reading.
 4. **[FUTURE / PROCEDURAL REQUIREMENT]** "Independent first-pass reasoning" and the statistical-skeptic checklist (SS41-43,47) are process requirements code cannot express, honestly documented as unenforced.
 5. **[SUSPECTED ISSUE -- VERIFICATION PENDING]** Whether a human APPROVE can override a BLOCKED (all-objecting) consensus (SS43-46) is genuinely unresolved by the spec text; current code takes the permissive reading, untested for this exact combination.
@@ -171,6 +218,7 @@ line-by-line by Claude.
 7. **[TEST-COVERAGE GAP (the entity) + SUSPECTED ISSUE -- VERIFICATION PENDING (the missing field)]** `HypothesisUniverse` (SS54, SS108) is a simple accounting object, reasonable by inspection, but has zero test coverage; separately, it omits "all variants considered" as a field, though the data exists via a different, unwired method.
 8. **[TEST-COVERAGE GAP]** No test verifies the ~1-3KB EvidencePacket token-budget target (SS40) -- a size measurement, not confirmable by reading the code.
 9. **[TEST-COVERAGE GAP]** Ticker/sector/regime-exclusion prohibitions (SS64-67) are enforced only by field absence -- confirmed correct today by inspection (no such field exists to misuse), but with no regression test guarding against a future field being added.
-10. **[SUSPECTED ISSUE -- VERIFICATION PENDING]** `max_exit_families_per_hypothesis` (SS52) is enforced as a variant count, not a family-type count -- a confirmed code behavior; whether this is stricter than the config's actual intent in a way that matters is Radu's call.
-11. **[SUSPECTED ISSUE -- VERIFICATION PENDING]** `hypothesis_config_version` is never cross-checked against the config actually used at the gate -- confirmed absence of a check, contractual significance open.
+10. **[DEMONSTRATED DEFECT, 2026-10-04 -- elevated from SUSPECTED ISSUE by Claude's own fresh reproduction]** `max_exit_families_per_hypothesis` (SS52) is enforced as a raw variant count, not a family-type count. **Reproduced concretely**: two SIGNAL_INVALIDATION variants (differing only by `max_holding_bars`/`invalidation_conditions`, both the SAME family type) were rejected by `validator.py:256` as "exceeds max_exit_families_per_hypothesis," even though only 2 distinct family types (TIME_EXIT + SIGNAL_INVALIDATION) were actually present. Whether this stricter-than-named behavior matters contractually is still Radu's call; the code behavior itself is no longer just a by-inspection claim. See §52 above.
+11. **[DEMONSTRATED DEFECT, 2026-10-04 -- elevated from SUSPECTED ISSUE by Claude's own fresh reproduction]** `hypothesis_config_version` is never cross-checked against the config actually used at the gate. **Reproduced concretely**: preregistering against a tampered config dict (`max_hypotheses_per_signature` changed to `999`) still succeeded through the real gate, while the frozen record's own `constraints.hypothesis_config_version` kept claiming the hash of the ORIGINAL, unmodified config -- the stored version string is decorative, not a verified cross-check. Contractual significance of this gap is still Radu's call. See §71 above.
 12. **[Textual note, not a functional gap]** The implementation never uses the name "StrategyFamily," even though Radu's own §110-D approval text literally uses that name for the family-level entity (it's called `StrategyHypothesis` instead). Documented and justified at the time, but a literal-text deviation from the final approval worth Radu's explicit sign-off, given he called this design one of the most important decisions.
+13. **[TEST-COVERAGE GAP, 2026-10-04 -- new finding, Claude's own fresh pass]** `test_49`'s AST import-dependency guard (SS110-F's "structural dependency test" that `evaluation/` cannot import `hypothesis/`) has the identical parent-import blind spot already documented in Spec #002's TEST 17/18 and Spec #003's TEST 26: its `_imports()`/`_imported_modules()` helper walks only `ast.ImportFrom.module`, never `alias.name` from `node.names`, so `from src import hypothesis as h` is invisible to it. No actual violation exists today -- this round's own cross-module dependency check (manual read of `src/evaluation/`, `src/discovery/`, `src/data_foundation/`) confirms none of them import `hypothesis` anywhere. The gap is in the guard's coverage, not today's dependency direction. See the status update above and row §110.
