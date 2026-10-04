@@ -508,16 +508,24 @@ is not itself the audit.
      F1's own OOS-classification mechanism has no working design yet;
      implementation/acceptance of any fix is NOT AUTHORIZED.** Now
      joined with #004's own remediation design in
-     `docs/joint_remediation_design_003_004_2026-10-04.md` (2026-10-04,
-     per GPT's own recommendation once both audits closed) -- a
-     cross-module dependency check (the two fix sets are independent),
-     a recommended build order, a concrete recommended solution per
-     item (separated from the items that remain Radu's own call: #003
-     F1 part 2/F3/F4+F5's estimator/S1/S2's epoch marker, #004 Finding
-     14's exact field mapping/Finding 16's guarantee width/Finding 19's
-     registered-version mechanism), a consolidated regression
-     checklist, and a per-item sign-off checklist for Radu. Design
-     only, not implementation.
+     `docs/joint_remediation_design_003_004_2026-10-04.md`
+     (2026-10-04, revision 2, per GPT's own recommendation once both
+     audits closed) -- a compatibility matrix (field-level, not just
+     import-level: F3/F4+F5 change values #004's `standardized_effect`
+     consumes, S2's run-id feeds directly into #004's own content-
+     addressing); a complete F1 mechanism (a price-independent
+     calendar reused read-only from Spec #005's own `TradingCalendar`,
+     an explicit OOS/not-yet-available/data-gap three-way split,
+     naming the SS11 reinterpretation this requires for Radu's own
+     sign-off); a complete F3+F4+F5 mathematical design with a worked
+     numeric example and a permutation-test extension; concrete
+     mechanisms (not left open) for #004 Findings 1/2/10/11/14-20; a
+     complete AST import-resolution algorithm and test matrix for G1;
+     a revised build order and sign-off checklist covering every item.
+     Design only, not implementation; several items still name a
+     genuinely open choice for Radu (listed in the document's own
+     checklist), separated from the items with a complete, ready-to-
+     approve mechanism.
    - **Spec #004: two rounds done (2026-10-04).** Round 1 (Claude
      alone): a fresh, high-effort independent re-verification pass,
      requested by Radu specifically to finish before the joint F1-F6
