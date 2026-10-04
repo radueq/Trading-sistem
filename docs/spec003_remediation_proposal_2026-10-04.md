@@ -1,12 +1,24 @@
-# Spec #003 -- Remediation Proposal (2026-10-04, revised same day)
+# Spec #003 -- Remediation Proposal (2026-10-04, revision 3)
 
-**Revision note:** this is a corrected revision of the same-day first
-draft, after Radu found the F1 fix still read OOS prices, F3's proposal
-insufficient, F4/F5 patched independently rather than designed together,
+**Revision note:** corrected twice the same day, both times from GPT's
+own review of this proposal, relayed by Radu -- not Radu's own technical
+analysis; his own contractual decisions on the open questions below
+remain separate and still pending. Revision 2 fixed: the F1 fix still
+reading OOS prices, F3's "warning" not actually fixing the population
+mismatch, F4/F5 patched independently rather than designed together,
 F2b's gate placement unsafe, and F6's own remediation missing entirely.
-Each is marked inline with a "Corrected 2026-10-04 (Radu)" note. **Not
-yet approved** -- this revision addresses the structure/soundness of the
-proposals themselves; it does not constitute Radu's sign-off on any of
+Revision 3 (this one) fixed: F1's `CROSSES_LOCKED_OOS` classification
+rule being wrong (a missing bar alone does not prove OOS), an
+overstated claim that between-bin weighting addresses none of SS74C's
+universe-size concern, the F5 estimator choice being presented as
+settled rather than two genuinely different options, F6's own example
+conflating support status with BH participation, two overclaimed
+Claude reproductions (F1c's "configured value ignored" claim, and F1b's
+description), and attribution labels that credited Radu directly for
+technical findings that are GPT's. Each is marked inline with a
+"Corrected 2026-10-04 (GPT's review of <commit>, relayed by Radu)" note.
+**Not yet approved** -- these revisions address the structure/soundness
+of the proposals themselves; none constitutes Radu's sign-off on any of
 them.
 
 **This document proposes fixes. It does not implement them.** No code or
@@ -26,7 +38,7 @@ at `data_as_of` for every security and the benchmark with no truncation to
 `development_end` can retroactively change an already-Development forward
 return. `research_period` in `evaluation.yaml` is also never read.
 
-**Corrected 2026-10-04 (Radu): the "separate fetch at `data_as_of` for
+**Corrected 2026-10-04 (GPT's review of 07e9e15, relayed by Radu): the "separate fetch at `data_as_of` for
 exit-classification" option below in the previous draft of this proposal
 is withdrawn -- it still reads OOS prices, which is the exact thing F1
 forbids, not a smaller version of it.** Classification must use the
@@ -66,20 +78,63 @@ computation, not Discovery.
    depășit nici `data_as_of` cerut de apelant dacă acesta precedă
    `development_end`": `min()` already returns the caller's earlier
    value unchanged in that case.
-2. **Reclassify `CROSSES_LOCKED_OOS` structurally, not by reading a
-   price past the wall.** Once bars are fetched only through
-   `effective_as_of` (point 1), a security's own bar list never contains
-   a bar beyond `development_end` when `development_end` is set -- so
-   `compute_forward_outcome()` no longer needs to peek at an OOS bar's
-   date at all. Change its exit-availability branch: when
-   `development_end is not None` and `exit_idx >= len(bars)`, classify
-   `CROSSES_LOCKED_OOS` (by construction, anything beyond the bounded
-   fetch IS Locked OOS when a wall is set -- no date inspection needed).
-   `INSUFFICIENT_FUTURE_DATA` would then apply only when
-   `development_end is None` (no wall at all -- running out of bars there
-   means data genuinely doesn't exist yet, the only case left). This
-   removes the current `exit_bar.date > development_end` check entirely,
-   because under the new fetch bound that bar is never present to check.
+2. **Reclassify `CROSSES_LOCKED_OOS` using calendar proof, never by
+   reading a price past the wall -- AND never by the mere absence of a
+   bar.** `GPT's review of 07e9e15, relayed by Radu`: the previous draft's
+   rule (`development_end is not None and exit_idx >= len(bars)` ->
+   `CROSSES_LOCKED_OOS`) was itself wrong -- a bar can be missing under
+   the bounded fetch for reasons that have nothing to do with the wall:
+   `data_as_of` itself precedes `development_end` (`effective_as_of`
+   then stops short of the wall on purpose); this security's own history
+   ends earlier than `development_end` (delisting, a genuine data gap);
+   or this security simply has no bar on that one date. In every one of
+   those cases the correct status is `INSUFFICIENT_FUTURE_DATA`, not
+   `CROSSES_LOCKED_OOS` -- `INSUFFICIENT_FUTURE_DATA` must stay reachable
+   even when `development_end` is set.
+
+   The only safe proof that a target horizon genuinely crosses the wall
+   is the TARGET SESSION's own date, read from a price-independent
+   session calendar, compared against `development_end` -- never
+   inferred from how many bars one particular security happened to have.
+   Spec #003 already computes such a calendar once per run
+   (`session_dates`, from `_resolve_session_dates()`'s benchmark fetch,
+   itself now bounded to `effective_as_of` per point 1). Two ways to use
+   it, with a genuine open question between them:
+
+   - **(a) Count forward in the shared calendar for classification
+     only, keep the per-security bar index for the actual return.**
+     From the entry date's position in `session_dates`, count
+     `horizon_bars` sessions forward; if that calendar position's own
+     date would exceed `development_end`, classify
+     `CROSSES_LOCKED_OOS` -- with certainty, regardless of whether this
+     security has a bar there. If the calendar says the target session
+     is still within `[development_start, development_end]` but this
+     security's own bar series doesn't reach it, classify
+     `INSUFFICIENT_FUTURE_DATA`. This requires threading `session_dates`
+     (or an equivalent per-entry "sessions remaining before
+     `development_end`" count) into `compute_forward_outcome()`, which
+     today only ever looks at one security's own `bars` list.
+   - **(b) Leave horizon strictly as "N bars in this security's own PIT
+     series" everywhere, including classification, and accept the
+     resulting imprecision.** Without a calendar check, there is no
+     reliable way to tell "ran out because of the wall" from "ran out
+     for an unrelated reason," so the only non-guessing choice is to
+     always report `INSUFFICIENT_FUTURE_DATA` when bars run out, and
+     track "episodes whose target session, per the calendar, falls
+     beyond `development_end`" as a separate descriptive count rather
+     than folding it into `outcome_status` at all.
+
+   **Possible #003 contractual question, flagged rather than decided
+   here:** option (a) counts the horizon in the SHARED session calendar
+   for the purpose of this one classification, while SS3-4 defines
+   horizon as "a position in the security's own PIT bar series" for the
+   return itself -- (a) does not change the return computation's own
+   semantics (that stays per-security-bar-index, unchanged), but it does
+   mean classification and the return use two different notions of
+   "N bars forward" when a security's own series has gaps relative to
+   the calendar. Whether that split is acceptable under SS3-4, or
+   whether this needs Radu's own clarification before either option is
+   built, is recorded here as open, not assumed.
 3. **`research_period` wiring.** Have `run_evaluation()` read
    `evaluation_config.data["research_period"]` as the DEFAULT for
    `development_start`/`development_end` when the caller passes `None` for
@@ -96,11 +151,18 @@ that NO PIT call for that run returns a bar dated after it (spy-based, as
 in this round's reproduction); a regression planting a late-knowledge
 corporate action with an in-Development `effective_date` and asserting
 the resulting forward_return is unaffected (pre-fix: this assertion
-currently fails); a regression asserting `CROSSES_LOCKED_OOS` is still
-produced correctly under the new bounded-fetch design (TEST 27's own
-`test_no_valid_outcome_exits_after_development_end` should keep passing
-unmodified -- it asserts the outcome, not the mechanism); a `research_period`
-wiring test once the precedence rule is implemented.
+currently fails); TEST 27's own `test_no_valid_outcome_exits_after_development_end`
+should keep passing unmodified under whichever classification design is
+chosen (it asserts the outcome, not the mechanism); **new, per the
+classification correction above:** a regression where `data_as_of` is
+earlier than `development_end` and a security's bars simply run out
+there, asserting `INSUFFICIENT_FUTURE_DATA` (NOT `CROSSES_LOCKED_OOS`);
+a regression where a security is delisted/has a genuine data gap well
+before `development_end`, asserting the same; and, if option (a) is
+chosen, a regression confirming the calendar-based count correctly
+classifies `CROSSES_LOCKED_OOS` only when the target session's own
+calendar date exceeds `development_end`; a `research_period` wiring
+test once the precedence rule is implemented.
 
 ## F2a -- Frozen signature set accepted without content verification
 
@@ -124,7 +186,7 @@ reproduction) and asserting `run_evaluation()` now raises.
 `EvaluationSignatureDefinition`s sharing one `signature_id` within a
 `SignatureSet`; `record_key()` then collapses their BH entries into one.
 
-**Corrected 2026-10-04 (Radu): the check must sit at `run_evaluation()`'s
+**Corrected 2026-10-04 (GPT's review of 07e9e15, relayed by Radu): the check must sit at `run_evaluation()`'s
 own entry gate -- it cannot rely on `freeze_signature_set()` alone.**
 F2a's own reproduction already demonstrates a `SignatureSet` reaching
 `run_evaluation()` without ever having passed through
@@ -152,7 +214,8 @@ F2a's own reproduction) is still rejected by `run_evaluation()` itself --
 not only a `SignatureSet` built through the normal constructor path.
 
 ## F6 -- `family_test_count` missing (added 2026-10-04, this section was
-missing from the previous draft -- Radu's correction)
+missing entirely from the previous draft -- GPT's review of 07e9e15,
+relayed by Radu)
 
 **Problem (Top Finding 7, re-confirmed as GPT's F6):** SS44 explicitly
 names `family_test_count` in `BaselineComparison`'s required field list;
@@ -166,25 +229,52 @@ matching how `benjamini_hochberg()` already groups records (
 actually included in that record's own family** -- i.e. `len(fam_records)`
 for the family `benjamini_hochberg()` grouped this profile's own record
 into, NOT a count of every signature x horizon combination that exists
-in the run (some of those never produce a `raw_p` at all and so are
-never tested -- see below).
+in the run (some never produce a `raw_p` and so are never tested, and
+some run in a mode where BH is never applied at all -- see below).
 
-**Handling profiles without a `raw_p`:** a profile whose
-`baseline_comparison.raw_p is None` (e.g. `INSUFFICIENT_SUPPORT`, or the
-F3 "comparison unavailable" case this proposal's F3 fix may introduce)
-was never a member of any BH family -- `benjamini_hochberg()` already
-excludes it from `records` in `engine.py:396-399`. Its
-`family_test_count` should be `None`, mirroring the existing pattern for
-`adjusted_p`/`family_id` (`engine.py:409-412`), which already leave both
-`None` for exactly this case. A profile WITH a `raw_p` always has a
-non-`None` `family_test_count` once BH is applied, same as it gets a
-non-`None` `adjusted_p`/`family_id`.
+**Corrected 2026-10-04 (GPT's review of 07e9e15, relayed by Radu):
+support status does not determine BH participation -- the previous
+draft's example was wrong.** `support_status` (SUFFICIENT/INSUFFICIENT,
+from `valid_episode_n`/`unique_securities` thresholds) and `raw_p` come
+from two INDEPENDENT mechanisms: `stratified_permutation_p_value()`
+returns `None` only when no temporal bin has both non-empty signature
+AND baseline pools (or `iterations<=0`) -- it does not consult
+`support_status` at all. A profile tagged `INSUFFICIENT_SUPPORT` can
+still have a real, non-`None` `raw_p`, and conversely. The correct
+case for `raw_p is None` is specifically "no bin qualified for the
+permutation test" (or the F3 "comparison unavailable" case this
+proposal's F3 fix may introduce, if (a) is the direction chosen there)
+-- not `INSUFFICIENT_SUPPORT`, which this proposal withdraws as an
+example.
+
+**EXPLORATORY mode, handled separately:** `_evaluate_signature_horizon()`
+computes `raw_p` unconditionally, regardless of `mode` -- a profile CAN
+have `raw_p is not None` while running in `EXPLORATORY`. But
+`run_evaluation()`'s BH block only runs `if mode == "FORMAL_DEVELOPMENT"`
+(`engine.py:395`) -- in `EXPLORATORY`, `adjusted_p`/`family_id` stay
+`None` for every profile regardless of `raw_p`, and `family_test_count`
+must follow the same rule: `None` for every `EXPLORATORY` profile, not
+only for profiles with `raw_p is None`.
+
+**Combined rule:** `family_test_count` is non-`None` if and only if
+`mode == "FORMAL_DEVELOPMENT"` AND this profile's own record was
+actually included in `benjamini_hochberg()`'s `records` list (i.e. its
+`raw_p is not None`) -- exactly mirroring the existing `adjusted_p`/
+`family_id` population rule (`engine.py:409-412`), never support status
+alone. **Any future change that additionally excludes
+`INSUFFICIENT_SUPPORT` profiles from the BH family itself would be a
+separate, distinct behavior change needing its own approval** -- this
+proposal does not fold that in.
 
 **Tests needed:** a regression asserting `family_test_count` equals the
 actual number of signature x horizon combinations sharing one family
 (timeframe + horizon_bars + outcome_type + evaluation_run) in a
 multi-signature FORMAL_DEVELOPMENT run; a regression asserting
-`family_test_count is None` for a profile with `raw_p is None`.
+`family_test_count is None` for every profile in an EXPLORATORY run,
+including one with a non-`None` `raw_p`; a regression asserting
+`family_test_count` is populated for an `INSUFFICIENT_SUPPORT`-tagged
+profile that still has a non-`None` `raw_p` in a FORMAL_DEVELOPMENT run
+(demonstrating the two mechanisms are independent).
 
 ## F3 -- Reported effect and tested significance can describe different populations
 
@@ -193,7 +283,7 @@ bin with an empty baseline side from both `observed` and the null, but
 `mean_difference`/`signature_mean_relative` keep that bin's signature
 episodes unconditionally.
 
-**Corrected 2026-10-04 (Radu): a warning alone does not fix this.**
+**Corrected 2026-10-04 (GPT's review of 07e9e15, relayed by Radu): a warning alone does not fix this.**
 Attaching a warning while still presenting the full-population
 `mean_difference` next to a sub-population `raw_p`/CI as "the
 significance of that difference" keeps publishing two numbers that
@@ -236,7 +326,7 @@ asserting that `mean_difference` and `raw_p`/CI either (a) are both
 reported bin subset -- never one over the full population and the other
 over a silently narrower one.
 
-## F4 + F5 -- must be designed together, not patched separately (Radu's correction, 2026-10-04)
+## F4 + F5 -- must be designed together, not patched separately (GPT's correction, relayed by Radu, 2026-10-04)
 
 **Problem (Top Findings 14-15):** `baseline_iqr` pools every bin
 unweighted while `baseline_mean`/`baseline_median` are weighted by the
@@ -245,7 +335,7 @@ signature's own temporal composition (F4); within each bin,
 per-security means, letting a security with more sessions dominate (F5,
 directly contradicting SS74C's own text).
 
-**Corrected 2026-10-04 (Radu): the two previous drafts of this section
+**Corrected 2026-10-04 (GPT's review of 07e9e15, relayed by Radu): the two previous drafts of this section
 proposed independent patches that do not actually fix the problem.**
 Two specific errors in the withdrawn draft:
 - A weighted average of each bin's own IQR is **not, in general, equal
@@ -268,50 +358,77 @@ Two specific errors in the withdrawn draft:
 computing ANY baseline statistic (mean, median, or IQR), define the
 baseline's own weighted empirical distribution explicitly -- e.g. an
 explicit list of `(value, weight)` pairs (or an equivalent weighted
-resampling), built by: (1) grouping each bin's raw rows by `security_id`
-and taking one representative value per security within that bin (the
-within-bin fix for F5 -- see estimator choice below); (2) assigning each
-bin's resulting per-security values a combined weight of (the
-signature's own bin weight) / (number of securities contributing to
-that bin), so bins and securities within them are both weighted
-consistently. Compute `baseline_mean`, `baseline_median`, AND
-`baseline_iqr` all as functions of this ONE weighted distribution (a
-weighted mean, a weighted median, and a weighted-quantile-based IQR --
-e.g. via a weighted-quantile function, not `statistics.quantiles()` on
-an unweighted list) -- not as three separately-maintained code paths
-that can drift apart the way mean/median vs. IQR already have.
+resampling) -- and compute `baseline_mean`, `baseline_median`, AND
+`baseline_iqr` all as functions of this ONE definition (a weighted mean,
+a weighted median, and a weighted-quantile-based IQR -- e.g. via a
+weighted-quantile function, not `statistics.quantiles()` on an unweighted
+list), not as three separately-maintained code paths that can drift
+apart the way mean/median vs. IQR already have. Between bins, the
+existing fixed `weights_by_bin` (the signature's own temporal
+composition) stays exactly as it is -- `GPT's review of 07e9e15, relayed
+by Radu` corrected an overstatement in the previous draft on this point
+(see below); what still needs defining is strictly the WITHIN-bin
+weighting that feeds each bin's own contribution to this one
+distribution.
 
 **Open design questions, Radu's call, not defaults this proposal
 assumes:**
-- **Within-bin estimator (F5).** Equal weight per security (one
-  representative value per security per bin, e.g. that security's own
-  mean or median within the bin) is **a proposal to discuss, not a
-  requirement already approved** -- SS74C's text names the dominance
-  problem to avoid but does not specify the exact estimator. Capping a
-  single security's row contribution, or a different declared policy,
-  are also open alternatives.
-- **Large-universe-period domination.** SS74C's own approved text names
-  TWO distortions to avoid: "an action with long history" dominating
-  (F5, addressed above) AND **"periods with very large universe"
-  dominating** -- a bin drawn from a time when the eligible universe was
-  much larger than another bin's. Neither this proposal's within-bin fix
-  nor the existing between-bin (signature-composition) weighting
-  addresses universe-size variation across bins at all -- this is a
-  separate, currently fully open dimension of SS74C that needs its own
-  explicit design decision (e.g. capping or weighting by universe size
-  per bin) before it can be considered resolved.
+- **Within-bin estimator (F5) -- two genuinely different options, not
+  one settled choice.** **(i) Collapse:** take one representative value
+  per security within the bin (e.g. that security's own mean or median
+  there), discarding the rest -- this changes the distribution's own
+  shape and variance, since multiple raw observations become one point.
+  **(ii) Reweight, keep every row:** keep all of a security's raw rows,
+  but give each one a weight of `1/(that security's own row count in
+  this bin)`, so every security's TOTAL weight within the bin is equal
+  while every raw observation still contributes to variance/IQR. (i) and
+  (ii) give the IDENTICAL weighted MEAN (by linearity), but generally
+  DIFFERENT weighted medians and DIFFERENT IQRs, because collapsing to
+  one point per security removes within-security spread that reweighting
+  preserves. Neither is "the" fix SS74C mandates -- SS74C names the
+  dominance problem to avoid, not an estimator -- and whichever is
+  chosen must be applied consistently to the point estimate, to
+  `baseline_iqr`/`standardized_effect`, AND to
+  `stratified_permutation_p_value()`'s own per-security handling (today
+  entirely row-based, inheriting the same choice this section makes for
+  the point estimate) -- not decided for the mean alone and left
+  implicit for the rest.
+- **Within-bin universe-size variation -- corrected scope, 2026-10-04
+  (GPT's review of 07e9e15, relayed by Radu).** The previous draft
+  claimed the existing between-bin weighting "does not address universe-
+  size variation at all" -- **too broad.** The fixed `weights_by_bin`
+  already prevents a bin from gaining extra TOTAL weight merely because
+  it contains more raw rows (that is exactly what weighting by the
+  signature's own temporal composition, rather than by each bin's own
+  raw size, achieves) -- SS74C's "periods with very large universe"
+  concern is already handled BETWEEN bins. What is NOT handled is
+  universe-size variation ACROSS SESSIONS WITHIN one bin's own
+  timespan (e.g. 50 eligible securities early in a bin, 500 late in the
+  same bin) -- that variation still flows into whichever within-bin
+  estimator (i)/(ii) above is chosen, and needs to be considered as part
+  of that same choice, not as a separate mechanism. **Do not add a
+  separate, mechanical inverse-universe-size weighting BETWEEN bins** --
+  that would stack an uncoordinated correction on top of the already-
+  approved fixed temporal weighting and could contradict the temporal
+  distribution SS74C itself approved.
 
 **Tests needed:** a regression on this round's zero-weight-bin fixture
 (F4's original case: one active bin, one inactive -- `standardized_effect`
 currently moves from `14.839` to `0.337` on that fixture when it should
 not); a regression on this round's LONG/SHORT fixture (F5's original
-case: 2 securities, uneven row counts within one bin); and, **new per
-this correction**, a regression with >= 2 ACTIVE bins carrying different,
-non-trivial weights (e.g. `0.7`/`0.3`), each with its own multi-security
-raw-row population, asserting `baseline_mean`, `baseline_median`, AND
-`baseline_iqr` are all computed consistently from the same weighted
-distribution -- the single-active-bin fixtures above cannot catch a
-cross-active-bin weighting error, only this one can.
+case: 2 securities, uneven row counts within one bin); a regression with
+>= 2 ACTIVE bins carrying different, non-trivial weights (e.g.
+`0.7`/`0.3`), each with its own multi-security raw-row population,
+asserting `baseline_mean`, `baseline_median`, AND `baseline_iqr` are all
+computed consistently from the same weighted distribution (the single-
+active-bin fixtures above cannot catch a cross-active-bin weighting
+error, only this one can); and, **whichever within-bin estimator is
+chosen**, a regression showing options (i)/(ii) above diverge on a known
+fixture (same per-security means, different within-security spread),
+asserting the chosen estimator's weighted median/IQR match hand-computed
+values and that the SAME choice is reflected in `standardized_effect`
+and in `stratified_permutation_p_value()`'s own per-security handling,
+not only in the point estimate.
 
 ## S1 -- Numeric validation gaps (SUSPECTED, not yet a demonstrated contract violation)
 
@@ -339,7 +456,7 @@ exception or a nonsensical `VALID` result.
 `security_ids`, `benchmark_security_id`, `data_as_of`, and the actual
 `horizons` values run.
 
-**Note, 2026-10-04 (Radu):** this stays a SUSPECTED ISSUE, a
+**Note, 2026-10-04 (GPT, relayed by Radu):** this stays a SUSPECTED ISSUE, a
 reproducibility proposal, not an already-established contractual
 non-compliance -- SS60's own text ("identical inputs -> identical
 output") is not itself contradicted by anything demonstrated this round
@@ -369,7 +486,7 @@ of what a stored run_id means.
 
 **Problem (Top Finding 18):** same pattern as Spec #002's TEST 17/18 --
 `_imported_modules()` never inspects `ast.ImportFrom`'s `names` (the
-imported symbols), only `.module`. **Corrected 2026-10-04 (Radu): the
+imported symbols), only `.module`. **Corrected 2026-10-04 (GPT's review of 07e9e15, relayed by Radu): the
 #002 gaps were DOCUMENTED (`docs/audit_spec002_requirement_code_test.md`'s
 Top Findings 5/18), not fixed in the verified baseline** -- no code
 change has been made to TEST 17 or TEST 18 themselves. This proposal
