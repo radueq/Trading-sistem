@@ -54,8 +54,9 @@ frozen draft (14), variant-set completeness/exit semantics (15),
 in-memory gate atomicity (16), a public-API path that reaches
 PREREGISTERED without the gate (17), lost stability-bin values in
 `EvidencePacket` (18), and Research Queue config-freeze integrity (19)
--- each independently re-verified by Claude both by code reading and by
-re-running GPT's own probe script against the real repository. GPT also
+-- each given Claude's own implementer re-verification, both by code
+reading and by re-running GPT's own probe script against the real
+repository. GPT also
 corrected two overclaims in Claude's own prior write-up: Finding 10 was
 described as reproduced "through the real gate" when it was actually
 reproduced one layer earlier, through `proposals/validator.py`'s
@@ -65,13 +66,25 @@ allowlist requirement in the spec text, `evaluation_run_id` is in fact
 preserved so the mode is not unrecoverable from every source, and the
 clean import scan does not certify artifact *content* provenance). See
 `docs/audit_spec004_requirement_code_test.md`'s own GPT-review status
-block and Top Findings 1, 2, 10, 11, 13-20 for full detail. **#004's
-reconciliation remains OPEN** -- unlike #001/#002/#003's closed findings
-rounds, GPT's own verdict here does not state "findings reconciliation
-closed," only that specific findings reproduce and others need
-narrower framing; further findings could still surface. Radu's own
-contractual verdict on any finding -- in any of the four matrices --
-remains separate from this technical reconciliation throughout, and has
+block and Top Findings 1, 2, 10, 11, 13-20 for full detail. A follow-up
+correction round (commit `35cefc3`) fixed contradictions GPT found in
+how the reconciliation itself was written up (probe traces overstated,
+the OOS-access/allowlist framing on Finding 1, "unresolved" framing on
+Radu's own override authority, PATCH #004-C's status abbreviated
+ambiguously) -- technical substance of G1-G6/P004C unchanged by that
+round, only the write-up. **As of `35cefc3`: findings reconciliation
+for the six G-findings + P004C GPT reviewed is CLOSED, within this
+review's own declared scope -- GPT does not certify every one of the
+matrix's 111 rows by this, and Claude's own prior Findings 1-13 (the
+Claude-solo round) have had no GPT round at all, unaffected by this
+closure.** Remediation DESIGN
+(`docs/spec004_remediation_proposal_2026-10-04.md`) and the remaining
+open contractual questions (e.g. the FORMAL_DEVELOPMENT admission-
+policy reading, SS70's per-condition provenance granularity) are a
+separate, OPEN stage; implementation of any fix is NOT AUTHORIZED.
+Radu's own contractual verdict on any finding -- in any of the four
+matrices -- remains separate from this technical reconciliation
+throughout, and has
 not been given.** The
 matrices exist as
 `docs/audit_spec00{1,2,3,4}_requirement_code_test.md` (commit `edf8dbe`,
@@ -143,7 +156,10 @@ basis, with a full independent row-by-row pass completed for Specs
 design in progress) and a targeted (not full-row) independent review
 completed for Spec #004, reconciled by Claude in
 `docs/audit_spec004_requirement_code_test.md`'s own GPT-review status
-block -- #004's reconciliation remains OPEN, not closed;
+block -- **as of `35cefc3`, findings reconciliation for the six
+G-findings + P004C that targeted review covered is CLOSED, within its
+own declared (not full-row) scope; remediation design and the
+remaining open contractual questions stay separately OPEN.**
 Radu's own verdict on what any of this means contractually remains
 separate** and
 is not implied by either. This does not apply to historical messages reproduced verbatim
@@ -250,7 +266,7 @@ against -- it is one primary source, not confirmation.
 | **Approval** | **ACCEPTED.** Base implementation `6082215`. PATCH #004-A `feb8470`. Technical baseline at acceptance: PATCH #004-B `d19dd25`. Verdict recorded in commit `74daadc` ("Spec #004 v1.0 ACCEPTED", GPT Review #004 Round 3 closure). |
 | **Amendments** | PATCH #004-A `feb8470` (7 findings, GPT Review #004 Round 1). PATCH #004-B `d19dd25` (5 findings, GPT Review #004 Round 2). PATCH #004-C `28473d0` (additive `STOP_MANAGED_INVALIDATION` exit family, entities/validation/fingerprint layer only). |
 | **Derived documentation** | `docs/spec004_architecture.md`, `spec004_known_limitations.md`, `spec004_test_report.md`, `spec004_examples.md`, `spec004_agent_interface.md`, `spec004_registry_contract.md`. |
-| **Flag** | Text now present but not yet independently verified by Radu. Correspondence matrix: `docs/audit_spec004_requirement_code_test.md` -- status per the top of this document; now includes a Claude-solo re-verification pass AND a targeted GPT independent review (2026-10-04, commit `d272cb8`), findings reconciliation OPEN (not closed). Remediation DESIGN for the six GPT findings + the separate P004C finding is proposed, not authorized, in `docs/spec004_remediation_proposal_2026-10-04.md`. Separately, and unaffected by the text recovery: **PATCH #004-C's own implementation has a confirmed-pending verdict, sourced precisely.** Found in this session's own transcript, Radu's own words, verbatim, immediately after a Batch 3 CHANGES-REQUIRED verdict: *"Nu închidem Batch 3 și nu promovăm încă baseline-ul `3cdc532`. PATCH #004-C rămâne separat pentru verdict; constatările de mai sus vizează Batch 3."* (transcript timestamp `2026-09-28T16:08:13Z`; full message reproduced in `docs/evidence_004c_verdict_status.md`). **Separate verdict still pending as of the quoted date; Claude did not identify a later one in the transcript checked** -- this is a bounded claim about what was searched, not proof that no later verdict exists anywhere. The only "ACCEPTED" text on record remains the *Spec #005 Exit Amendment v1.0 document itself* (commit `2fa5575`, baseline `3cdc532`, dated BEFORE PATCH #004-C `28473d0` was even written) -- an acceptance of the contract text, not of #004-C's implementation. Its 7 tests (TEST 67-73) pass, but green tests are not the verdict Radu is withholding. See also "Superseded rules," below, for the SIGNAL_INVALIDATION timing and risk-exit items this spec's own recovered text (including its final approval message) carries. |
+| **Flag** | Text now present but not yet independently verified by Radu. Correspondence matrix: `docs/audit_spec004_requirement_code_test.md` -- status per the top of this document; now includes a Claude-solo re-verification pass AND a targeted GPT independent review (2026-10-04, commit `d272cb8`). **As of `35cefc3`: findings reconciliation for the six GPT findings + the separate P004C finding CLOSED, within that review's own declared (not full-row) scope; remediation DESIGN for them is proposed, not authorized, in `docs/spec004_remediation_proposal_2026-10-04.md`; remaining open contractual questions and Claude's own prior Findings 1-13 (no GPT round) are unaffected by this closure.** Separately, and unaffected by the text recovery: **PATCH #004-C's own implementation has a confirmed-pending verdict, sourced precisely.** Found in this session's own transcript, Radu's own words, verbatim, immediately after a Batch 3 CHANGES-REQUIRED verdict: *"Nu închidem Batch 3 și nu promovăm încă baseline-ul `3cdc532`. PATCH #004-C rămâne separat pentru verdict; constatările de mai sus vizează Batch 3."* (transcript timestamp `2026-09-28T16:08:13Z`; full message reproduced in `docs/evidence_004c_verdict_status.md`). **Separate verdict still pending as of the quoted date; Claude did not identify a later one in the transcript checked** -- this is a bounded claim about what was searched, not proof that no later verdict exists anywhere. The only "ACCEPTED" text on record remains the *Spec #005 Exit Amendment v1.0 document itself* (commit `2fa5575`, baseline `3cdc532`, dated BEFORE PATCH #004-C `28473d0` was even written) -- an acceptance of the contract text, not of #004-C's implementation. Its 7 tests (TEST 67-73) pass, but green tests are not the verdict Radu is withholding. See also "Superseded rules," below, for the SIGNAL_INVALIDATION timing and risk-exit items this spec's own recovered text (including its final approval message) carries. |
 
 ## Spec #005 -- Backtesting & Exit Evaluation
 
@@ -566,23 +582,40 @@ is not itself the audit.
      mutable dict inside a frozen wrapper whose version is fixed at load
      time -- the same category of gap as Finding 11, now demonstrated at
      the queue (SS110-H). **Plus one separate finding (Top Finding 20,
-     does not reopen PATCH #004-C's acceptance):** the persistence
-     layer's type registry never lists the two PATCH #004-C entity
-     types nested in `STOP_MANAGED_INVALIDATION` exits
+     does not reopen the Exit Amendment text's acceptance or PATCH
+     #004-C's own separate, still-pending implementation verdict):**
+     the persistence layer's type registry never lists the two PATCH
+     #004-C entity types nested in `STOP_MANAGED_INVALIDATION` exits
      (`StopLossRule`/`PartialProfitRule`), so deserializing one raises
-     `KeyError`. All six G-findings plus the P004C finding were
-     independently re-verified by Claude, both by reading the exact
-     cited code and by re-running GPT's own probe script directly
-     against this repository. See
+     `KeyError`. All six G-findings plus the P004C finding were given
+     Claude's own implementer re-verification, both by reading the
+     exact cited code and by re-running GPT's own probe script
+     directly against this repository. See
      `docs/audit_spec004_requirement_code_test.md`'s own GPT-review
      status block and Top Findings 1, 2, 10, 11, 13-20 for full detail,
      including GPT's own explicit limits on each probe (preserved
      precisely, not generalized).
-   **#004's reconciliation remains OPEN** -- GPT's review does not state
-   a "findings reconciliation closed" verdict the way #001/#002/#003's
-   did; remediation design and implementation/acceptance are separate,
-   not-yet-started stages. Radu's own contractual verdict on any finding
-   remains separate from this technical re-verification throughout.
+   **Follow-up correction round (commit `35cefc3`):** fixed
+   contradictions GPT found in how the reconciliation above was
+   written up (probe-path overclaims corrected per finding, Finding
+   1's OOS-access/allowlist framing narrowed to four separate caveats,
+   Finding 5/row 46's "unresolved" framing on Radu's own override
+   authority reframed as a settled project rule, PATCH #004-C's status
+   restated with the index's own precise wording) -- the underlying
+   G1-G6/P004C mechanisms were unchanged; only the write-up around them
+   was corrected. **GPT then closed, as of `35cefc3`: findings
+   reconciliation for the six G-findings + P004C this review covered,
+   within the review's own declared (not full-row) scope.** This does
+   not certify every one of the matrix's 111 rows, and does not resolve
+   the remaining open contractual questions (the FORMAL_DEVELOPMENT
+   admission-policy reading, SS70's per-condition provenance
+   granularity, etc.) -- those stay open. **Remediation design
+   (`docs/spec004_remediation_proposal_2026-10-04.md`) and those open
+   contractual questions are a separate, OPEN stage; implementation of
+   any fix is NOT AUTHORIZED.** Claude's own prior Findings 1-13 (the
+   Claude-solo round) have had no GPT round at all, unaffected by this
+   closure. Radu's own contractual verdict on any finding remains
+   separate from this technical re-verification throughout.
 2. **Primary evidence located for both open acceptance questions, each
    now backed by a standalone source document, not just a quoted
    excerpt:** `docs/evidence_spec002_acceptance_message.md` and

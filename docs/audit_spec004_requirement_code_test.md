@@ -126,9 +126,10 @@ itself; a delivered `.tar.gz` has no `.git/` and does not authenticate
 branch/commit/push, only package content. **Six new findings (GPT's own
 G1-G6, distinct from this document's own "G1" AST finding above, which
 is renumbered Top Finding 13 to avoid the collision) plus one finding
-specific to PATCH #004-C, all independently re-verified by Claude --
-both by reading the exact cited code and by re-running GPT's own probe
-script against this repository, not merely trusting GPT's reported
+specific to PATCH #004-C, all given Claude's own implementer
+re-verification -- both by reading the exact cited code and by
+re-running GPT's own probe script against this repository, not merely
+trusting GPT's reported
 output:**
 
 - **GPT-G1** -- `preregister_hypothesis()` (`registry/preregistration.py:85-116`)
@@ -325,6 +326,28 @@ exercises only `build_research_queue()`, also with no gate involved.
 P004C exercises only `to_jsonable()`/`from_jsonable()`, a serialization
 round trip with no gate, registry, or queue involved at all.
 
+**Closure, 2026-10-04 (GPT, relayed by Radu, at commit `35cefc3`):**
+GPT confirms the corrections above (probe traces, the OOS-access
+limits on Finding 1, Radu's own final authority on human override,
+PATCH #004-C's separate pending status) resolve the contradictions it
+flagged in `7651a89`. **Findings reconciliation for the six G-findings
++ P004C covered by this GPT review is CLOSED as of `35cefc3`, within
+this review's own declared scope.** This does NOT certify every one of
+the matrix's 111 rows -- GPT's review was explicitly a targeted read of
+the evidence->proposal->preregistration->registry->export/persistence
+flow, never a full row-by-row pass the way #001/#002/#003 each had (see
+the GPT-review status block above, and `docs/contract_index.md`'s own
+framing of this distinction) -- and it does not resolve the remaining
+open contractual questions (e.g. whether an admission-policy
+requirement exists for FORMAL_DEVELOPMENT evidence, SS70's
+per-condition provenance granularity, etc.), which stay open regardless
+of this closure. **Remediation DESIGN
+(`docs/spec004_remediation_proposal_2026-10-04.md`) and the open
+contractual questions remain a separate, OPEN stage; implementation of
+any fix is NOT AUTHORIZED.** Claude's own prior Findings 1-13 (the
+Claude-solo round) have not had a GPT round at all and are unaffected
+by this closure either way.
+
 ---
 
 ## Section-by-section table
@@ -461,7 +484,7 @@ round trip with no gate, registry, or queue involved at all.
 12. **[Textual note, not a functional gap]** The implementation never uses the name "StrategyFamily," even though Radu's own §110-D approval text literally uses that name for the family-level entity (it's called `StrategyHypothesis` instead). Documented and justified at the time, but a literal-text deviation from the final approval worth Radu's explicit sign-off, given he called this design one of the most important decisions.
 13. **[TEST-COVERAGE GAP, 2026-10-04 -- new finding, Claude's own fresh pass]** `test_49`'s AST import-dependency guard (SS110-F's "structural dependency test" that `evaluation/` cannot import `hypothesis/`) has the identical parent-import blind spot already documented in Spec #002's TEST 17/18 and Spec #003's TEST 26: its `_imports()`/`_imported_modules()` helper walks only `ast.ImportFrom.module`, never `alias.name` from `node.names`, so `from src import hypothesis as h` is invisible to it. No actual violation exists today -- this round's own cross-module dependency check (manual read of `src/evaluation/`, `src/discovery/`, `src/data_foundation/`) confirms none of them import `hypothesis` anywhere. The gap is in the guard's coverage, not today's dependency direction. See the status update above and row §110.
 
-**Findings 14-20 below are from GPT's own independent review (2026-10-04, relayed by Radu), against commit `d272cb8` -- each independently re-verified by Claude both by reading the cited code and by re-running GPT's own probe script against this repository. GPT's own identifiers for these are G1-G6 (plus a separate P004C note); they are renumbered 14-19 (+20) here solely to avoid colliding with this document's own pre-existing "G1" (the AST finding above, now Top Finding 13) -- the content is GPT's, not Claude's.**
+**Findings 14-20 below are from GPT's own independent review (2026-10-04, relayed by Radu), against commit `d272cb8` -- each given Claude's own implementer re-verification, both by reading the cited code and by re-running GPT's own probe script against this repository. GPT's own identifiers for these are G1-G6 (plus a separate P004C note); they are renumbered 14-19 (+20) here solely to avoid colliding with this document's own pre-existing "G1" (the AST finding above, now Top Finding 13) -- the content is GPT's, not Claude's.**
 
 14. **[DEMONSTRATED DEFECT, 2026-10-04 (GPT review, relayed by Radu) -- GPT's G1]** Approval and content-addressed identity are two different guarantees, and only the second is actually checked. `preregister_hypothesis()` (`registry/preregistration.py:85-116`) verifies that `proposal`/`proposal_validation`/`consensus`/`draft.hypothesis_provenance` all name the SAME `proposal_id` and that the approver/timestamp match; `validate_for_preregistration()` (`rules.py:143-168`) verifies the draft's `hypothesis_id`/`definition_hash` match the fingerprint of its OWN fields. Neither ever compares the draft's actual `direction`/`entry_definition`/`horizon_candidate_set`/exit content against what the referenced proposal said. Reproduced: a genuinely-validated, genuinely-APPROVED LONG proposal still permits registering and exporting a SHORT `StrategyDefinition` under the same `proposal_id` with a correctly-recomputed hash; the same gap separately admits an entry condition (`lane="UNAPPROVED_RSI"`) outside the Discovery-approved vocabulary, since that vocabulary check runs only on the original proposal, never again on the frozen draft. TEST 62 covers only proposal_id mismatches; TEST 63 covers only internal hash self-consistency; neither covers content drift under a matching, correctly-approved id. See §§29-31,35,46,63,71,98 above.
 15. **[DEMONSTRATED DEFECT, 2026-10-04 (GPT review, relayed by Radu) -- GPT's G2]** Variant-set completeness and per-variant exit semantics are not independently enforced at the gate. `validate_for_preregistration()` only checks that the declared and supplied variant-id sets are equal to EACH OTHER (both caller-supplied) and that at least one TIME_EXIT exists -- it never cross-checks that every `horizon_candidate_set.values` entry has its own TIME_EXIT variant, and `horizon_reference_point`/`exit_execution_policy`/`time_exit_bars`' sign are enforced only by convention in `materialize_variants()`, never re-checked at the gate. Reproduced: a family declaring horizon candidates `(2,3,5)` freezes successfully with only the bar=2 TIME_EXIT variant (both lists reduced together, `horizon_candidate_set.values` left unchanged); separately, a hand-built TIME_EXIT with `time_exit_bars=-7`, `horizon_reference_point="SIGNAL_BAR"`, `exit_execution_policy="BEFORE_CLOSE"` passes the gate and exports. TEST 47 only catches two DIFFERENT id sets, never both omitting the same candidate together. See §§19,75,77,106-108 and §110-C/D above.
