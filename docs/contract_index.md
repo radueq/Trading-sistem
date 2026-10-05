@@ -509,52 +509,50 @@ is not itself the audit.
      implementation/acceptance of any fix is NOT AUTHORIZED.** Now
      joined with #004's own remediation design in
      `docs/joint_remediation_design_003_004_2026-10-04.md`
-     (2026-10-04, revision 9, per GPT's own recommendation once both
-     audits closed). **Revision 8's config-verification fix, the S2
-     hash-preimage placement, and the exhaustive-enumeration
-     permutation regression are all confirmed closed by Radu, with
-     three further LOCAL alignments requested (not a reopening).**
-     This round: (1) three local corrections to the config-
-     verification mechanism's own wording -- the justification for
-     choosing the mandatory live re-read was wrong (design (a),
-     proceeding on the approved snapshot alone, does NOT use a config
-     the approver never saw; it uses exactly the approved one -- the
-     real reason to prefer (b) is an ADDED freshness requirement, that
-     the approved config must still be the currently active one, not
-     a correctness argument against (a)); the content-equality check
-     needs both sides (the frozen snapshot and a freshly-parsed
-     external object) normalized to the SAME list/tuple representation
-     before comparing, since the frozen structure turns lists into
-     tuples and an unfrozen dict would not match it even with
-     identical content; and the two distinct rejection cases (wrong
-     label/right content vs. right label/wrong content) are now each
-     attributed to the SPECIFIC check that actually catches it (label
-     equality vs. structural equality respectively), corrected from a
-     prior conflation. (2) **The PRIORITY design work Radu explicitly
-     requested: F1's calendar source, verification, coverage, and
-     provenance are now ALL specified**, by reusing Spec #005's own
-     already-implemented, content-addressed `TradingCalendar` contract
-     (`calendar_id`/`calendar_hash`, `verify_calendar_content_
-     address()`, `require_calendar_covers_window()`, confirmed by
-     reading `calendar.py` in full) rather than inventing a parallel
-     mechanism -- moving F1 from "still incomplete" to "design
-     complete, awaiting approval," with exactly ONE remaining,
-     precisely-named contractual choice (whether #003 needs #005's
-     full `OFFICIAL_VERIFIED`-only strictness, or a looser tier). (3) A
-     new methodological-choices table, each with its own stated
-     recommendation and concrete consequence, kept explicitly separate
-     from implementation approval, per Radu's own explicit request --
-     F3 common support (a NEW recommendation this round: lean toward
-     "unavailable," consistent with this project's own fail-closed
-     pattern), within-bin session weighting, the quantile convention,
-     permutation exchangeability, and the newly-designed calendar
-     strictness choice. Design only, not implementation; no code or
-     test changed, no project test suite run -- this round's
-     verification was reading source in full
-     (`backtest/data/calendar.py`, `backtest/models/entities.py`,
-     `evaluation/engine.py` again), not new mathematical execution,
-     since the three local corrections are wording/attribution fixes
-     to an already-verified revision-8 mechanism.
+     (2026-10-04, revision 10, per GPT's own recommendation once both
+     audits closed). **Revision 9's three config-wording corrections
+     are confirmed closed by Radu. Revision 10 corrects an overclaim
+     in revision 9's own F1/calendar design.** Revision 9 declared F1's
+     calendar "design complete" by reusing Spec #005's existing
+     `require_verified_calendar_for_formal_run()` -- but that contract
+     only verifies a `TradingCalendar` OBJECT's own internal self-
+     consistency and attestation PRESENCE (hash matches content,
+     structure valid, `source` label reads `OFFICIAL_VERIFIED`,
+     `verified_by`/`verified_at` non-empty); confirmed by re-reading
+     `calendar.py`, it never checks the actual session dates against
+     any EXTERNAL source. A calendar with wrong dates, a correctly-
+     recomputed hash, and populated attestation fields would pass
+     every existing check. **F1/calendar moves back to "still
+     incomplete" this round.** Corrected: a concrete source-
+     verification PROCESS is now specified -- retain the source
+     artifact and its own content digest; an explicit `verify_
+     calendar_against_source()` comparison step against that artifact;
+     `OFFICIAL_VERIFIED`/`verified_by`/`verified_at` settable only by a
+     NEW atomic gate function once that step passes (mirroring this
+     project's own `preregister_hypothesis()`-style atomic-gate
+     pattern) -- though this gate function does not yet exist in the
+     code, so F1 stays Partial. Target-session resolution is also
+     corrected from a coverage-window check to explicit index
+     arithmetic (entry exact-match via `outcomes/forward_returns.py`'s
+     own `_exact_entry_index()` discipline, `target_index = entry_
+     index + N`, explicit failure if past the end) -- `require_
+     calendar_covers_window()` is reused for its own narrower purpose
+     (sanity-checking the calendar's declared bounds), never conflated
+     with target resolution; "development_end-or-now" is withdrawn, a
+     historical run must never read the current wall clock. The
+     calendar's own identity now also feeds `build_run_id()`'s own
+     fingerprint (section 7/S2), and #003's other session-resolving
+     code must consume the same verified snapshot, not a parallel bar-
+     derived resolution. Two further corrections to the methodological-
+     choices table: F3's recommendation, the session-weighting
+     diagnostic strategy, and the exchangeability-acceptance-for-V1
+     recommendation are re-attributed to Claude's own synthesis (not
+     GPT-confirmed); and F3 option (b) is corrected to not claim
+     universal coverage -- it degenerates to `None` exactly like option
+     (a) when no common support exists. Design only, not
+     implementation; no code or test changed, no project test suite
+     run -- this round's correction was re-reading the same source
+     more carefully for what it does NOT verify, not new execution.
    - **Spec #004: two rounds done (2026-10-04).** Round 1 (Claude
      alone): a fresh, high-effort independent re-verification pass,
      requested by Radu specifically to finish before the joint F1-F6

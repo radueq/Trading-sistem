@@ -1,34 +1,44 @@
-# Joint Remediation Design -- Spec #003 + Spec #004 (2026-10-04, revision 9)
+# Joint Remediation Design -- Spec #003 + Spec #004 (2026-10-04, revision 10)
 
-**Status: DESIGN ONLY. Implementation NOT AUTHORIZED.** Revision 9 is
-a targeted correction of revision 8 (not a full rewrite -- revision 8's
-config-verification fix, the S2 hash-preimage placement, and the
-exhaustive-enumeration permutation regression are all confirmed closed
-by Radu, with three further LOCAL alignments requested, not a
-reopening). This round does three things: (1) three local corrections
-to the config-verification mechanism's own wording (its justification
-for choosing the mandatory live re-read was wrong about WHY design (a)
-is less complete, not that it is unsafe; the content-equality check
-needs both sides normalized to the SAME list/tuple representation
-before comparing, or it is meaningless; the two distinct rejection
-cases -- wrong label/right content vs. right label/wrong content --
-were attributed to the wrong check in the regression text); (2) the
-PRIORITY design work Radu explicitly asked for -- F1's calendar
-source, verification, coverage, and provenance are now fully specified
-by reusing Spec #005's own already-implemented, content-addressed
-`TradingCalendar` contract (confirmed by reading `calendar.py` in
-full), rather than inventing a parallel mechanism, moving F1 from
-"still incomplete" into "design complete, awaiting approval," with
-exactly one remaining, precisely-named contractual choice (the
-strictness tier); (3) a new methodological-choices table (within
-section 11's decision list), each with its own stated recommendation
-and concrete consequence, kept explicitly separate from implementation
-approval, per Radu's own explicit request -- common support, within-
-bin weighting, the quantile convention, permutation exchangeability,
-and the newly-added calendar strictness choice. This review concerns
-remediation DESIGN only; it does not reopen findings reconciliation
-(closed, both specs, within each review's own declared scope) and does
-not authorize implementation.
+**Status: DESIGN ONLY. Implementation NOT AUTHORIZED.** Revision 10 is
+a targeted correction of revision 9 (not a full rewrite -- revision 9's
+three config-wording corrections are confirmed closed by Radu and not
+reopened this round). **This round corrects an overclaim in revision
+9's own F1/calendar design: "design complete" was declared based on
+REUSING Spec #005's existing object-verification contract
+(`require_verified_calendar_for_formal_run()`), but that contract only
+verifies a `TradingCalendar` object's own internal self-consistency
+and attestation PRESENCE -- it never checks the actual session dates
+against any external source, confirmed by re-reading `calendar.py`.
+A calendar with wrong dates, a correctly-recomputed hash, and
+populated `verified_by`/`verified_at` would pass every existing
+check.** F1/calendar MOVES BACK to "still incomplete" this round.
+Corrected: a concrete source-verification PROCESS is now specified
+(retain the source artifact and its own digest; an explicit
+comparison step against that source; `OFFICIAL_VERIFIED`/`verified_
+by`/`verified_at` settable only by a new atomic gate once that step
+passes) -- though this gate function does not yet exist in the code,
+so F1 stays Partial, not Yes. Target-session resolution is also
+corrected, from a coverage-window check to explicit index arithmetic
+(entry exact-match, `target_index = entry_index + N`, explicit failure
+if past the end), reusing `outcomes/forward_returns.py`'s own exact-
+match discipline rather than conflating it with `require_calendar_
+covers_window()`'s own, narrower purpose; "development_end-or-now" is
+withdrawn (a historical, reproducible run must never implicitly read
+the current wall clock). The calendar's own identity is now also
+required inside `build_run_id()`'s own fingerprint (section 7/S2), and
+#003's other session-resolving code (`engine.py`'s own `_resolve_
+session_dates()`) must consume the same verified snapshot rather than
+keep a parallel, bar-derived resolution. Two further corrections to
+the methodological-choices table: F3, the session-weighting diagnostic
+strategy, and the exchangeability-acceptance-for-V1 recommendation are
+re-attributed to Claude's own synthesis (not GPT-confirmed, as a prior
+draft implied); and F3 option (b)'s own description is corrected --
+it does not give every profile a number, only those with sufficient
+common support, degenerating to `None` exactly like option (a) when
+none exists. This review concerns remediation DESIGN only; it does not
+reopen findings reconciliation (closed, both specs, within each
+review's own declared scope) and does not authorize implementation.
 
 **Checklist convention used throughout (Radu's own structure):** every
 item is tracked on four separate axes, never collapsed into one
@@ -153,46 +163,130 @@ verify anything external.
 
 **Priority design work this round (per Radu's own explicit
 instruction: "calendarul este încă în a doua categorie... Acestea
-trebuie proiectate înainte de a declara F1 complet"):** a complete
-#003 design needs four things this document previously only LISTED as
-open. Confirmed this round, by reading `src/backtest/data/calendar.py`
-and `src/backtest/models/entities.py` in full: Spec #005 ALREADY built
-a complete, content-addressed, verified mechanism covering all four --
-`TradingCalendar` (`calendar_id`/`calendar_hash` via `calendar_
-fingerprint()`, `source`/`verified_by`/`verified_at`, `coverage_start`/
-`coverage_end`), `verify_calendar_content_address()`, `verify_
-calendar_structure()`, `require_verified_calendar_for_formal_run()`,
-and `require_calendar_covers_window()`. **The design recommendation
-this round is to REUSE this existing mechanism for #003, via the
-section-2 relocation already recommended, rather than inventing a
-parallel one:**
-- **Source/version/integrity:** real session dates are built into a
-  `TradingCalendar` via the EXISTING `build_trading_calendar()`
-  constructor (relocated to Data Foundation), with `source =
-  OFFICIAL_VERIFIED` and `verified_by`/`verified_at` populated by
-  whichever Data-Foundation-level process establishes real market
-  session dates independent of any specific security's price series
-  (the ingestion process itself -- e.g. an official exchange calendar
-  feed -- is Radu's own call, not resolved here; the CONTRACT it must
-  populate already exists and is reused unchanged). `calendar_id`/
-  `calendar_hash` already give it a content-addressed identity, the
-  same discipline as every other id in this project.
-- **Coverage requirement:** reuse `require_calendar_covers_window()`
-  unchanged, called with the window `[development_start, max(
-  development_end-or-now, the furthest `T_target` any horizon
-  configured for this run could reach)]` -- section 1's own F1 fix
-  needs the calendar to resolve `T_target` for EVERY horizon the run
-  classifies, so the required window must cover all of them, not only
-  `development_end`.
-- **Entry/target-beyond-coverage behavior:** `require_calendar_covers_
-  window()` already raises `CalendarCoverageIncompleteError` for this
-  case -- reused directly as section 1.3's own check 1.
-- **Provenance:** add the calendar's own `calendar_id`/`calendar_hash`/
-  `calendar_version` to `EvaluationRunRegistry`'s own provenance
-  fields, mirroring exactly how `require_verified_calendar_for_formal_
-  run()` already re-verifies a calendar's content-address before
-  trusting it -- the SAME re-verification-before-trust discipline,
-  reused rather than re-invented.
+trebuie proiectate înainte de a declara F1 complet"); CORRECTED again
+this round (GPT's review, relayed by Radu, confirmed by re-reading
+`calendar.py`/`entities.py`): the prior draft overclaimed what the
+EXISTING mechanism actually verifies.** `require_verified_calendar_
+for_formal_run()` is confirmed, by reading it again, to verify ONLY
+the OBJECT's own internal self-consistency: its `calendar_hash`
+matches its own fields (`verify_calendar_content_address()`), its
+structure is valid (`verify_calendar_structure()`), its `source` label
+reads `OFFICIAL_VERIFIED`, and `verified_by`/`verified_at` are merely
+PRESENT (non-empty strings). **None of this checks the actual
+`session_dates` against any external source.** A `TradingCalendar`
+built with entirely WRONG dates, a correctly-recomputed hash for those
+wrong dates, `source="OFFICIAL_VERIFIED"`, and non-empty `verified_by`/
+`verified_at` fields would pass every one of these checks -- the
+existing contract verifies that an attestation EXISTS and is self-
+consistent, never that the attestation is TRUE. This is a real,
+previously unstated limit of the reused mechanism, not a reopening of
+the #005 audit (the existing code does exactly what it was built to
+do; it was simply never designed to answer the question #003 needs
+answered here).
+
+**Corrected design -- a concrete verification PROCESS, not yet
+existing in the code, that must PRODUCE a `TradingCalendar` before
+`require_verified_calendar_for_formal_run()`'s own object-level checks
+are ever meaningful:**
+1. Data Foundation receives a calendar ARTIFACT independent of any
+   price series -- its exact source identifier, its own version/
+   publication date, and its declared coverage interval, as RAW data
+   (e.g. an official exchange calendar file or feed response), the
+   same shape as every config loader in this project already handles
+   raw text.
+2. The artifact's raw text/content is RETAINED, alongside its own
+   content digest (`sha256`, the same discipline already used for
+   every config loader in this project) -- so a later audit can
+   re-derive exactly what was compared, not just trust a stored
+   boolean.
+3. An explicit verification step -- a NEW function, e.g.
+   `verify_calendar_against_source(candidate_session_dates,
+   candidate_early_close_dates, source_artifact_text) -> (bool,
+   errors)` -- parses the source artifact into ITS OWN session-date
+   list (and early-close exceptions) and compares it, exactly, against
+   the candidate `session_dates`/`early_close_dates` for the SAME
+   declared coverage window. A mismatch of any kind (missing session,
+   extra session, wrong early-close date) is a rejection, with the
+   specific discrepancy recorded as the error.
+4. **`source="OFFICIAL_VERIFIED"` and `verified_by`/`verified_at` may
+   ONLY be set as the result of step 3 passing** -- a new, single
+   gate function (e.g. `verify_and_register_calendar(...)`) becomes
+   the ONE path that can produce an `OFFICIAL_VERIFIED` `TradingCalendar`,
+   mirroring this project's own established atomic-gate pattern
+   (`preregister_hypothesis()` is the only path to PREREGISTERED;
+   `HypothesisRegistry.register()` refuses a bare PREREGISTERED
+   insert). `build_trading_calendar()` alone, without going through
+   this gate, must never be able to produce one claiming
+   `OFFICIAL_VERIFIED` -- it remains available for
+   `SYNTHETIC_TEST_FIXTURE` construction in tests, unchanged.
+5. Evaluation (#003) receives the REGISTERED, already-verified
+   snapshot and re-verifies ITS OWN integrity via the EXISTING
+   `verify_calendar_content_address()`/`verify_calendar_structure()`
+   (self-consistency only, as today) -- #003 never re-runs step 3
+   itself; it trusts the gate's own prior verification, the same
+   "verify once, at the gate, then trust the pinned object" discipline
+   already used for config (section 7).
+**Who performs step 3, and whether it is automated against a live
+feed or performed by a human against a published calendar, is Radu's
+own operational choice, NOT resolved here** -- the CONTRACT (what
+must be compared, what evidence is retained, what causes rejection)
+is now fully specified regardless of who or what executes it.
+
+- **Coverage requirement and entry/target-beyond-coverage behavior,
+  CORRECTED this round -- `require_calendar_covers_window()` alone
+  does not resolve a target session, and a prior draft wrongly implied
+  it could:** resolving `T_target` is a SEPARATE, explicit step from
+  checking declared coverage bounds:
+  1. `T_entry` must be found in `session_dates` by EXACT match (the
+     same `bisect_left`-based exact-match discipline already
+     established in `outcomes/forward_returns.py`'s own
+     `_exact_entry_index()` -- reused, not reinvented; "latest session
+     at or before" is never substituted for "exactly this session").
+  2. `target_index = entry_index + horizon_bars`.
+  3. If `target_index >= len(session_dates)`: this specific, explicit
+     failure -- NOT a generic coverage-bound mismatch -- is section
+     1.3's own check 1 ("calendar insufficient to determine the
+     target"); the calendar's own declared `coverage_end` is
+     irrelevant to this check, which only asks whether the session
+     list itself is long enough from this entry.
+  4. Otherwise, `session_dates[target_index]` is THE ONE date used for
+     BOTH classification and the return calculation -- unchanged from
+     section 1's own design.
+  `require_calendar_covers_window()` is reused for a DIFFERENT,
+  narrower purpose: confirming the calendar's own declared
+  `[coverage_start, coverage_end]` actually contains the dates the run
+  touches at all (a sanity/integrity check on the calendar itself),
+  never to pre-compute or stand in for step 2-3's own index arithmetic.
+  **The bound used in this check must be the run's own explicit
+  `development_start`/`development_end`/`data_as_of` -- never
+  "development_end-or-now."** A prior draft's "or now" framing is
+  WITHDRAWN: the current wall-clock time must never implicitly enter a
+  historical, reproducible evaluation run.
+  **New regressions:** `T_entry` absent from `session_dates` (step 1
+  fails); `target_index` runs past the end of `session_dates` (step 3,
+  insufficient future sessions IN THE CALENDAR); `T_target` present in
+  `session_dates` but the security's own price bar is missing at that
+  date (section 1's own existing 4a case, now explicitly tied to a
+  calendar-resolved, not bar-inferred, target).
+
+**Run-identity linkage, NEW this round (GPT's review, relayed by
+Radu):** the calendar's own identity must feed INTO `build_run_id()`'s
+own fingerprint, under the new `run_id_scheme_version` (section 7/S2),
+not only sit in `EvaluationRunRegistry`'s provenance alongside the id.
+Changing the calendar (even with every other input held fixed) can
+change targets, statuses, and results -- an unchanged `evaluation_
+run_id` across two different calendars would understate what actually
+changed. **Regression:** two runs, identical in every other input,
+using two DIFFERENT (both internally valid) calendars, produce
+DIFFERENT `evaluation_run_id`s. **Consistency requirement:** once the
+verified calendar snapshot exists, every #003 component that currently
+derives its own session list (most notably `engine.py`'s own
+`_resolve_session_dates()`, which currently infers dates from the
+BENCHMARK's own PIT bars) must consume THAT SAME verified snapshot --
+never keep a parallel, bar-derived resolution for the same
+computations, which SS11's own stated principle ("not inferred from
+benchmark bars...") already argues against, even though SS11 itself
+only mandated this for #005.
 
 **One genuine, NOT-yet-resolved contractual choice remains, named
 precisely rather than assumed:** `require_verified_calendar_for_
@@ -202,11 +296,17 @@ text to FORMAL (#005) runs only -- `calendar.py`'s own module
 docstring states `_resolve_session_dates()` (#003) "is untouched" and
 that "#005's stricter calendar requirement is a #005-only concern,
 never a #003 patch." **Whether #003's OWN new calendar-verification
-step (reusing the same `TradingCalendar` contract) should require the
-SAME `OFFICIAL_VERIFIED`-only strictness, or accept a looser tier for
-#003's own (non-formal-backtest) purposes, is Radu's own call -- the
-MECHANISM is fully specified and reused either way; only the
-STRICTNESS THRESHOLD is open.**
+step (reusing the same `TradingCalendar` contract, and the new
+source-verification gate above) should require the SAME `OFFICIAL_
+VERIFIED`-only strictness, or accept a looser tier for #003's own
+(non-formal-backtest) purposes, is Radu's own call -- the MECHANISM is
+now fully specified either way; only the STRICTNESS THRESHOLD is
+open.** **Radu's own technical recommendation on this specific
+threshold (his own words this round, not GPT-relayed, and explicitly
+NOT his final approval): `OFFICIAL_VERIFIED` for FORMAL_DEVELOPMENT,
+synthetic calendars permitted only in declared tests** -- this
+recommendation does not replace the source-verification process above,
+and is not yet adopted by this document as a decision.
 
 **Dependency direction, still unresolved:** importing `TradingCalendar`
 from `src/backtest/` into `src/evaluation/` reverses this project's own
@@ -1547,15 +1647,26 @@ requirement, the WEIGHTED session-mass diagnostic, and the weighted-
 permutation-estimator mechanism with its exhaustive-enumeration
 regression (all three now fully specified within row 18); TEST 49's
 AST algorithm (row 11, EXCEPT the bare-name collision, which is its
-own separate, acknowledged-unresolvable item). **MOVED into this
-bucket this round: F1's calendar (row 17)** -- source, verification,
-coverage, and provenance are now ALL specified by reusing Spec #005's
-existing, already-implemented `TradingCalendar` contract (confirmed by
-reading `calendar.py` in full this round), with exactly ONE open item
-(the strictness-tier choice, named below, not a missing mechanism).
+own separate, acknowledged-unresolvable item).
 
 **(B) STILL INCOMPLETE -- no full mechanism exists yet; Radu's
 approval would not yet mean anything concrete for these:**
+- **F1's calendar (row 17) -- MOVED BACK into this bucket this round
+  (GPT's review, relayed by Radu): last round wrongly claimed "design
+  complete" by conflating the EXISTING object-verification contract
+  (self-consistency + attestation presence) with an actual source-
+  verification PROCESS, which does not yet exist in the code.** A
+  `TradingCalendar` with wrong dates but a correctly-recomputed hash
+  and populated `verified_by`/`verified_at` would pass every check
+  that exists today. This round specifies the missing process (retain
+  the source artifact + its digest, an explicit comparison step, a new
+  atomic gate as the only path to `OFFICIAL_VERIFIED`) and corrects
+  target-session resolution from a coverage-window check to explicit
+  index arithmetic -- but the gate function itself is specified, not
+  built, so F1 stays Partial until it exists as actual code (or at
+  minimum a fully worked-through pseudocode-level design with no
+  remaining ambiguity, which this round still leaves as a named
+  function signature, not a complete algorithm).
 - **#003 S1 (row 16):** a scope/responsibility question (code vs.
   documented trust boundary), not a mechanism gap -- no design exists
   because none has been attempted, this is Radu's own call on scope.
@@ -1585,13 +1696,22 @@ recommendation and its concrete consequence, never a bare list of
 alternatives; "design complete" in bucket (A) never implies any of
 these has already been decided:**
 
-| Choice | Recommendation (GPT's, relayed by Radu, except where noted) | Concrete consequence if adopted |
+**Attribution corrected this round (GPT's review, relayed by Radu):
+F3's recommendation, the session-weighting diagnostic strategy, and
+the exchangeability-acceptance-for-V1 recommendation were introduced
+BY CLAUDE in earlier rounds of this document -- NOT relayed GPT
+content, and not yet GPT-confirmed. Only the quantile-convention
+recommendation (midpoint with aggregation) and the gate-time-
+revalidation recommendation (Finding 14, elsewhere) are GPT's own,
+relayed by Radu. The table below attributes each row precisely.**
+
+| Choice | Recommendation, attributed precisely | Concrete consequence if adopted |
 |---|---|---|
-| F3 common support (option (a) UNAVAILABLE vs. (b) RESTRICTED comparison) | **No recommendation given in any prior round -- stated for the first time this round, grounded in this project's own established fail-closed pattern** (SS11's `CALENDAR_UNVERIFIED`, the PREREGISTERED-only gate): lean toward (a), UNAVAILABLE -- never publish a comparison that doesn't cover the signature's own full population, consistent with "fail closed, don't offer a number for a population the test didn't cover." | (a): some signature/horizon profiles report no `mean_difference`/`raw_p`/CI at all when coverage is incomplete -- fewer numbers, none of them population-mismatched. (b): every profile still gets a number, restricted to common support, with an explicit exclusion count -- more coverage, but requires a reader to notice and interpret the exclusion count correctly every time. |
-| F4+F5 within-bin weighting (per-security formula, uncontested) + session-level variation (diagnostic vs. a real second mechanism) | Per-security formula: adopt as designed (uncontested). Session-level: adopt the WEIGHTED `session_mass` diagnostic only (section 3), not a new weighting layer. | Diagnostic-only: Radu's own 5%/95% example becomes visible in the output; the per-security formula's own equal-weight property is preserved untouched; session-level dominance is NOT corrected, only reported -- a further mechanism stays possible later if the diagnostic shows a real problem. |
-| Weighted-quantile convention (midpoint vs. `R_i`) | Midpoint with mandatory tie-aggregation (GPT's recommendation, relayed by Radu -- Radu's own personal preference not yet confirmed, per the attribution note above). | Midpoint: simpler, scale-invariant, but never reproduces `statistics.quantiles(..., method="inclusive")`, even at equal weights with no ties. `R_i`: reproduces `inclusive` for DISTINCT, equal-weight input, but loses that property the moment any tie is aggregated (section 4.2's own `[0,0,10]` counterexample) -- neither is a strict superset of the other's guarantees. |
-| Permutation exchangeability (accept the value-level procedure's own assumption for V1 vs. require block permutation first) | Accept for V1, as this project's own existing `comparison.py` docstring (SS47) already states; revisit only if concentration/stability diagnostics show a real problem. | Accepting: ships now, with a documented, named limitation (full exchangeability, not merely marginal equality) -- a real but currently unquantified risk under within-security serial correlation. Requiring block first: delays indefinitely, since block permutation has never been given a precise definition in any round. |
-| Calendar strictness for #003 (full #005 `OFFICIAL_VERIFIED`-only vs. a looser tier) | **New this round, named precisely rather than assumed:** no recommendation given yet -- genuinely Radu's own call, since it trades off #003's own operational flexibility against the strength of the "verified, not inferred" guarantee section 2 is designed to provide. | Full strictness: #003 runs fail closed whenever no `OFFICIAL_VERIFIED` calendar is available, the same cost #005 already accepts for formal runs. Looser tier: #003 can proceed more often, but its own calendar-based classification (section 1) rests on a weaker verification guarantee than #005's. |
+| F3 common support (option (a) UNAVAILABLE vs. (b) RESTRICTED comparison) | **Claude's own recommendation, this document's synthesis -- NOT GPT-confirmed:** lean toward (a), UNAVAILABLE, grounded in this project's own established fail-closed pattern (SS11's `CALENDAR_UNVERIFIED`, the PREREGISTERED-only gate) -- never publish a comparison that doesn't cover the signature's own full population. | (a): some signature/horizon profiles report no `mean_difference`/`raw_p`/CI at all when coverage is incomplete -- fewer numbers, none of them population-mismatched. **(b), corrected this round (a prior draft's "every profile still gets a number" was FALSE when common support is empty): (b) produces a restricted comparison only where SUFFICIENT common support actually exists; a bin/profile with no common support at all still gets `None`, identical to option (a)'s own degenerate case (section 6's own text already states this) -- (b)'s real gain over (a) is coverage for PARTIALLY, not wholly, mismatched populations, with an explicit exclusion count, not universal coverage.** |
+| F4+F5 within-bin weighting (per-security formula, uncontested) + session-level variation (diagnostic vs. a real second mechanism) | Per-security formula: adopt as designed (uncontested, not attributed to GPT or Claude specifically -- this was the original #003 patch). **Session-level diagnostic strategy: Claude's own recommendation -- NOT GPT-confirmed.** | Diagnostic-only: Radu's own 5%/95% example becomes visible in the output; the per-security formula's own equal-weight property is preserved untouched; session-level dominance is NOT corrected, only reported -- a further mechanism stays possible later if the diagnostic shows a real problem. |
+| Weighted-quantile convention (midpoint vs. `R_i`) | **GPT's own recommendation, relayed by Radu** (midpoint with mandatory tie-aggregation) -- Radu's own personal preference not yet confirmed, per the attribution note above. | Midpoint: simpler, scale-invariant, but never reproduces `statistics.quantiles(..., method="inclusive")`, even at equal weights with no ties. `R_i`: reproduces `inclusive` for DISTINCT, equal-weight input, but loses that property the moment any tie is aggregated (section 4.2's own `[0,0,10]` counterexample) -- neither is a strict superset of the other's guarantees. |
+| Permutation exchangeability (accept the value-level procedure's own assumption for V1 vs. require block permutation first) | **Claude's own recommendation -- NOT GPT-confirmed:** accept for V1, reaffirming this project's own existing `comparison.py` docstring (SS47); revisit only if concentration/stability diagnostics show a real problem. | Accepting: ships now, with a documented, named limitation (full exchangeability, not merely marginal equality) -- a real but currently unquantified risk under within-security serial correlation. Requiring block first: delays indefinitely, since block permutation has never been given a precise definition in any round. |
+| Calendar strictness for #003 (full #005 `OFFICIAL_VERIFIED`-only vs. a looser tier) | **Radu's own technical recommendation this round (his own words, NOT GPT-relayed, and explicitly NOT his final approval): `OFFICIAL_VERIFIED` for FORMAL_DEVELOPMENT, synthetic calendars permitted only in declared tests.** This recommendation does not replace the source-verification process section 2 still needs built. | Full strictness: #003 runs fail closed whenever no `OFFICIAL_VERIFIED` calendar is available, the same cost #005 already accepts for formal runs. Looser tier: #003 can proceed more often, but its own calendar-based classification (section 1) rests on a weaker verification guarantee than #005's. |
 
 | # | Item | (a) Design complete | (b) Contractual decision needed | (c) Radu's approval | (d) Implementation + verification |
 |---|---|---|---|---|---|
@@ -1611,7 +1731,7 @@ these has already been decided:**
 | 14 | #004 Finding 19 / Finding 11 | Yes -- **corrected a THIRD time this round (GPT's review, relayed by Radu): the prior draft compared two INCOMPATIBLE hashes -- fixed by retaining the loader's own raw-text-based version unchanged, and by TWO separate external-object checks (label equality catches wrong-label/right-content; structural equality, both sides normalized to the same representation, catches right-label/wrong-content) rather than one conflated check; the mandatory-live-re-read policy's own justification corrected (design (a) was wrongly described as unsafe -- it isn't, (b) is chosen for an added freshness requirement, not for correctness)** (section 7) | Yes -- whether to adopt this corrected wiring and the mandatory-live-re-read choice, on its corrected justification | Pending | Later stage |
 | 15 | #003 S2 | Yes -- but CORRECTED this round: S2 needs its OWN separate `run_id_scheme_version` literal marker, NOT row 14's config-content hash (a `build_run_id()` field-set change is a code change, invisible to any YAML hash) -- two distinct mechanisms now, not one shared wiring as previously drafted (section 7) | Yes -- whether to adopt the separate `run_id_scheme_version` marker | Pending | Later stage |
 | 16 | #003 S1 | N/A -- scope question, not a mechanism gap | Yes -- responsibility (code vs. documented trust boundary) | Pending | Later stage |
-| 17 | #003 F1 (complete behavior) | **Yes, substantially advanced this round (per Radu's own explicit priority): source/verification/coverage/provenance all now specified by REUSING Spec #005's existing, already-implemented `TradingCalendar` contract** (`calendar_id`/`calendar_hash`, `verify_calendar_content_address()`, `require_calendar_covers_window()`, confirmed by reading `calendar.py` in full) **rather than inventing a parallel mechanism; same-target-session mechanism and 4-way check complete, distinguishing bar-missing from bar-present-with-null-price (section 1)**; sub-daily timeframes out of scope | Yes -- the data-gap status name(s); the calendar relocation decision; **the ONE remaining open item: whether #003's own calendar check needs #005's FULL `OFFICIAL_VERIFIED`-only strictness, or a looser tier for #003's own non-formal purposes (section 2, named precisely, not a mechanism gap)** | Pending | Later stage |
+| 17 | #003 F1 (complete behavior) | **Partial again this round -- MOVED BACK from "Yes" (GPT's review, relayed by Radu, caught that the reused `TradingCalendar` object-contract verifies internal self-consistency and attestation PRESENCE only, never the session dates against any external source -- a calendar with wrong dates, a correctly-recomputed hash, and populated `verified_by`/`verified_at` would pass every existing check).** Corrected this round: a concrete source-verification PROCESS is now specified (retain the source artifact + its digest; an explicit `verify_calendar_against_source()` comparison step; `OFFICIAL_VERIFIED`/`verified_by`/`verified_at` settable ONLY by a new atomic gate function once that step passes) -- but this gate function does NOT YET EXIST in the code, so the mechanism is specified, not built; target-session resolution corrected from a coverage-window check to explicit index arithmetic (entry exact-match, `target_index = entry_index + N`, fail if past the end), reusing `forward_returns.py`'s own exact-match discipline; the calendar's own identity now also feeds `build_run_id()`'s fingerprint (section 7/S2); same-target-session mechanism and 4-way check complete, distinguishing bar-missing from bar-present-with-null-price (section 1); sub-daily timeframes out of scope | Yes -- the data-gap status name(s); the calendar relocation decision; who/what executes the source-verification step (human vs. automated); the `OFFICIAL_VERIFIED`-only strictness threshold for #003 (Radu's own technical recommendation this round -- `OFFICIAL_VERIFIED` for FORMAL_DEVELOPMENT -- explicitly not yet his final approval) | Pending | Later stage |
 | 18 | #003 F3+F4+F5 | Partial -- per-security formula correct and scoped; session-weighting "impossibility" claim RETRACTED this round (a counterexample shows uniform security AND session margins can coexist), diagnostic mechanism corrected from a raw `Counter` (understates the real skew, verified) to a WEIGHTED `session_mass` sum (section 3); quantile section -- the `R_i`/`inclusive` compatibility claim NARROWED further this round to tie-free, equal-weight ORIGINAL input only, verified by a `[0,0,10]` counterexample that it does not survive mandatory tie-aggregation even at equal weights; non-finite-input contract unified to a hard-fail (section 4); CI/bootstrap estimator-vs-interval separation and F3's field list specified (section 6); permutation section CORRECTED this round -- "ship as-is, docs-only" was wrong once F4+F5's weighting is adopted (would test a different quantity than reported); a full weighted-estimator mechanism is now designed and verified (equal-weight case reduces byte-identical to today's test), the exchangeability-ACCEPTANCE question kept separately open (section 5) | Yes -- F3's (a)/(b) choice; the choice between midpoint and `R_i`; whether the WEIGHTED session-diagnostic recommendation is a sufficient response to SS74C, or a real second mechanism is required (section 3); whether the weighted-permutation-estimator design is adopted, and separately whether to accept the exchangeability limitation for V1 (section 5) | Pending | Later stage |
 | 19 | Config immutability (cross-cutting) | Yes -- full recursive freeze specified (section 7) | No | Pending | Later stage |
 | 20 | #003 G1 (TEST 26 AST guard, discovery->evaluation) | **Yes -- no longer merely "same algorithm family," the shared algorithm's own bugs are now fixed (row 11), so TEST 26 has no remaining open item of any kind (section 9)** | No | Pending | Later stage |
@@ -1825,22 +1945,21 @@ checklist until this round):**
 ---
 
 **No code or test was changed to produce this revision. No new
-mathematical counterexample needed executing this round** (the three
-local config corrections are wording/attribution fixes to an already-
-verified mechanism from revision 8, not new claims needing their own
-execution). **This round's source grounding was reading, in full:**
-`src/backtest/data/calendar.py` and the relevant sections of
-`src/backtest/models/entities.py` (`TradingCalendar`, `CalendarSource`,
-`calendar_fingerprint()`, `verify_calendar_content_address()`,
-`verify_calendar_structure()`, `require_verified_calendar_for_
-formal_run()`, `require_calendar_covers_window()`) -- grounding F1's
-calendar design in an EXISTING, already-implemented mechanism rather
-than inventing one, per Radu's own explicit priority this round; and
-`src/evaluation/engine.py`'s `_resolve_session_dates()`/`run_
-evaluation()` again, confirming the CURRENT, unverified session-date
-resolution this design replaces -- no project test suite was run.
-Baseline `3cdc532`, historical acceptances, and the Spec #005/Batch 3
-pause are unchanged. Findings reconciliation remains closed (both
-specs, within each review's own declared scope);
+mathematical counterexample needed executing this round -- this
+round's correction was re-reading the SAME source already read last
+round, more carefully, to find what it does NOT verify (external
+session-date truth), rather than running anything new.** This round's
+source grounding was re-reading, in full: `src/backtest/data/
+calendar.py` (confirming `require_verified_calendar_for_formal_run()`
+checks ONLY content-address self-consistency, structural validity,
+the `source` label, and `verified_by`/`verified_at` PRESENCE -- never
+the session dates against any external source) and
+`src/evaluation/outcomes/forward_returns.py`'s own `_exact_entry_
+index()` (reused as the exact-match discipline for calendar entry
+resolution, replacing the prior round's coverage-window-based
+framing) -- no project test suite was run. Baseline `3cdc532`,
+historical acceptances, and the Spec #005/Batch 3 pause are unchanged.
+Findings reconciliation remains closed (both specs, within each
+review's own declared scope);
 remediation design remains open; implementation remains not
 authorized.**
