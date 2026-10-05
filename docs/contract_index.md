@@ -560,6 +560,21 @@ is not itself the audit.
      rounds (`calendar.py`, confirming `build_trading_calendar()` takes
      an arbitrary caller-supplied `session_dates` tuple with no
      admission/trust check of any kind), not by new execution.
+     **Radu confirms revision 11 closes the F1/calendar admission-
+     contract observations at the design level (not a full approval of
+     the joint design, and not an implementation authorization).** Per
+     Radu's own request, every remaining open choice across both specs
+     is now collected into one approvable-per-row sheet:
+     `docs/decision_sheet_003_004_2026-10-05.md` (2026-10-05) -- common
+     support, session weighting, the quantile convention, and
+     permutation exchangeability (Spec #003 statistics); calendar
+     strictness, data-gap naming, who performs admission/verification,
+     calendar relocation, and #005's own eventual adoption (the
+     calendar group); the mandatory-live-re-read config choice, Finding
+     14's gate-time revalidation option, and Finding 16/GPT-G3's
+     atomicity guarantee scope (Spec #004). Each row points into
+     revision 11's own existing text; approving a row approves that one
+     design choice only and never authorizes implementation.
    - **Spec #004: two rounds done (2026-10-04).** Round 1 (Claude
      alone): a fresh, high-effort independent re-verification pass,
      requested by Radu specifically to finish before the joint F1-F6
