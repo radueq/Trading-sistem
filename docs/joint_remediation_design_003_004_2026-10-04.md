@@ -1,44 +1,56 @@
-# Joint Remediation Design -- Spec #003 + Spec #004 (2026-10-04, revision 10)
+# Joint Remediation Design -- Spec #003 + Spec #004 (2026-10-04, revision 11)
 
-**Status: DESIGN ONLY. Implementation NOT AUTHORIZED.** Revision 10 is
-a targeted correction of revision 9 (not a full rewrite -- revision 9's
-three config-wording corrections are confirmed closed by Radu and not
-reopened this round). **This round corrects an overclaim in revision
-9's own F1/calendar design: "design complete" was declared based on
-REUSING Spec #005's existing object-verification contract
-(`require_verified_calendar_for_formal_run()`), but that contract only
-verifies a `TradingCalendar` object's own internal self-consistency
-and attestation PRESENCE -- it never checks the actual session dates
-against any external source, confirmed by re-reading `calendar.py`.
-A calendar with wrong dates, a correctly-recomputed hash, and
-populated `verified_by`/`verified_at` would pass every existing
-check.** F1/calendar MOVES BACK to "still incomplete" this round.
-Corrected: a concrete source-verification PROCESS is now specified
-(retain the source artifact and its own digest; an explicit
-comparison step against that source; `OFFICIAL_VERIFIED`/`verified_
-by`/`verified_at` settable only by a new atomic gate once that step
-passes) -- though this gate function does not yet exist in the code,
-so F1 stays Partial, not Yes. Target-session resolution is also
-corrected, from a coverage-window check to explicit index arithmetic
-(entry exact-match, `target_index = entry_index + N`, explicit failure
-if past the end), reusing `outcomes/forward_returns.py`'s own exact-
-match discipline rather than conflating it with `require_calendar_
-covers_window()`'s own, narrower purpose; "development_end-or-now" is
-withdrawn (a historical, reproducible run must never implicitly read
-the current wall clock). The calendar's own identity is now also
-required inside `build_run_id()`'s own fingerprint (section 7/S2), and
-#003's other session-resolving code (`engine.py`'s own `_resolve_
-session_dates()`) must consume the same verified snapshot rather than
-keep a parallel, bar-derived resolution. Two further corrections to
-the methodological-choices table: F3, the session-weighting diagnostic
-strategy, and the exchangeability-acceptance-for-V1 recommendation are
-re-attributed to Claude's own synthesis (not GPT-confirmed, as a prior
-draft implied); and F3 option (b)'s own description is corrected --
-it does not give every profile a number, only those with sufficient
-common support, degenerating to `None` exactly like option (a) when
-none exists. This review concerns remediation DESIGN only; it does not
-reopen findings reconciliation (closed, both specs, within each
-review's own declared scope) and does not authorize implementation.
+**Status: DESIGN ONLY. Implementation NOT AUTHORIZED.** Revision 11 is
+a targeted correction of revision 10 (not a full rewrite -- revision
+10's own five corrections -- object-verification vs. source-
+verification separation; exact target-session resolution without an
+implicit current clock; the calendar's own identity inside run
+identity; one consistent calendar snapshot across #003's own
+components; F3(b)'s corrected description -- are confirmed closed by
+Radu and not reopened this round). **This round closes the one
+remaining gap in F1/calendar: revision 10 wrongly justified "Partial"
+by the ABSENCE OF CODE ("this gate function does not yet exist"),
+directly contradicting this document's own three-stage discipline --
+a design can be fully complete before any implementation exists. The
+actual gap was never the missing code; it was that revision 10's own
+source-verification step only compared a candidate calendar against
+an artifact supplied by the SAME caller, which proves the two are
+mutually consistent, never that the artifact itself is an authentic
+source -- and that restricting the `OFFICIAL_VERIFIED` label inside
+the constructor does not, by itself, stop direct construction of an
+object already carrying that label.** Both gaps are closed this round
+by completing the admission/trust contract (section 2): a new Step 0
+admits the source artifact itself, before any comparison, via either
+an approved-provider allow-list or an explicit, named operator
+attestation (the stated trust boundary when verification is manual);
+a new `CalendarVerificationRecord` entity explicitly links the
+candidate calendar's own identity to the admitted source's digest,
+the verification method/version, the verifier, and the time; the
+calendar and its record are registered TOGETHER, atomically, into a
+new `VerifiedCalendarRegistry` (mirroring this project's own existing
+atomic-gate pattern, e.g. `preregister_hypothesis()`); and Evaluation
+(#003) is now required to resolve a calendar EXCLUSIVELY by identity
+from that registry, refusing any lookup with no linked record --
+never trusting a bare `TradingCalendar` object's own claimed fields.
+**Correction to revision 10's own proposed relocation:
+`build_trading_calendar()` stays fully UNRESTRICTED** -- revision 10
+had proposed confining it to synthetic fixtures, which would have been
+an undecided, API-breaking change against Spec #005's own existing
+callers; all trust authority instead lives in the new registry and
+Evaluation's own consumption rule, never in the constructor. F1/
+calendar MOVES BACK to "Yes" this round (bucket (A), design complete)
+-- what remains open (the strictness threshold, who performs admission/
+verification operationally, data-gap status naming, calendar
+relocation, #005's own eventual adoption of the same registry) are
+genuinely CONTRACTUAL choices, never missing design mechanisms. One
+attribution error is also corrected, in two places (the methodological
+table and section 2): the `OFFICIAL_VERIFIED`-for-FORMAL_DEVELOPMENT
+recommendation is GPT's own, relayed by Radu -- a prior draft wrongly
+called it "Radu's own words, NOT GPT-relayed," which misstated a
+technical recommendation as Radu's personal decision or approval. This
+review concerns remediation DESIGN only; it does not reopen findings
+reconciliation (closed, both specs, within each review's own declared
+scope) and does not authorize implementation.
 
 **Checklist convention used throughout (Radu's own structure):** every
 item is tracked on four separate axes, never collapsed into one
@@ -184,10 +196,33 @@ the #005 audit (the existing code does exactly what it was built to
 do; it was simply never designed to answer the question #003 needs
 answered here).
 
-**Corrected design -- a concrete verification PROCESS, not yet
-existing in the code, that must PRODUCE a `TradingCalendar` before
-`require_verified_calendar_for_formal_run()`'s own object-level checks
-are ever meaningful:**
+**Corrected design, with the admission contract completed this round
+(GPT's review, relayed by Radu): "Partial" is justified by what the
+DESIGN itself still lacked -- the verifiable link between an admitted
+source, the attestation it produces, and the snapshot Evaluation
+trusts -- never by the absence of code. This round completes that
+link; nothing here is deferred to "once the gate exists."**
+
+**0. Source ADMISSION, the step that actually grounds trust (missing
+from every prior round -- comparing a candidate against an artifact
+the SAME caller supplies only proves the two agree with each other,
+never that either is authentic):** before any artifact may be used in
+step 3 below, Data Foundation must ADMIT it, via exactly one of two
+named paths:
+   - an APPROVED PROVIDER -- a source identifier on a maintained,
+     explicit allow-list (e.g. a named exchange calendar feed), or
+   - an explicit OPERATOR ATTESTATION -- a named human records that
+     they are vouching for this specific artifact, as themselves the
+     trust boundary (stated plainly as such, not disguised as an
+     automated check) -- the same discipline this document already
+     uses for #003 S1's own "documented trust boundary" framing.
+   Retained at admission: the source's own identifier, its version/
+   publication date, its declared coverage interval, its market/
+   timezone, the RAW artifact content, and the artifact's own content
+   digest (`sha256`, the same discipline already used for every
+   config loader in this project). An artifact from neither path is
+   REJECTED before step 3 ever runs -- admission failure is its own,
+   separate rejection reason from a verification mismatch.
 1. Data Foundation receives a calendar ARTIFACT independent of any
    price series -- its exact source identifier, its own version/
    publication date, and its declared coverage interval, as RAW data
@@ -195,42 +230,80 @@ are ever meaningful:**
    same shape as every config loader in this project already handles
    raw text.
 2. The artifact's raw text/content is RETAINED, alongside its own
-   content digest (`sha256`, the same discipline already used for
-   every config loader in this project) -- so a later audit can
-   re-derive exactly what was compared, not just trust a stored
-   boolean.
+   content digest (`sha256`) -- so a later audit can re-derive exactly
+   what was compared, not just trust a stored boolean.
 3. An explicit verification step -- a NEW function, e.g.
    `verify_calendar_against_source(candidate_session_dates,
-   candidate_early_close_dates, source_artifact_text) -> (bool,
-   errors)` -- parses the source artifact into ITS OWN session-date
-   list (and early-close exceptions) and compares it, exactly, against
-   the candidate `session_dates`/`early_close_dates` for the SAME
-   declared coverage window. A mismatch of any kind (missing session,
-   extra session, wrong early-close date) is a rejection, with the
-   specific discrepancy recorded as the error.
-4. **`source="OFFICIAL_VERIFIED"` and `verified_by`/`verified_at` may
-   ONLY be set as the result of step 3 passing** -- a new, single
-   gate function (e.g. `verify_and_register_calendar(...)`) becomes
-   the ONE path that can produce an `OFFICIAL_VERIFIED` `TradingCalendar`,
-   mirroring this project's own established atomic-gate pattern
-   (`preregister_hypothesis()` is the only path to PREREGISTERED;
-   `HypothesisRegistry.register()` refuses a bare PREREGISTERED
-   insert). `build_trading_calendar()` alone, without going through
-   this gate, must never be able to produce one claiming
-   `OFFICIAL_VERIFIED` -- it remains available for
-   `SYNTHETIC_TEST_FIXTURE` construction in tests, unchanged.
-5. Evaluation (#003) receives the REGISTERED, already-verified
-   snapshot and re-verifies ITS OWN integrity via the EXISTING
-   `verify_calendar_content_address()`/`verify_calendar_structure()`
-   (self-consistency only, as today) -- #003 never re-runs step 3
-   itself; it trusts the gate's own prior verification, the same
-   "verify once, at the gate, then trust the pinned object" discipline
-   already used for config (section 7).
-**Who performs step 3, and whether it is automated against a live
-feed or performed by a human against a published calendar, is Radu's
-own operational choice, NOT resolved here** -- the CONTRACT (what
-must be compared, what evidence is retained, what causes rejection)
-is now fully specified regardless of who or what executes it.
+   candidate_early_close_dates, admitted_source) -> (bool, errors)` --
+   parses the ADMITTED artifact (step 0, never an arbitrary one) into
+   ITS OWN session-date list (and early-close exceptions) and compares
+   it, exactly, against the candidate `session_dates`/`early_close_
+   dates`, FOR THE SAME market, timezone, and declared coverage
+   interval. A mismatch of any kind (missing session, extra session,
+   wrong early-close date, or a market/timezone/interval that doesn't
+   match) is a rejection, with the specific discrepancy recorded.
+4. **On success, produce a `CalendarVerificationRecord` -- the
+   EXPLICIT link Radu's own message asks for, not previously
+   specified:** `calendar_id`/`calendar_hash` (the candidate's own
+   content-address, tying the record to THIS exact calendar content),
+   `source_artifact_digest` (the admitted source's own digest from
+   step 0, tying the record to THIS exact source version), a
+   `verification_method_version` (a literal version string for the
+   comparison algorithm itself, same discipline as the new `run_id_
+   scheme_version` elsewhere in this document, since the comparison
+   logic can itself evolve), `verified_by`, `verified_at`.
+5. **The `TradingCalendar` (now carrying `source="OFFICIAL_VERIFIED"`,
+   `verified_by`, `verified_at`) and its `CalendarVerificationRecord`
+   are registered TOGETHER, atomically, into a TRUST REGISTRY** (e.g.
+   `VerifiedCalendarRegistry`) -- on any failure in steps 0/3, NOTHING
+   is registered; there is no partial state, mirroring this project's
+   own established atomicity discipline (Finding 16/#004's batch-safe
+   dry run, section 10).
+6. **Evaluation's (#003's) own consumption rule, the actual trust
+   boundary this document was missing:** #003 resolves a calendar
+   EXCLUSIVELY by identity (`calendar_id`) from the `VerifiedCalendar
+   Registry`, and REQUIRES the associated `CalendarVerificationRecord`
+   to exist for that identity -- it never accepts a bare
+   `TradingCalendar` object handed to it directly, however correct
+   that object's own hash or `source` label may look, since (as this
+   document's own prior round already established) object-level self-
+   consistency alone proves nothing about external truth. A lookup
+   with no linked record is refused, treated the same as `CALENDAR_
+   UNVERIFIED`.
+**`build_trading_calendar()` itself is NOT restricted** -- corrected
+this round (GPT's review, relayed by Radu: restricting it would be an
+API change against #005's own existing callers, not a pure
+relocation, and not decided here). It remains exactly the free,
+unrestricted constructor it is today, usable by #005 and by tests
+unchanged; ALL trust authority lives in the registry and in step 6's
+consumption rule, never in the constructor or in a bare object's own
+claimed fields. This sidesteps any #005-caller migration question
+entirely -- #005's own existing use of `require_verified_calendar_
+for_formal_run()` is untouched by this design, and #005's own
+EVENTUAL adoption of the SAME registry-based trust rule (rather than
+object-level self-consistency alone) is a separate, NOT-decided
+question, named here, never assumed.
+**Who performs step 0's admission and step 3's comparison, and
+whether either is automated against a live feed or performed by a
+human against a published calendar, is Radu's own operational choice,
+NOT resolved here -- if performed manually, that human IS the trust
+boundary, stated as such, not disguised as an automated check.** The
+CONTRACT (what must be admitted, what must be compared, what evidence
+is retained, what determines rejection at each of the three distinct
+stages -- admission, verification, registration) is now fully
+specified regardless of who or what executes it.
+**New regressions, per Radu's own explicit request:** a calendar
+constructed directly via `build_trading_calendar()` alone, with no
+`CalendarVerificationRecord`, is REFUSED by #003's own resolution
+(step 6) even if its `source` label claims `OFFICIAL_VERIFIED`; a
+record referencing a DIFFERENT `calendar_id`/`calendar_hash` than the
+calendar it's paired with, or a DIFFERENT source digest than was
+actually admitted, is rejected; a genuine session/exception
+discrepancy between the candidate and the admitted source is rejected
+with the specific mismatch named; a failed registration attempt leaves
+NO partial calendar and NO partial record in the trust registry; a
+valid calendar, once registered, is successfully resolved from the
+registry by identity with its record intact.
 
 - **Coverage requirement and entry/target-beyond-coverage behavior,
   CORRECTED this round -- `require_calendar_covers_window()` alone
@@ -301,9 +374,12 @@ source-verification gate above) should require the SAME `OFFICIAL_
 VERIFIED`-only strictness, or accept a looser tier for #003's own
 (non-formal-backtest) purposes, is Radu's own call -- the MECHANISM is
 now fully specified either way; only the STRICTNESS THRESHOLD is
-open.** **Radu's own technical recommendation on this specific
-threshold (his own words this round, not GPT-relayed, and explicitly
-NOT his final approval): `OFFICIAL_VERIFIED` for FORMAL_DEVELOPMENT,
+open.** **GPT's own technical recommendation on this specific
+threshold, relayed by Radu -- attribution CORRECTED this round (a
+prior draft wrongly called this "Radu's own words, not GPT-relayed";
+it is GPT's recommendation like every other technical recommendation
+in this document, and it is explicitly NOT Radu's own personal
+decision or approval): `OFFICIAL_VERIFIED` for FORMAL_DEVELOPMENT,
 synthetic calendars permitted only in declared tests** -- this
 recommendation does not replace the source-verification process above,
 and is not yet adopted by this document as a decision.
@@ -1623,9 +1699,10 @@ intended.
 
 ## 11. Checklist -- four axes per item, not one status column
 
-**Rows 9, 11, 12, 14, 15, 18, 20 corrected this round; see
-section-by-section corrections above for the reasoning behind each
-change. A consolidated regression list follows in section 12.**
+**Rows 9, 11, 12, 14, 15, 18, 20 corrected in earlier rounds; row 17
+corrected THIS round (revision 11) -- see section-by-section
+corrections above for the reasoning behind each change. A consolidated
+regression list follows in section 12.**
 
 **Short decision list, per Radu's own explicit request this round --
 NOT a new summary invented fresh, a separation of what the table below
@@ -1647,26 +1724,21 @@ requirement, the WEIGHTED session-mass diagnostic, and the weighted-
 permutation-estimator mechanism with its exhaustive-enumeration
 regression (all three now fully specified within row 18); TEST 49's
 AST algorithm (row 11, EXCEPT the bare-name collision, which is its
-own separate, acknowledged-unresolvable item).
-
-**(B) STILL INCOMPLETE -- no full mechanism exists yet; Radu's
-approval would not yet mean anything concrete for these:**
-- **F1's calendar (row 17) -- MOVED BACK into this bucket this round
-  (GPT's review, relayed by Radu): last round wrongly claimed "design
-  complete" by conflating the EXISTING object-verification contract
-  (self-consistency + attestation presence) with an actual source-
-  verification PROCESS, which does not yet exist in the code.** A
-  `TradingCalendar` with wrong dates but a correctly-recomputed hash
-  and populated `verified_by`/`verified_at` would pass every check
-  that exists today. This round specifies the missing process (retain
-  the source artifact + its digest, an explicit comparison step, a new
-  atomic gate as the only path to `OFFICIAL_VERIFIED`) and corrects
-  target-session resolution from a coverage-window check to explicit
-  index arithmetic -- but the gate function itself is specified, not
-  built, so F1 stays Partial until it exists as actual code (or at
-  minimum a fully worked-through pseudocode-level design with no
-  remaining ambiguity, which this round still leaves as a named
-  function signature, not a complete algorithm).
+own separate, acknowledged-unresolvable item). **MOVED FORWARD again
+this round, corrected on WHY (GPT's review, relayed by Radu): F1's
+calendar (row 17)** -- "Partial" must be justified by what the DESIGN
+itself lacks, never by the absence of code (design can be complete
+before implementation, per this document's own three-stage
+discipline). The specific gap named last round -- the verifiable link
+between an admitted source, its attestation, and the snapshot
+Evaluation trusts -- is now completed: source ADMISSION (approved-
+provider or named operator attestation), a `CalendarVerificationRecord`
+explicitly linking calendar identity, source digest, verification
+method, verifier, and time, atomic joint registration into a trust
+registry, and Evaluation's own resolve-by-identity-with-required-
+record consumption rule (section 2). `build_trading_calendar()` itself
+stays unrestricted -- all trust authority lives in the registry, never
+in the constructor.
 - **#003 S1 (row 16):** a scope/responsibility question (code vs.
   documented trust boundary), not a mechanism gap -- no design exists
   because none has been attempted, this is Radu's own call on scope.
@@ -1711,7 +1783,7 @@ relayed by Radu. The table below attributes each row precisely.**
 | F4+F5 within-bin weighting (per-security formula, uncontested) + session-level variation (diagnostic vs. a real second mechanism) | Per-security formula: adopt as designed (uncontested, not attributed to GPT or Claude specifically -- this was the original #003 patch). **Session-level diagnostic strategy: Claude's own recommendation -- NOT GPT-confirmed.** | Diagnostic-only: Radu's own 5%/95% example becomes visible in the output; the per-security formula's own equal-weight property is preserved untouched; session-level dominance is NOT corrected, only reported -- a further mechanism stays possible later if the diagnostic shows a real problem. |
 | Weighted-quantile convention (midpoint vs. `R_i`) | **GPT's own recommendation, relayed by Radu** (midpoint with mandatory tie-aggregation) -- Radu's own personal preference not yet confirmed, per the attribution note above. | Midpoint: simpler, scale-invariant, but never reproduces `statistics.quantiles(..., method="inclusive")`, even at equal weights with no ties. `R_i`: reproduces `inclusive` for DISTINCT, equal-weight input, but loses that property the moment any tie is aggregated (section 4.2's own `[0,0,10]` counterexample) -- neither is a strict superset of the other's guarantees. |
 | Permutation exchangeability (accept the value-level procedure's own assumption for V1 vs. require block permutation first) | **Claude's own recommendation -- NOT GPT-confirmed:** accept for V1, reaffirming this project's own existing `comparison.py` docstring (SS47); revisit only if concentration/stability diagnostics show a real problem. | Accepting: ships now, with a documented, named limitation (full exchangeability, not merely marginal equality) -- a real but currently unquantified risk under within-security serial correlation. Requiring block first: delays indefinitely, since block permutation has never been given a precise definition in any round. |
-| Calendar strictness for #003 (full #005 `OFFICIAL_VERIFIED`-only vs. a looser tier) | **Radu's own technical recommendation this round (his own words, NOT GPT-relayed, and explicitly NOT his final approval): `OFFICIAL_VERIFIED` for FORMAL_DEVELOPMENT, synthetic calendars permitted only in declared tests.** This recommendation does not replace the source-verification process section 2 still needs built. | Full strictness: #003 runs fail closed whenever no `OFFICIAL_VERIFIED` calendar is available, the same cost #005 already accepts for formal runs. Looser tier: #003 can proceed more often, but its own calendar-based classification (section 1) rests on a weaker verification guarantee than #005's. |
+| Calendar strictness for #003 (full #005 `OFFICIAL_VERIFIED`-only vs. a looser tier) | **GPT's own technical recommendation, relayed by Radu -- attribution CORRECTED this round (a prior draft wrongly called this "Radu's own words, NOT GPT-relayed"; it is GPT's recommendation like every other technical recommendation in this document, and explicitly NOT Radu's own personal decision or approval): `OFFICIAL_VERIFIED` for FORMAL_DEVELOPMENT, synthetic calendars permitted only in declared tests.** This is a CONTRACTUAL choice, kept distinct from the now-complete admission/verification/registry contract in section 2 -- adopting it does not require reopening that contract, and the contract does not depend on which strictness tier Radu eventually picks. | Full strictness: #003 runs fail closed whenever no `OFFICIAL_VERIFIED` calendar is available, the same cost #005 already accepts for formal runs. Looser tier: #003 can proceed more often, but its own calendar-based classification (section 1) rests on a weaker verification guarantee than #005's. |
 
 | # | Item | (a) Design complete | (b) Contractual decision needed | (c) Radu's approval | (d) Implementation + verification |
 |---|---|---|---|---|---|
@@ -1731,7 +1803,7 @@ relayed by Radu. The table below attributes each row precisely.**
 | 14 | #004 Finding 19 / Finding 11 | Yes -- **corrected a THIRD time this round (GPT's review, relayed by Radu): the prior draft compared two INCOMPATIBLE hashes -- fixed by retaining the loader's own raw-text-based version unchanged, and by TWO separate external-object checks (label equality catches wrong-label/right-content; structural equality, both sides normalized to the same representation, catches right-label/wrong-content) rather than one conflated check; the mandatory-live-re-read policy's own justification corrected (design (a) was wrongly described as unsafe -- it isn't, (b) is chosen for an added freshness requirement, not for correctness)** (section 7) | Yes -- whether to adopt this corrected wiring and the mandatory-live-re-read choice, on its corrected justification | Pending | Later stage |
 | 15 | #003 S2 | Yes -- but CORRECTED this round: S2 needs its OWN separate `run_id_scheme_version` literal marker, NOT row 14's config-content hash (a `build_run_id()` field-set change is a code change, invisible to any YAML hash) -- two distinct mechanisms now, not one shared wiring as previously drafted (section 7) | Yes -- whether to adopt the separate `run_id_scheme_version` marker | Pending | Later stage |
 | 16 | #003 S1 | N/A -- scope question, not a mechanism gap | Yes -- responsibility (code vs. documented trust boundary) | Pending | Later stage |
-| 17 | #003 F1 (complete behavior) | **Partial again this round -- MOVED BACK from "Yes" (GPT's review, relayed by Radu, caught that the reused `TradingCalendar` object-contract verifies internal self-consistency and attestation PRESENCE only, never the session dates against any external source -- a calendar with wrong dates, a correctly-recomputed hash, and populated `verified_by`/`verified_at` would pass every existing check).** Corrected this round: a concrete source-verification PROCESS is now specified (retain the source artifact + its digest; an explicit `verify_calendar_against_source()` comparison step; `OFFICIAL_VERIFIED`/`verified_by`/`verified_at` settable ONLY by a new atomic gate function once that step passes) -- but this gate function does NOT YET EXIST in the code, so the mechanism is specified, not built; target-session resolution corrected from a coverage-window check to explicit index arithmetic (entry exact-match, `target_index = entry_index + N`, fail if past the end), reusing `forward_returns.py`'s own exact-match discipline; the calendar's own identity now also feeds `build_run_id()`'s fingerprint (section 7/S2); same-target-session mechanism and 4-way check complete, distinguishing bar-missing from bar-present-with-null-price (section 1); sub-daily timeframes out of scope | Yes -- the data-gap status name(s); the calendar relocation decision; who/what executes the source-verification step (human vs. automated); the `OFFICIAL_VERIFIED`-only strictness threshold for #003 (Radu's own technical recommendation this round -- `OFFICIAL_VERIFIED` for FORMAL_DEVELOPMENT -- explicitly not yet his final approval) | Pending | Later stage |
+| 17 | #003 F1 (complete behavior) | **Yes -- MOVED FORWARD again this round, corrected on WHY (GPT's review, relayed by Radu): "Partial" must be justified by what the DESIGN itself lacks, never by the absence of code -- design can be complete before implementation, per this document's own established three-stage discipline.** The specific design gap named last round (the link between an admitted source, the attestation it produces, and the snapshot Evaluation trusts) is now completed: an explicit source-ADMISSION step (approved-provider allow-list OR named operator attestation, stated as the trust boundary if manual); `verify_calendar_against_source()` compares the candidate against the ADMITTED artifact for the same market/timezone/interval; a `CalendarVerificationRecord` explicitly links `calendar_id`/`calendar_hash`, the source's own digest, a `verification_method_version`, `verified_by`/`verified_at`; the calendar and its record are registered TOGETHER, atomically, in a `VerifiedCalendarRegistry`; Evaluation resolves EXCLUSIVELY by identity from that registry and REQUIRES the linked record, never accepting a bare object on its own claimed fields. `build_trading_calendar()` itself stays UNRESTRICTED (corrected this round -- restricting it would be an API change against #005's own callers, not decided here); target-session resolution via explicit index arithmetic (entry exact-match, `target_index = entry_index + N`); calendar identity feeds `build_run_id()`'s fingerprint (section 7/S2); same-target-session mechanism and 4-way check complete (section 1); sub-daily timeframes out of scope | Yes -- the data-gap status name(s); the calendar relocation decision; who/what executes admission and verification (human vs. automated -- an operational choice, not a mechanism gap); the `OFFICIAL_VERIFIED`-only strictness threshold for #003 (GPT's own recommendation, relayed by Radu -- `OFFICIAL_VERIFIED` for FORMAL_DEVELOPMENT -- not yet Radu's own approval); #005's own eventual adoption of the same registry-based trust rule (separate, not decided) | Pending | Later stage |
 | 18 | #003 F3+F4+F5 | Partial -- per-security formula correct and scoped; session-weighting "impossibility" claim RETRACTED this round (a counterexample shows uniform security AND session margins can coexist), diagnostic mechanism corrected from a raw `Counter` (understates the real skew, verified) to a WEIGHTED `session_mass` sum (section 3); quantile section -- the `R_i`/`inclusive` compatibility claim NARROWED further this round to tie-free, equal-weight ORIGINAL input only, verified by a `[0,0,10]` counterexample that it does not survive mandatory tie-aggregation even at equal weights; non-finite-input contract unified to a hard-fail (section 4); CI/bootstrap estimator-vs-interval separation and F3's field list specified (section 6); permutation section CORRECTED this round -- "ship as-is, docs-only" was wrong once F4+F5's weighting is adopted (would test a different quantity than reported); a full weighted-estimator mechanism is now designed and verified (equal-weight case reduces byte-identical to today's test), the exchangeability-ACCEPTANCE question kept separately open (section 5) | Yes -- F3's (a)/(b) choice; the choice between midpoint and `R_i`; whether the WEIGHTED session-diagnostic recommendation is a sufficient response to SS74C, or a real second mechanism is required (section 3); whether the weighted-permutation-estimator design is adopted, and separately whether to accept the exchangeability limitation for V1 (section 5) | Pending | Later stage |
 | 19 | Config immutability (cross-cutting) | Yes -- full recursive freeze specified (section 7) | No | Pending | Later stage |
 | 20 | #003 G1 (TEST 26 AST guard, discovery->evaluation) | **Yes -- no longer merely "same algorithm family," the shared algorithm's own bugs are now fixed (row 11), so TEST 26 has no remaining open item of any kind (section 9)** | No | Pending | Later stage |
@@ -1766,9 +1838,23 @@ way every time.
 
 **Section 2 (calendar):** every EXISTING test currently exercising
 `build_trading_calendar()`/`require_verified_calendar_for_formal_run()`
-re-run unchanged at its relocated import path; NEW -- a guard test in
-the TEST 26/TEST 49 family asserting `src/evaluation/` never imports
-`src/backtest/` at all.
+re-run unchanged at its relocated import path (`build_trading_
+calendar()` itself stays unrestricted, so these existing call sites
+are untouched by this round's admission/registry additions); NEW -- a
+guard test in the TEST 26/TEST 49 family asserting `src/evaluation/`
+never imports `src/backtest/` at all; **NEW this round (GPT's review,
+relayed by Radu, the admission/trust contract):** a calendar
+constructed directly via `build_trading_calendar()` alone, with no
+`CalendarVerificationRecord`, is REFUSED by #003's own resolution step
+even if its `source` label claims `OFFICIAL_VERIFIED`; a record
+referencing a DIFFERENT `calendar_id`/`calendar_hash` than the
+calendar it's paired with, or a DIFFERENT source digest than was
+actually admitted, is rejected; a genuine session/exception
+discrepancy between the candidate and the admitted source is rejected
+with the specific mismatch named; a failed registration attempt leaves
+NO partial calendar and NO partial record in the trust registry; a
+valid calendar, once registered, is successfully resolved from the
+registry by identity with its record intact.
 
 **Section 3 (session weighting):** NEW -- the WEIGHTED `session_mass`
 diagnostic (summing per-security row weights per session, NOT a raw
@@ -1946,20 +2032,26 @@ checklist until this round):**
 
 **No code or test was changed to produce this revision. No new
 mathematical counterexample needed executing this round -- this
-round's correction was re-reading the SAME source already read last
-round, more carefully, to find what it does NOT verify (external
-session-date truth), rather than running anything new.** This round's
-source grounding was re-reading, in full: `src/backtest/data/
-calendar.py` (confirming `require_verified_calendar_for_formal_run()`
-checks ONLY content-address self-consistency, structural validity,
-the `source` label, and `verified_by`/`verified_at` PRESENCE -- never
-the session dates against any external source) and
-`src/evaluation/outcomes/forward_returns.py`'s own `_exact_entry_
-index()` (reused as the exact-match discipline for calendar entry
-resolution, replacing the prior round's coverage-window-based
-framing) -- no project test suite was run. Baseline `3cdc532`,
-historical acceptances, and the Spec #005/Batch 3 pause are unchanged.
-Findings reconciliation remains closed (both specs, within each
-review's own declared scope);
+round's two corrections (completing the admission/trust contract;
+reversing the proposed constructor restriction) are design and
+wording corrections, grounded by re-reading the SAME source already
+read in prior rounds, not by any new execution.** This round's source
+grounding was re-reading, in full: `src/backtest/data/calendar.py`
+(re-confirming `build_trading_calendar()` itself takes an arbitrary
+caller-supplied `session_dates` tuple with no admission or trust check
+of any kind -- grounding the correction that it must stay unrestricted,
+with trust authority living in the new registry and consumption rule
+instead; and re-confirming `require_verified_calendar_for_formal_run()`
+still checks only content-address self-consistency, structural
+validity, the `source` label, and `verified_by`/`verified_at`
+PRESENCE) and `src/evaluation/models/entities.py` (`EvaluationRunRegistry`,
+confirming the calendar-identity provenance point from revision 10
+still holds) -- no project test suite was run. This round's new
+entities (`CalendarVerificationRecord`, `VerifiedCalendarRegistry`) and
+the admission step (Step 0) are specified in this document only; they
+do not yet exist in code, and nothing about declaring their DESIGN
+complete implies otherwise. Baseline `3cdc532`, historical acceptances,
+and the Spec #005/Batch 3 pause are unchanged. Findings reconciliation
+remains closed (both specs, within each review's own declared scope);
 remediation design remains open; implementation remains not
 authorized.**

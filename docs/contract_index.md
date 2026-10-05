@@ -509,50 +509,57 @@ is not itself the audit.
      implementation/acceptance of any fix is NOT AUTHORIZED.** Now
      joined with #004's own remediation design in
      `docs/joint_remediation_design_003_004_2026-10-04.md`
-     (2026-10-04, revision 10, per GPT's own recommendation once both
-     audits closed). **Revision 9's three config-wording corrections
-     are confirmed closed by Radu. Revision 10 corrects an overclaim
-     in revision 9's own F1/calendar design.** Revision 9 declared F1's
-     calendar "design complete" by reusing Spec #005's existing
-     `require_verified_calendar_for_formal_run()` -- but that contract
-     only verifies a `TradingCalendar` OBJECT's own internal self-
-     consistency and attestation PRESENCE (hash matches content,
-     structure valid, `source` label reads `OFFICIAL_VERIFIED`,
-     `verified_by`/`verified_at` non-empty); confirmed by re-reading
-     `calendar.py`, it never checks the actual session dates against
-     any EXTERNAL source. A calendar with wrong dates, a correctly-
-     recomputed hash, and populated attestation fields would pass
-     every existing check. **F1/calendar moves back to "still
-     incomplete" this round.** Corrected: a concrete source-
-     verification PROCESS is now specified -- retain the source
-     artifact and its own content digest; an explicit `verify_
-     calendar_against_source()` comparison step against that artifact;
-     `OFFICIAL_VERIFIED`/`verified_by`/`verified_at` settable only by a
-     NEW atomic gate function once that step passes (mirroring this
-     project's own `preregister_hypothesis()`-style atomic-gate
-     pattern) -- though this gate function does not yet exist in the
-     code, so F1 stays Partial. Target-session resolution is also
-     corrected from a coverage-window check to explicit index
-     arithmetic (entry exact-match via `outcomes/forward_returns.py`'s
-     own `_exact_entry_index()` discipline, `target_index = entry_
-     index + N`, explicit failure if past the end) -- `require_
-     calendar_covers_window()` is reused for its own narrower purpose
-     (sanity-checking the calendar's declared bounds), never conflated
-     with target resolution; "development_end-or-now" is withdrawn, a
-     historical run must never read the current wall clock. The
-     calendar's own identity now also feeds `build_run_id()`'s own
-     fingerprint (section 7/S2), and #003's other session-resolving
-     code must consume the same verified snapshot, not a parallel bar-
-     derived resolution. Two further corrections to the methodological-
-     choices table: F3's recommendation, the session-weighting
-     diagnostic strategy, and the exchangeability-acceptance-for-V1
-     recommendation are re-attributed to Claude's own synthesis (not
-     GPT-confirmed); and F3 option (b) is corrected to not claim
-     universal coverage -- it degenerates to `None` exactly like option
-     (a) when no common support exists. Design only, not
-     implementation; no code or test changed, no project test suite
-     run -- this round's correction was re-reading the same source
-     more carefully for what it does NOT verify, not new execution.
+     (2026-10-04, revision 11, per GPT's own recommendation once both
+     audits closed). **Revision 10's five corrections (object-
+     verification vs. source-verification separation; exact target-
+     session resolution without an implicit current clock; the
+     calendar's own identity inside run identity; one consistent
+     calendar snapshot across #003's own components; F3(b)'s corrected
+     description) are confirmed closed by Radu. Revision 11 closes the
+     one remaining gap in F1/calendar.** Revision 10 had justified
+     "Partial" by the ABSENCE OF CODE ("this gate function does not yet
+     exist") -- contradicting this document's own three-stage
+     discipline that design can be complete before implementation. The
+     actual gap was never the missing code: revision 10's own source-
+     verification step only compared a candidate calendar against an
+     artifact supplied by the SAME caller, proving mutual consistency,
+     never that the artifact itself is an authentic source; and
+     restricting the `OFFICIAL_VERIFIED` label inside the constructor
+     does not, by itself, stop direct construction of an object already
+     carrying that label. **Both gaps are closed this round:** a new
+     Step 0 admits the source artifact itself, before any comparison,
+     via an approved-provider allow-list or an explicit, named operator
+     attestation (the stated trust boundary when manual); a new
+     `CalendarVerificationRecord` entity explicitly links the candidate
+     calendar's own identity to the admitted source's digest, the
+     verification method/version, the verifier, and the time; the
+     calendar and its record are registered TOGETHER, atomically, into
+     a new `VerifiedCalendarRegistry` (mirroring this project's own
+     `preregister_hypothesis()` atomic-gate pattern); and Evaluation
+     (#003) is now required to resolve a calendar EXCLUSIVELY by
+     identity from that registry, refusing any lookup with no linked
+     record -- never trusting a bare `TradingCalendar` object's own
+     claimed fields. **Correction to revision 10's own proposed
+     relocation: `build_trading_calendar()` stays fully UNRESTRICTED**
+     -- revision 10 had proposed confining it to synthetic fixtures,
+     an undecided, API-breaking change against Spec #005's own existing
+     callers; all trust authority instead lives in the new registry and
+     Evaluation's own consumption rule, never in the constructor.
+     **F1/calendar moves back to "Yes" this round** -- what remains
+     open (the strictness threshold, who performs admission/
+     verification operationally, data-gap status naming, calendar
+     relocation, #005's own eventual adoption of the same registry) are
+     genuinely CONTRACTUAL choices, never missing design mechanisms. One
+     attribution error is also corrected: the `OFFICIAL_VERIFIED`-for-
+     FORMAL_DEVELOPMENT recommendation is GPT's own, relayed by Radu --
+     a prior draft wrongly called it "Radu's own words, NOT GPT-
+     relayed," misstating a technical recommendation as Radu's personal
+     decision or approval. Design only, not implementation; no code or
+     test changed, no project test suite run -- this round's correction
+     is grounded by re-reading the same source already read in prior
+     rounds (`calendar.py`, confirming `build_trading_calendar()` takes
+     an arbitrary caller-supplied `session_dates` tuple with no
+     admission/trust check of any kind), not by new execution.
    - **Spec #004: two rounds done (2026-10-04).** Round 1 (Claude
      alone): a fresh, high-effort independent re-verification pass,
      requested by Radu specifically to finish before the joint F1-F6
