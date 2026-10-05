@@ -509,54 +509,52 @@ is not itself the audit.
      implementation/acceptance of any fix is NOT AUTHORIZED.** Now
      joined with #004's own remediation design in
      `docs/joint_remediation_design_003_004_2026-10-04.md`
-     (2026-10-04, revision 8, per GPT's own recommendation once both
-     audits closed). **Revision 7 closed the majority of its own prior
-     round's observations (confirmed by Radu); revision 8 fixes one
-     significant remaining technical blocker in revision 7's own
-     config-verification mechanism, plus two smaller corrections.**
-     The blocker: revision 7's corrected mechanism still compared two
-     hashes computed from genuinely DIFFERENT representations -- the
-     original raw-file-text hash vs. a hash of a canonical
-     re-serialization of the parsed structure -- confirmed this round
-     by executing all three computations (raw text, canonical JSON of
-     the parsed dict, re-serialized YAML) against the ACTUAL
-     `hypothesis.yaml` in this repo: all three differ, so the mechanism
-     would have rejected even a legitimate, unmodified config.
-     **Corrected per GPT's own recipe: the registered snapshot retains
-     the EXACT raw text(s) the loader actually used and the version
-     computed by the EXISTING, unchanged loader algorithm over that
-     text (never a re-derived hash); an externally-supplied object is
-     verified via its claimed-label equality AND its parsed CONTENT's
-     structural equality against the registered snapshot (never a
-     second, incompatible hash); Discovery's own exact multi-source
-     text-combination rule is preserved byte-for-byte; the live
-     re-read at gate time is now explicitly MANDATORY (not "optional,"
-     resolving a prior internal contradiction about whether staleness
-     detection was actually guaranteed).** Also corrected: S2's
-     `run_id_scheme_version` marker must sit INSIDE `build_run_id()`'s
-     own hash preimage, not merely beside it as a provenance field (a
-     provenance-only field would not prevent two different-scheme runs
-     from still colliding on `evaluation_run_id`); and the weighted-
-     permutation estimator's own regression coverage, which previously
-     checked only the observed statistic under unequal weights, gained
-     a full exhaustive-enumeration regression (`4! = 24` orderings of a
-     verified toy fixture, exact `p = 1/3`), kept explicitly distinct
-     from a Monte Carlo estimate and from the still-open
-     exchangeability question. A regression-wording fix for Finding
-     16/GPT-G3 removes an implication that this design offers rollback
-     after a real write (it does not -- conflicts are caught in the dry
-     run's own virtual state, before any real write occurs). A new
-     short decision list (within section 11) splits every mechanism
-     into "design complete, awaiting Radu's own approval" vs. "still
-     incomplete," per Radu's own explicit request -- naming F1's
-     calendar source/verification/provenance as still incomplete even
-     after the constructor's relocation (which only fixes the import
-     direction). Design only, not implementation; no code or test
-     changed, no project test suite run -- only isolated Python hash
-     computations against the actual repo file and an exhaustive
-     permutation enumeration, plus re-reading
-     `discovery/config/loader.py` and `spec003_remediation_proposal_
-     2026-10-04.md`'s S2 section again.
+     (2026-10-04, revision 9, per GPT's own recommendation once both
+     audits closed). **Revision 8's config-verification fix, the S2
+     hash-preimage placement, and the exhaustive-enumeration
+     permutation regression are all confirmed closed by Radu, with
+     three further LOCAL alignments requested (not a reopening).**
+     This round: (1) three local corrections to the config-
+     verification mechanism's own wording -- the justification for
+     choosing the mandatory live re-read was wrong (design (a),
+     proceeding on the approved snapshot alone, does NOT use a config
+     the approver never saw; it uses exactly the approved one -- the
+     real reason to prefer (b) is an ADDED freshness requirement, that
+     the approved config must still be the currently active one, not
+     a correctness argument against (a)); the content-equality check
+     needs both sides (the frozen snapshot and a freshly-parsed
+     external object) normalized to the SAME list/tuple representation
+     before comparing, since the frozen structure turns lists into
+     tuples and an unfrozen dict would not match it even with
+     identical content; and the two distinct rejection cases (wrong
+     label/right content vs. right label/wrong content) are now each
+     attributed to the SPECIFIC check that actually catches it (label
+     equality vs. structural equality respectively), corrected from a
+     prior conflation. (2) **The PRIORITY design work Radu explicitly
+     requested: F1's calendar source, verification, coverage, and
+     provenance are now ALL specified**, by reusing Spec #005's own
+     already-implemented, content-addressed `TradingCalendar` contract
+     (`calendar_id`/`calendar_hash`, `verify_calendar_content_
+     address()`, `require_calendar_covers_window()`, confirmed by
+     reading `calendar.py` in full) rather than inventing a parallel
+     mechanism -- moving F1 from "still incomplete" to "design
+     complete, awaiting approval," with exactly ONE remaining,
+     precisely-named contractual choice (whether #003 needs #005's
+     full `OFFICIAL_VERIFIED`-only strictness, or a looser tier). (3) A
+     new methodological-choices table, each with its own stated
+     recommendation and concrete consequence, kept explicitly separate
+     from implementation approval, per Radu's own explicit request --
+     F3 common support (a NEW recommendation this round: lean toward
+     "unavailable," consistent with this project's own fail-closed
+     pattern), within-bin session weighting, the quantile convention,
+     permutation exchangeability, and the newly-designed calendar
+     strictness choice. Design only, not implementation; no code or
+     test changed, no project test suite run -- this round's
+     verification was reading source in full
+     (`backtest/data/calendar.py`, `backtest/models/entities.py`,
+     `evaluation/engine.py` again), not new mathematical execution,
+     since the three local corrections are wording/attribution fixes
+     to an already-verified revision-8 mechanism.
    - **Spec #004: two rounds done (2026-10-04).** Round 1 (Claude
      alone): a fresh, high-effort independent re-verification pass,
      requested by Radu specifically to finish before the joint F1-F6

@@ -1,42 +1,34 @@
-# Joint Remediation Design -- Spec #003 + Spec #004 (2026-10-04, revision 8)
+# Joint Remediation Design -- Spec #003 + Spec #004 (2026-10-04, revision 9)
 
-**Status: DESIGN ONLY. Implementation NOT AUTHORIZED.** Revision 8 is
-a targeted correction of revision 7 (not a full rewrite -- revision 7
-closed the majority of its own prior round's observations, confirmed
-by Radu: the weighted session-mass diagnostic, the config/run-id-
-scheme separation IN PRINCIPLE, the baseline-designation approval
-linkage and corrected freeze timing, the retracted FORMAL_DEVELOPMENT
-overclaim, the mode-vs-registry cross-check, the AST relative-import
-boundary, and the quantile regression-matrix fix). **The one
-significant technical blocker GPT's follow-up review of revision 7
-found (relayed by Radu, independently re-verified this round by
-executing hashes against the actual `hypothesis.yaml` in this repo):
-the corrected config-verification mechanism itself compared two
-hashes computed from genuinely DIFFERENT representations (the
-original raw-file-text hash vs. a hash of a canonical re-serialization
-of the parsed structure) -- these do not match even for a legitimate,
-unmodified config, confirmed by executing all three computations on
-the real file. The separation of config-content identity from
-`run_id_scheme_version` was directionally right but `run_id_scheme_
-version` needed to sit INSIDE `build_run_id()`'s own hash preimage,
-not beside it as a provenance field only.** Also corrected this
-round: the weighted-permutation-estimator's own regression coverage
-checked only the observed statistic under unequal weights, never the
-actual enumeration/p-value mechanics -- a full exhaustive-enumeration
-regression is added, independently verified by execution and kept
-explicit about not validating the (separate) exchangeability
-assumption; Finding 16/GPT-G3's own regression wording wrongly implied
-a conflict is caught after a REAL write (implying a rollback capacity
-this design does not offer) rather than after insertion into the dry
-run's own virtual state, before any real write; and a short decision
-list is added (within section 11) splitting every mechanism into
-"design complete, awaiting Radu's own approval" versus "still
-incomplete," per Radu's own explicit request, naming F1's calendar
-source/verification/provenance as still incomplete even after the
-constructor's relocation. This review concerns remediation DESIGN
-only; it does not reopen findings reconciliation (closed, both specs,
-within each review's own declared scope) and does not authorize
-implementation.
+**Status: DESIGN ONLY. Implementation NOT AUTHORIZED.** Revision 9 is
+a targeted correction of revision 8 (not a full rewrite -- revision 8's
+config-verification fix, the S2 hash-preimage placement, and the
+exhaustive-enumeration permutation regression are all confirmed closed
+by Radu, with three further LOCAL alignments requested, not a
+reopening). This round does three things: (1) three local corrections
+to the config-verification mechanism's own wording (its justification
+for choosing the mandatory live re-read was wrong about WHY design (a)
+is less complete, not that it is unsafe; the content-equality check
+needs both sides normalized to the SAME list/tuple representation
+before comparing, or it is meaningless; the two distinct rejection
+cases -- wrong label/right content vs. right label/wrong content --
+were attributed to the wrong check in the regression text); (2) the
+PRIORITY design work Radu explicitly asked for -- F1's calendar
+source, verification, coverage, and provenance are now fully specified
+by reusing Spec #005's own already-implemented, content-addressed
+`TradingCalendar` contract (confirmed by reading `calendar.py` in
+full), rather than inventing a parallel mechanism, moving F1 from
+"still incomplete" into "design complete, awaiting approval," with
+exactly one remaining, precisely-named contractual choice (the
+strictness tier); (3) a new methodological-choices table (within
+section 11's decision list), each with its own stated recommendation
+and concrete consequence, kept explicitly separate from implementation
+approval, per Radu's own explicit request -- common support, within-
+bin weighting, the quantile convention, permutation exchangeability,
+and the newly-added calendar strictness choice. This review concerns
+remediation DESIGN only; it does not reopen findings reconciliation
+(closed, both specs, within each review's own declared scope) and does
+not authorize implementation.
 
 **Checklist convention used throughout (Radu's own structure):** every
 item is tracked on four separate axes, never collapsed into one
@@ -157,18 +149,64 @@ direction, unresolved design questions named precisely
 
 `backtest.data.calendar.build_trading_calendar()` is a constructor
 over caller-supplied `session_dates` -- it does not itself source or
-verify anything external. A complete #003 design needs, and this
-document does not yet provide:
-- **Source/version/integrity:** where real session dates come from,
-  independent of any price series, with its own version tracked and
-  verified before use.
-- **Coverage requirement:** the calendar must cover at least through
-  `T_target` (section 1.3's check 1) for every session the run touches.
-- **Entry/target-beyond-coverage behavior:** named explicitly above
-  (section 1.3, check 1) as its own failure mode.
-- **Provenance:** which calendar (identity + version) a run used,
-  recorded alongside the run's other provenance fields
-  (`EvaluationRunRegistry`).
+verify anything external.
+
+**Priority design work this round (per Radu's own explicit
+instruction: "calendarul este încă în a doua categorie... Acestea
+trebuie proiectate înainte de a declara F1 complet"):** a complete
+#003 design needs four things this document previously only LISTED as
+open. Confirmed this round, by reading `src/backtest/data/calendar.py`
+and `src/backtest/models/entities.py` in full: Spec #005 ALREADY built
+a complete, content-addressed, verified mechanism covering all four --
+`TradingCalendar` (`calendar_id`/`calendar_hash` via `calendar_
+fingerprint()`, `source`/`verified_by`/`verified_at`, `coverage_start`/
+`coverage_end`), `verify_calendar_content_address()`, `verify_
+calendar_structure()`, `require_verified_calendar_for_formal_run()`,
+and `require_calendar_covers_window()`. **The design recommendation
+this round is to REUSE this existing mechanism for #003, via the
+section-2 relocation already recommended, rather than inventing a
+parallel one:**
+- **Source/version/integrity:** real session dates are built into a
+  `TradingCalendar` via the EXISTING `build_trading_calendar()`
+  constructor (relocated to Data Foundation), with `source =
+  OFFICIAL_VERIFIED` and `verified_by`/`verified_at` populated by
+  whichever Data-Foundation-level process establishes real market
+  session dates independent of any specific security's price series
+  (the ingestion process itself -- e.g. an official exchange calendar
+  feed -- is Radu's own call, not resolved here; the CONTRACT it must
+  populate already exists and is reused unchanged). `calendar_id`/
+  `calendar_hash` already give it a content-addressed identity, the
+  same discipline as every other id in this project.
+- **Coverage requirement:** reuse `require_calendar_covers_window()`
+  unchanged, called with the window `[development_start, max(
+  development_end-or-now, the furthest `T_target` any horizon
+  configured for this run could reach)]` -- section 1's own F1 fix
+  needs the calendar to resolve `T_target` for EVERY horizon the run
+  classifies, so the required window must cover all of them, not only
+  `development_end`.
+- **Entry/target-beyond-coverage behavior:** `require_calendar_covers_
+  window()` already raises `CalendarCoverageIncompleteError` for this
+  case -- reused directly as section 1.3's own check 1.
+- **Provenance:** add the calendar's own `calendar_id`/`calendar_hash`/
+  `calendar_version` to `EvaluationRunRegistry`'s own provenance
+  fields, mirroring exactly how `require_verified_calendar_for_formal_
+  run()` already re-verifies a calendar's content-address before
+  trusting it -- the SAME re-verification-before-trust discipline,
+  reused rather than re-invented.
+
+**One genuine, NOT-yet-resolved contractual choice remains, named
+precisely rather than assumed:** `require_verified_calendar_for_
+formal_run()`'s OWN strictness (source MUST be `OFFICIAL_VERIFIED`,
+never `SYNTHETIC_TEST_FIXTURE`) is explicitly scoped by SS11's own
+text to FORMAL (#005) runs only -- `calendar.py`'s own module
+docstring states `_resolve_session_dates()` (#003) "is untouched" and
+that "#005's stricter calendar requirement is a #005-only concern,
+never a #003 patch." **Whether #003's OWN new calendar-verification
+step (reusing the same `TradingCalendar` contract) should require the
+SAME `OFFICIAL_VERIFIED`-only strictness, or accept a looser tier for
+#003's own (non-formal-backtest) purposes, is Radu's own call -- the
+MECHANISM is fully specified and reused either way; only the
+STRICTNESS THRESHOLD is open.**
 
 **Dependency direction, still unresolved:** importing `TradingCalendar`
 from `src/backtest/` into `src/evaluation/` reverses this project's own
@@ -797,39 +835,61 @@ structural equality, never via a second incompatible hash:**
    a hash.
 3. For an OBJECT received from outside (a caller-supplied
    `HypothesisConfig`, or any config object not sourced from this
-   exact registered snapshot): verify BOTH (a) its claimed version
-   label equals the registered snapshot's own version string, AND (b)
-   its actual parsed CONTENT is STRUCTURALLY EQUAL (plain Python
-   value equality on the parsed dict, e.g. `==`) to the registered
-   snapshot's own parsed content -- catching a hand-built or mutated
-   object whose label lies about its content, WITHOUT requiring any
-   second hash computation to agree with the first (which, as verified
-   above, it generally will not even for legitimate data). **A
-   separate, additional "semantic canonical digest" MAY exist for
-   other purposes, but must NEVER be compared directly against the
-   original raw-text-based version** -- the two serve different
-   purposes and are not interchangeable.
+   exact registered snapshot): verify BOTH, as two SEPARATE checks,
+   each catching a different failure mode --
+   - **(a) label check:** its claimed version label equals the
+     registered snapshot's own version string -- this is what catches
+     a CORRECT-content-WRONG-label object (content is actually fine,
+     but the label lies about which version it is).
+   - **(b) structural-equality check:** its actual parsed CONTENT is
+     STRUCTURALLY EQUAL to the registered snapshot's own parsed
+     content -- this is what catches a CORRECT-label-WRONG-content
+     object (the label is honest, but the underlying data was hand-
+     built or mutated-before-freeze).
+   **Representation corrected this round (GPT's review, relayed by
+   Radu): the two sides being compared in (b) must be put into the
+   SAME representation first, or the comparison is meaningless.** The
+   registered snapshot's own content has already been through
+   section 7's recursive freeze (lists -> tuples, dicts ->
+   `MappingProxyType`); a freshly-parsed external dict has NOT (its
+   lists are still plain lists) -- `{"a": [1, 2]} == {"a": (1, 2)}` is
+   `False` in Python even though the two mean the same thing. **Fix:
+   apply the SAME recursive normalization (the identical list->tuple,
+   dict->plain-dict-for-comparison-purposes traversal) to BOTH sides
+   before comparing** -- never compare an unfrozen dict directly
+   against the frozen structure. Neither check substitutes for the
+   other: passing (a) while failing (b), or passing (b) while failing
+   (a), are both rejections, for different, clearly distinguishable
+   reasons. **A separate, additional "semantic canonical digest" MAY
+   exist for other purposes, but must NEVER be compared directly
+   against the original raw-text-based version** -- the two serve
+   different purposes and are not interchangeable.
 4. The operation then uses EXCLUSIVELY this verified, registered
    snapshot -- never a second, independently-loaded object trusted
    without the same two-part check.
 
-**File-mutation-after-registration policy -- EXPLICITLY CHOSEN this
-round (GPT's review, relayed by Radu: the prior draft incoherently
-named live re-reading "optional" while also promising mandatory
-staleness detection -- one behavior, chosen now, not both implied at
-once):** this document chooses design (b) -- a FRESH `load_config()`
+**File-mutation-after-registration policy -- EXPLICITLY CHOSEN, with
+its justification CORRECTED this round (GPT's review, relayed by
+Radu):** this document chooses design (b) -- a FRESH `load_config()`
 re-read at `preregister_hypothesis()` gate time is MANDATORY, not
 optional, and its version is compared against the approval-time
-pinned snapshot's own version; a mismatch is a hard gate failure. This
-is the design consistent with what this document has stated as its
-own purpose since revision 6 (detecting a config change between
-approval and registration). **Design (a) -- proceed using only the
-approved, pinned snapshot, with no live re-check at all -- is named
-here as the explicit alternative NOT chosen**, since it would silently
-let registration proceed under a config the approving human never
-saw, defeating the stated purpose; **Radu's own approval needed** for
-this choice between (a) and (b), not assumed final by this document
-alone.
+pinned snapshot's own version; a mismatch is a hard gate failure.
+**Corrected justification: design (a) does NOT use a config the
+approving human never saw -- that framing was wrong.** Design (a)
+(proceed using exclusively the approved, pinned snapshot, with no
+live re-check at all) uses PRECISELY the config the human approved,
+regardless of what the live file says afterward -- it is not unsafe
+with respect to the human's own decision. **The actual reason to
+choose (b) over (a) is a separate, additional CONTRACTUAL
+requirement this document adds: that the approved config must ALSO
+still be the CURRENTLY ACTIVE one at registration time** -- a
+freshness/currency requirement, not a correctness-of-content
+argument. Both (a) and (b) are internally coherent designs; (b) is
+recommended because it matches the stronger guarantee this document
+has stated as its goal since revision 6 (no silent drift between
+approval-time and registration-time configs), not because (a) is
+unsafe. **Radu's own approval needed** for this choice between (a)
+and (b) -- recommendation restated, not a correctness claim about (a).
 
 **Consequence, unchanged in spirit, now correctly mechanized without
 incompatible hashes:** today, nothing checks that a human's approval-
@@ -837,24 +897,27 @@ time config snapshot still matches what's live at registration time;
 this design makes a mismatch a hard gate failure, via the retained
 loader-native version and a mandatory live re-read, never via a
 re-derived, incompatible digest. **Regression (collected in section
-12):** the correct-content-wrong-label case, now verified achievable
-WITHOUT a hash mismatch masking it (structural-equality check, not a
-second hash); the config-mutated-between-approval-and-registration
-case, caught by the now-mandatory live re-read; a passing check
-operating on the pinned snapshot afterward, not a second independent
-re-read; Discovery's own multi-source combination rule preserved
-byte-for-byte in the registered snapshot; PLUS, for S2 specifically, a
-regression asserting two runs differing ONLY in `run_id_scheme_version`
-(identical config, identical every other hashed field) produce
-DIFFERENT `evaluation_run_id`s -- proving the scheme marker is inside
-the hash preimage, not just alongside it -- distinguished from a
-SEPARATE regression asserting two runs differing only in `horizons`
-(same scheme) also produce different ids, showing the two axes
-(config/fields vs. scheme) are each independently captured. **Radu's
-own approval needed for:** adopting the config-identity wiring, the
-separate `run_id_scheme_version` marker inside the hash preimage, and
-the mandatory-live-re-read policy choice -- not assumed by this
-document.
+12), with each case now attributed to the SPECIFIC check that catches
+it:** the correct-content-WRONG-LABEL case, rejected by the LABEL
+check (3a) specifically; the correct-label-WRONG-CONTENT case,
+rejected by the STRUCTURAL-EQUALITY check (3b) specifically, with both
+sides normalized to the SAME representation before comparing; the
+config-mutated-between-approval-and-registration case, caught by the
+now-mandatory live re-read; a passing check operating on the pinned
+snapshot afterward, not a second independent re-read; Discovery's own
+multi-source combination rule preserved byte-for-byte in the
+registered snapshot; PLUS, for S2 specifically, a regression asserting
+two runs differing ONLY in `run_id_scheme_version` (identical config,
+identical every other hashed field) produce DIFFERENT `evaluation_
+run_id`s -- proving the scheme marker is inside the hash preimage, not
+just alongside it -- distinguished from a SEPARATE regression
+asserting two runs differing only in `horizons` (same scheme) also
+produce different ids, showing the two axes (config/fields vs. scheme)
+are each independently captured. **Radu's own approval needed for:**
+adopting the config-identity wiring, the separate `run_id_scheme_
+version` marker inside the hash preimage, and the mandatory-live-
+re-read policy choice (on its corrected, freshness-based justification)
+-- not assumed by this document.
 
 ---
 
@@ -1478,25 +1541,21 @@ batch-safe dry run (row 8); Finding 15/GPT-G2's full-content variant
 key (row 10); Finding 1's marking AND admission-policy recommendation
 (row 12); Finding 14/GPT-G1's draft-vs-proposal/human-approval/
 baseline-designation binding (row 9); the config-identity mechanism
-and S2's separate `run_id_scheme_version` marker, BOTH corrected this
-round (rows 14-15); the quantile tie-aggregation requirement, the
-WEIGHTED session-mass diagnostic, and the weighted-permutation-
-estimator mechanism (all three now fully specified within row 18);
-TEST 49's AST algorithm (row 11, EXCEPT the bare-name collision,
-which is its own separate, acknowledged-unresolvable item).
+and S2's separate `run_id_scheme_version` marker, BOTH corrected a
+third time this round (rows 14-15); the quantile tie-aggregation
+requirement, the WEIGHTED session-mass diagnostic, and the weighted-
+permutation-estimator mechanism with its exhaustive-enumeration
+regression (all three now fully specified within row 18); TEST 49's
+AST algorithm (row 11, EXCEPT the bare-name collision, which is its
+own separate, acknowledged-unresolvable item). **MOVED into this
+bucket this round: F1's calendar (row 17)** -- source, verification,
+coverage, and provenance are now ALL specified by reusing Spec #005's
+existing, already-implemented `TradingCalendar` contract (confirmed by
+reading `calendar.py` in full this round), with exactly ONE open item
+(the strictness-tier choice, named below, not a missing mechanism).
 
 **(B) STILL INCOMPLETE -- no full mechanism exists yet; Radu's
 approval would not yet mean anything concrete for these:**
-- **F1's calendar (row 17) -- NAMED AGAIN this round, per Radu's own
-  explicit correction: relocating `TradingCalendar` only fixes the
-  import-DIRECTION problem (section 2's dependency-direction issue).
-  It does NOT define the actual SOURCE of real session dates
-  (independent of any price series), that source's own verification,
-  or the snapshot PROVENANCE (which calendar identity+version a run
-  used) -- all three remain exactly as unresolved as section 2 itself
-  already states, listed there as open bullets, not design gaps this
-  round closed. F1 must not be declared complete while these three
-  remain undesigned.**
 - **#003 S1 (row 16):** a scope/responsibility question (code vs.
   documented trust boundary), not a mechanism gap -- no design exists
   because none has been attempted, this is Radu's own call on scope.
@@ -1520,6 +1579,20 @@ own technical recommendations, relayed by Radu -- NOT decisions Radu
 has made or approved. Nothing in bucket (A) above is an approval;
 "design complete" means ready FOR his approval, not already given.**
 
+**Methodological choices, kept SEPARATE from implementation approval
+this round, per Radu's own explicit request -- each with a stated
+recommendation and its concrete consequence, never a bare list of
+alternatives; "design complete" in bucket (A) never implies any of
+these has already been decided:**
+
+| Choice | Recommendation (GPT's, relayed by Radu, except where noted) | Concrete consequence if adopted |
+|---|---|---|
+| F3 common support (option (a) UNAVAILABLE vs. (b) RESTRICTED comparison) | **No recommendation given in any prior round -- stated for the first time this round, grounded in this project's own established fail-closed pattern** (SS11's `CALENDAR_UNVERIFIED`, the PREREGISTERED-only gate): lean toward (a), UNAVAILABLE -- never publish a comparison that doesn't cover the signature's own full population, consistent with "fail closed, don't offer a number for a population the test didn't cover." | (a): some signature/horizon profiles report no `mean_difference`/`raw_p`/CI at all when coverage is incomplete -- fewer numbers, none of them population-mismatched. (b): every profile still gets a number, restricted to common support, with an explicit exclusion count -- more coverage, but requires a reader to notice and interpret the exclusion count correctly every time. |
+| F4+F5 within-bin weighting (per-security formula, uncontested) + session-level variation (diagnostic vs. a real second mechanism) | Per-security formula: adopt as designed (uncontested). Session-level: adopt the WEIGHTED `session_mass` diagnostic only (section 3), not a new weighting layer. | Diagnostic-only: Radu's own 5%/95% example becomes visible in the output; the per-security formula's own equal-weight property is preserved untouched; session-level dominance is NOT corrected, only reported -- a further mechanism stays possible later if the diagnostic shows a real problem. |
+| Weighted-quantile convention (midpoint vs. `R_i`) | Midpoint with mandatory tie-aggregation (GPT's recommendation, relayed by Radu -- Radu's own personal preference not yet confirmed, per the attribution note above). | Midpoint: simpler, scale-invariant, but never reproduces `statistics.quantiles(..., method="inclusive")`, even at equal weights with no ties. `R_i`: reproduces `inclusive` for DISTINCT, equal-weight input, but loses that property the moment any tie is aggregated (section 4.2's own `[0,0,10]` counterexample) -- neither is a strict superset of the other's guarantees. |
+| Permutation exchangeability (accept the value-level procedure's own assumption for V1 vs. require block permutation first) | Accept for V1, as this project's own existing `comparison.py` docstring (SS47) already states; revisit only if concentration/stability diagnostics show a real problem. | Accepting: ships now, with a documented, named limitation (full exchangeability, not merely marginal equality) -- a real but currently unquantified risk under within-security serial correlation. Requiring block first: delays indefinitely, since block permutation has never been given a precise definition in any round. |
+| Calendar strictness for #003 (full #005 `OFFICIAL_VERIFIED`-only vs. a looser tier) | **New this round, named precisely rather than assumed:** no recommendation given yet -- genuinely Radu's own call, since it trades off #003's own operational flexibility against the strength of the "verified, not inferred" guarantee section 2 is designed to provide. | Full strictness: #003 runs fail closed whenever no `OFFICIAL_VERIFIED` calendar is available, the same cost #005 already accepts for formal runs. Looser tier: #003 can proceed more often, but its own calendar-based classification (section 1) rests on a weaker verification guarantee than #005's. |
+
 | # | Item | (a) Design complete | (b) Contractual decision needed | (c) Radu's approval | (d) Implementation + verification |
 |---|---|---|---|---|---|
 | 1 | #003 F2a+F2b | Yes (section 9) | No | Pending | Later stage |
@@ -1535,10 +1608,10 @@ has made or approved. Nothing in bucket (A) above is an approval;
 | 11 | #004 TEST 49 (AST guard, evaluation->hypothesis) | Partial -- **shared algorithm's two resolution bugs fixed this round** (base+alias candidate construction for `ImportFrom`, corrected `level - 1` relative-import climb, verified by execution against Radu's own `.hypothesis`/`..hypothesis` examples; consolidated positive/negative case matrix added, section 8) -- the ONLY remaining open item is the bare top-level `hypothesis` collision, named as a separate, non-blocking, inherently-unresolvable-by-AST-alone case | Yes -- whether to accept the collision risk via a documented project-convention declaration, or rename the package | Pending | Later stage |
 | 12 | #004 Finding 1 | Yes -- marking AND a concrete admission-policy recommendation (hard-reject `evaluation_mode == "EXPLORATORY"`, symmetric with Finding 2's own `research_mode` treatment, verified against the REAL `EvaluationRunRegistry`, not a self-reported field, section 10); the overclaim that re-running under FORMAL_DEVELOPMENT "produces fresh confirmatory evidence" RETRACTED this round -- the rule enforces procedural discipline only, the deeper selection-bias question stays open | Yes -- whether to adopt the hard-reject recommendation or a weaker marking-only response; separately, whether/how to define a genuine out-of-sample confirmation protocol | Pending | Later stage |
 | 13 | #004 Finding 10 | Yes (direction) | Yes -- intended-behavior question | Pending | Later stage |
-| 14 | #004 Finding 19 / Finding 11 | Yes -- **corrected AGAIN this round (GPT's review, relayed by Radu, verified by execution on the actual `hypothesis.yaml`): the prior draft compared two INCOMPATIBLE hashes (a re-serialization's digest vs. the loader's own raw-text digest -- confirmed by execution to differ even for legitimate config) -- fixed by retaining the loader's own raw-text-based version unchanged and verifying external objects via STRUCTURAL CONTENT EQUALITY, never a second hash; the live-re-read policy is now explicitly MANDATORY, not "optional," resolving a prior internal contradiction** (section 7) | Yes -- whether to adopt this corrected wiring and the mandatory-live-re-read choice | Pending | Later stage |
+| 14 | #004 Finding 19 / Finding 11 | Yes -- **corrected a THIRD time this round (GPT's review, relayed by Radu): the prior draft compared two INCOMPATIBLE hashes -- fixed by retaining the loader's own raw-text-based version unchanged, and by TWO separate external-object checks (label equality catches wrong-label/right-content; structural equality, both sides normalized to the same representation, catches right-label/wrong-content) rather than one conflated check; the mandatory-live-re-read policy's own justification corrected (design (a) was wrongly described as unsafe -- it isn't, (b) is chosen for an added freshness requirement, not for correctness)** (section 7) | Yes -- whether to adopt this corrected wiring and the mandatory-live-re-read choice, on its corrected justification | Pending | Later stage |
 | 15 | #003 S2 | Yes -- but CORRECTED this round: S2 needs its OWN separate `run_id_scheme_version` literal marker, NOT row 14's config-content hash (a `build_run_id()` field-set change is a code change, invisible to any YAML hash) -- two distinct mechanisms now, not one shared wiring as previously drafted (section 7) | Yes -- whether to adopt the separate `run_id_scheme_version` marker | Pending | Later stage |
 | 16 | #003 S1 | N/A -- scope question, not a mechanism gap | Yes -- responsibility (code vs. documented trust boundary) | Pending | Later stage |
-| 17 | #003 F1 (complete behavior) | Partial -- same-target-session mechanism and 4-way check complete, distinguishing bar-missing from bar-present-with-null-price (section 1); calendar sourcing recommendation (relocate to Data Foundation) now has a stated consequence and regression (section 2); dependency direction still open; sub-daily timeframes out of scope | Yes -- the data-gap status name(s); the calendar sourcing/relocation decision (recommendation given, not yet approved) | Pending | Later stage |
+| 17 | #003 F1 (complete behavior) | **Yes, substantially advanced this round (per Radu's own explicit priority): source/verification/coverage/provenance all now specified by REUSING Spec #005's existing, already-implemented `TradingCalendar` contract** (`calendar_id`/`calendar_hash`, `verify_calendar_content_address()`, `require_calendar_covers_window()`, confirmed by reading `calendar.py` in full) **rather than inventing a parallel mechanism; same-target-session mechanism and 4-way check complete, distinguishing bar-missing from bar-present-with-null-price (section 1)**; sub-daily timeframes out of scope | Yes -- the data-gap status name(s); the calendar relocation decision; **the ONE remaining open item: whether #003's own calendar check needs #005's FULL `OFFICIAL_VERIFIED`-only strictness, or a looser tier for #003's own non-formal purposes (section 2, named precisely, not a mechanism gap)** | Pending | Later stage |
 | 18 | #003 F3+F4+F5 | Partial -- per-security formula correct and scoped; session-weighting "impossibility" claim RETRACTED this round (a counterexample shows uniform security AND session margins can coexist), diagnostic mechanism corrected from a raw `Counter` (understates the real skew, verified) to a WEIGHTED `session_mass` sum (section 3); quantile section -- the `R_i`/`inclusive` compatibility claim NARROWED further this round to tie-free, equal-weight ORIGINAL input only, verified by a `[0,0,10]` counterexample that it does not survive mandatory tie-aggregation even at equal weights; non-finite-input contract unified to a hard-fail (section 4); CI/bootstrap estimator-vs-interval separation and F3's field list specified (section 6); permutation section CORRECTED this round -- "ship as-is, docs-only" was wrong once F4+F5's weighting is adopted (would test a different quantity than reported); a full weighted-estimator mechanism is now designed and verified (equal-weight case reduces byte-identical to today's test), the exchangeability-ACCEPTANCE question kept separately open (section 5) | Yes -- F3's (a)/(b) choice; the choice between midpoint and `R_i`; whether the WEIGHTED session-diagnostic recommendation is a sufficient response to SS74C, or a real second mechanism is required (section 3); whether the weighted-permutation-estimator design is adopted, and separately whether to accept the exchangeability limitation for V1 (section 5) | Pending | Later stage |
 | 19 | Config immutability (cross-cutting) | Yes -- full recursive freeze specified (section 7) | No | Pending | Later stage |
 | 20 | #003 G1 (TEST 26 AST guard, discovery->evaluation) | **Yes -- no longer merely "same algorithm family," the shared algorithm's own bugs are now fixed (row 11), so TEST 26 has no remaining open item of any kind (section 9)** | No | Pending | Later stage |
@@ -1654,22 +1727,27 @@ passed -- verified this round to trigger at `level=3`, not `level=4`).
 **Section 7 (config identity) + S2 (run-id scheme), corrected AGAIN
 this round -- the verification mechanism itself was fixed, so these
 regressions are restated against the CORRECTED design, not the
-incompatible-hash version:** config identity -- a correct-content-
-WRONG-label case (a hand-built or mutated-before-freeze object whose
-claimed version string doesn't match its actual content) is REJECTED
-via STRUCTURAL CONTENT EQUALITY against the registered snapshot (never
-via a second, independently-recomputed hash, which this round's own
-execution confirmed would not even match for LEGITIMATE configs); a
-config mutated between approval and registration is rejected by the
-now-MANDATORY live re-read against the pinned, content-verified
-snapshot; a check that passes operates on the pinned snapshot
-afterward, not the original mutable object re-read again; Discovery's
-own exact multi-source combination rule (`"".join(raw_texts)` before
-hashing) preserved byte-for-byte in the registered snapshot, never
-replaced by a different combination rule -- all specified in
-`spec004_remediation_proposal_2026-10-04.md`'s own "Required
-regression coverage" for Finding 19/GPT-G6, collected here by
-reference. S2 -- SEPARATELY, and corrected this round: a regression
+incompatible-hash version; which check catches which case is now
+stated precisely, corrected from a prior mis-attribution:** config
+identity -- a CORRECT-content-WRONG-label case (claimed version string
+doesn't match its actual content, though the content itself is fine)
+is REJECTED by the LABEL check specifically (never by a second,
+independently-recomputed hash, which this round's own execution
+confirmed would not even match for LEGITIMATE configs); a SEPARATE
+CORRECT-label-WRONG-content case (a hand-built or mutated-before-
+freeze object whose label is honest but whose data isn't) is REJECTED
+by the STRUCTURAL-CONTENT-EQUALITY check specifically, with both sides
+normalized to the same list/tuple representation before comparing
+(section 7's own fix this round); a config mutated between approval
+and registration is rejected by the now-MANDATORY live re-read against
+the pinned, content-verified snapshot; a check that passes operates on
+the pinned snapshot afterward, not the original mutable object re-read
+again; Discovery's own exact multi-source combination rule
+(`"".join(raw_texts)` before hashing) preserved byte-for-byte in the
+registered snapshot, never replaced by a different combination rule --
+all specified in `spec004_remediation_proposal_2026-10-04.md`'s own
+"Required regression coverage" for Finding 19/GPT-G6, collected here
+by reference. S2 -- SEPARATELY, and corrected this round: a regression
 asserting two runs with IDENTICAL config and every other hashed field
 but DIFFERENT `run_id_scheme_version` produce DIFFERENT `evaluation_
 run_id`s -- proving the scheme marker is inside `build_run_id()`'s own
@@ -1746,24 +1824,23 @@ checklist until this round):**
 
 ---
 
-**No code or test was changed to produce this revision. This round's
-verification was, again, isolated Python execution only -- never the
-project's own test suite:** three hash computations on the ACTUAL
-`hypothesis.yaml` file in this repository -- `sha256(raw text)`,
-`sha256(canonical JSON of the parsed dict)`, and `sha256(re-serialized
-YAML of the same dict)` -- confirming all three differ, grounding the
-config-verification fix (section 7); the exhaustive `4! = 24`
-enumeration of the weighted-permutation toy fixture (signature `[8]`,
-baseline `A=[0,2]`/`B=[4]`, weights `[1/4,1/4,1/2]`), confirming
-`observed = 5.5` and exact `p = 8/24 = 1/3` (section 5, new this
-round). This round's source grounding also included re-reading
-`discovery/config/loader.py` (confirming its own exact multi-source
-raw-text-combination rule, preserved rather than replaced) and
-re-confirming `spec003_remediation_proposal_2026-10-04.md`'s S2
-section's own already-correct `run_id_scheme_version` framing -- no
-project test suite was run. Baseline `3cdc532`, historical
-acceptances, and the Spec #005/Batch 3 pause are unchanged. Findings
-reconciliation remains closed (both specs, within each review's own
-declared scope);
+**No code or test was changed to produce this revision. No new
+mathematical counterexample needed executing this round** (the three
+local config corrections are wording/attribution fixes to an already-
+verified mechanism from revision 8, not new claims needing their own
+execution). **This round's source grounding was reading, in full:**
+`src/backtest/data/calendar.py` and the relevant sections of
+`src/backtest/models/entities.py` (`TradingCalendar`, `CalendarSource`,
+`calendar_fingerprint()`, `verify_calendar_content_address()`,
+`verify_calendar_structure()`, `require_verified_calendar_for_
+formal_run()`, `require_calendar_covers_window()`) -- grounding F1's
+calendar design in an EXISTING, already-implemented mechanism rather
+than inventing one, per Radu's own explicit priority this round; and
+`src/evaluation/engine.py`'s `_resolve_session_dates()`/`run_
+evaluation()` again, confirming the CURRENT, unverified session-date
+resolution this design replaces -- no project test suite was run.
+Baseline `3cdc532`, historical acceptances, and the Spec #005/Batch 3
+pause are unchanged. Findings reconciliation remains closed (both
+specs, within each review's own declared scope);
 remediation design remains open; implementation remains not
 authorized.**
