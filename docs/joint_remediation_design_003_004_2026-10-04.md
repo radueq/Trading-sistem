@@ -1,22 +1,34 @@
-# Joint Remediation Design -- Spec #003 + Spec #004 (2026-10-04, revision 4)
+# Joint Remediation Design -- Spec #003 + Spec #004 (2026-10-04, revision 5)
 
-**Status: DESIGN ONLY. Implementation NOT AUTHORIZED.** Revision 4,
-written as a self-contained design document per Radu's own explicit
-instruction, not a diff against revision 3. Revision 3 corrected
-several revision-2 errors but left a scale-invariance bug in its own
-quantile algorithm (caught by GPT's follow-up review, relayed by Radu,
-and independently re-verified by direct execution this round -- see
-section 4.2) plus five further gaps. This review concerns remediation
-DESIGN only; it does not reopen findings reconciliation (closed, both
-specs, within each review's own declared scope) and does not authorize
-implementation.
+**Status: DESIGN ONLY. Implementation NOT AUTHORIZED.** Revision 5 is a
+targeted correction of revision 4, per Radu's own explicit instruction
+("corectează punctual aceste mecanisme... fără o nouă rescriere
+integrală") -- NOT a full rewrite; sections not listed below as changed
+are unchanged from revision 4. GPT's follow-up review of revision 4
+(relayed by Radu, independently re-verified this round by direct
+execution and by re-reading the actual source) found: a FALSE claim in
+section 4 (scale invariance and reproducing `inclusive` at equal
+weights do NOT conflict in general -- revision 4's claimed
+impossibility is retracted); a real tie-order dependence bug in the
+midpoint quantile convention (new, section 4); two overclaims in
+section 5's permutation framing, one of them contradicted by the
+bootstrap code itself; an AST-guard design (section 8) that would have
+produced false NEGATIVES on a real architectural violation targeting a
+not-yet-written submodule; an incomplete Finding 14 (#004) design that
+never actually ties human approval to specific proposal content; and
+several mechanisms the checklist marked "Yes" without their text
+present in this document's own body (#003's F2a/F2b/F6/G1/G2 -- added
+as new section 9 below, pushing the former sections 9/10 to 10/11).
+This review concerns remediation DESIGN only; it does not reopen
+findings reconciliation (closed, both specs, within each review's own
+declared scope) and does not authorize implementation.
 
 **Checklist convention used throughout (Radu's own structure):** every
 item is tracked on four separate axes, never collapsed into one
 "status": **(a) design completeness** -- is a concrete, correct
 mechanism specified; **(b) contractual decision** -- is there a
 semantic/behavior choice only Radu can make; **(c) Radu's approval** --
-not given by this document, tracked separately per item in section 10;
+not given by this document, tracked separately per item in section 11;
 **(d) implementation + verification** -- a LATER, NOT-YET-AUTHORIZED
 stage; "implement and run the regression matrix" is a goal FOR that
 later stage, never a precondition for finishing (a).
@@ -78,11 +90,33 @@ stated explicitly
 4. **`T_target <= effective_as_of`** -- the bar SHOULD be fetchable.
    Only NOW is the bounded fetch (bounded to `effective_as_of`,
    point 1 of the original F1 fix, unchanged from earlier rounds)
-   consulted for a bar at exactly `T_target`. If present: `VALID`
-   (return computed from it). If absent: the data-gap status
-   (distinct from both `CROSSES_LOCKED_OOS` and `INSUFFICIENT_FUTURE_
-   DATA` -- Radu's own semantic naming call, unresolved, same as every
-   prior round).
+   consulted for a bar at exactly `T_target`. **Corrected this round
+   (GPT's review of revision 4, relayed by Radu): bar presence alone is
+   NOT sufficient for `VALID` -- it only permits the EXISTING price
+   check to run, confirmed this round by reading
+   `outcomes/forward_returns.py` lines 77-94:**
+   - **4a. No bar at exactly `T_target`:** the data-gap status (distinct
+     from both `CROSSES_LOCKED_OOS` and `INSUFFICIENT_FUTURE_DATA` --
+     Radu's own semantic naming call, unresolved, same as every prior
+     round).
+   - **4b. A bar exists at `T_target`, but its own price field
+     (`split_adjusted_close`) is `None`:** a DISTINCT, already-existing
+     case in the current code (line 91-92: this maps to
+     `INSUFFICIENT_FUTURE_DATA` today, even though the bar's DATE is
+     not in the future -- its PRICE is simply absent). Conceptually
+     closer to a data-quality gap than a not-yet-arrived case; whether
+     it should share 4a's status name, get its own third name, or keep
+     today's `INSUFFICIENT_FUTURE_DATA` label is a further, NOT yet
+     resolved naming question, alongside 4a's -- **Radu's own call,
+     not decided by this document.**
+   - **4c. A bar exists at `T_target` with a non-`None` price, AND the
+     entry bar's own price is also non-`None` (the existing
+     `entry_bar.split_adjusted_close is None` check, line 78-79, runs
+     regardless of this section's changes):** only THEN is
+     `outcome_status = VALID` and the return computed. **Note: these
+     are `is None` checks in the current code, not a general
+     `math.isfinite()` check -- stated precisely, not assumed broader
+     than what was read this round.**
 
 **No step above ever reads a price dated later than `effective_as_of`
 -- the calendar-only checks (1-3) never touch price data at all, and
@@ -197,19 +231,93 @@ values `[0,10,20]`).
 stated explicitly, not glossed over:** `statistics.quantiles([0,10,20],
 n=4, method="inclusive")` gives `[5.0, 10.0, 15.0]`, different from
 this convention's `[2.5, 10.0, 17.5]` at `Q1`/`Q3` (median
-coincidentally agrees here). **This is the declared tradeoff Radu's
-own message asks for: scale invariance and exact `inclusive`-
-reproduction at equal weights cannot both hold in general** (`inclusive`
-is inherently a finite-count convention; relative weights have no
-count to be finite about). **Recommended: adopt the scale-invariant
-midpoint convention for every relative-weight use in this project**
-(F4+F5's baseline statistics; nowhere else in this codebase currently
-computes a weighted quantile), accepting the stated deviation from
-`inclusive` at equal weights as the necessary consequence -- **Radu's
-own approval needed for this specific tradeoff, not assumed.**
+coincidentally agrees here).
+
+**RETRACTED this round (GPT's review of revision 4, relayed by Radu):
+the claim that "scale invariance and exact `inclusive`-reproduction at
+equal weights cannot both hold in general" is FALSE -- the two
+properties are not incompatible.** Constructive counterexample,
+verified by execution: define `R_i = (P_i - P_1) / (P_n - P_1)` from
+the already-scale-invariant midpoint positions `P_i` above (for
+`n >= 2` points with positive weight), and interpolate the quantile
+against `R_i` instead of `P_i` directly. `R_i` is itself scale-
+invariant (it is built entirely from `P_i`, which is already scale-
+invariant by construction -- rescaling all weights by a constant
+leaves every `P_i`, and therefore every `R_i`, unchanged). **At equal
+weights, `R_i` reduces exactly to `(i-1)/(n-1)` -- the standard
+`inclusive` rank convention** -- verified: for values `[0,10,20]` at
+weights `[1,1,1]`, `[2,2,2]`, and `[1/3,1/3,1/3]`, `R` is identically
+`[0, 1/2, 1]` in every case, and interpolating against it gives
+`Q1=5.0, median=10.0, Q3=15.0` in every case -- matching
+`statistics.quantiles(..., method="inclusive")` exactly, AND scale-
+invariant across all three weightings simultaneously. **This disproves
+revision 4's impossibility claim; it does NOT by itself make `R_i` the
+project's chosen convention** -- it only establishes that the choice
+between the midpoint convention (`P_i`, simpler, does not reproduce
+`inclusive` at equal weights) and the rescaled convention (`R_i`,
+reproduces `inclusive` at equal weights, requires `n>=2` support
+points and a well-defined `P_n - P_1 != 0`, i.e. more than one
+distinct value with positive weight) is a genuine, open design choice
+-- **both remain live candidates; Radu's own choice between them is
+needed, not assumed by either revision 4's withdrawn claim or this
+correction.**
+
+**A second, independent defect found this round (GPT's review,
+relayed by Radu): the midpoint convention (and `R_i`, since it is
+built from the same `P_i`) is NOT well-defined under tied values with
+different weights, without an explicit tie rule.** Verified by exact-
+fraction execution: for `p=0.7`, pairs `[(0,1), (0,3), (10,1)]` (two
+zero-valued points with weights 1 and 3, then a point at 10 with
+weight 1) give `Q(0.7) = 5`, while the SAME multiset of pairs supplied
+in a DIFFERENT order, `[(0,3), (0,1), (10,1)]`, gives `Q(0.7) = 0` --
+the cumulative-weight position `C_i` (and therefore `P_i`) depends on
+which tied-value row is processed first, so the result silently
+depends on input ORDER, not merely on the weighted distribution the
+rows represent. **Fix: aggregate the weights of all rows sharing an
+identical value into ONE point BEFORE computing any cumulative
+position** -- verified this removes the order-dependence entirely
+(both orderings above, once aggregated to `{0: weight 4, 10: weight
+1}`, give the identical `Q(0.7) = 6`). **This tie-aggregation step is
+required for BOTH the midpoint and the rescaled convention** (both are
+built from the same underlying `P_i`), and must be declared explicitly
+as part of whichever convention Radu approves -- stated as a design
+requirement, not an optional detail, since silently omitting it
+reintroduces an undefined, input-order-dependent result.
+
+**Contract completion, the remaining boundary cases (none verified by
+execution this round beyond the two above -- stated as design
+requirements for Radu's review, consistent with patterns already
+established elsewhere in this codebase):** zero-weight rows are
+excluded entirely before aggregation (mirrors the existing `if weight
+<= 0: continue` pattern in `bootstrap.py`'s
+`stratified_baseline_bootstrap_replicates()` and
+`comparison.py`'s `stratified_permutation_p_value()`); a negative
+weight is a hard-fail input error, never silently clamped or dropped;
+a non-finite value or weight (`NaN`/`inf`) is excluded (mirrors the
+existing `is None`/finiteness-style exclusion pattern in
+`outcomes/forward_returns.py`); an empty input (no positive-weight
+rows survive) returns `None` for every requested quantile (mirrors the
+existing `if not pools: return None` pattern in
+`comparison.py`); a single distinct value with all remaining positive
+weight returns that value for every `p`, trivially, under either
+convention. **Recommended regression matrix, not yet implemented:**
+unit-weight reproduction of `statistics.quantiles(..., method=
+"inclusive")` (both conventions, for `R_i`; midpoint only needs its
+own stated non-reproduction verified, not asserted equal); weight-
+rescaling invariance across at least three distinct scale factors (as
+verified above); input-order permutation of tied-value rows (as
+verified above, both pre- and post-aggregation-fix); splitting one
+row's weight into several rows at the identical value vs. one merged
+row (must agree, by construction, once aggregation is applied); zero-
+weight exclusion; negative-weight rejection; non-finite rejection;
+empty-input `None`; single-distinct-value input. **Radu's own approval
+needed for: which convention (midpoint vs. rescaled) to adopt, and
+confirmation of the tie-aggregation requirement -- neither assumed by
+this document.**
 
 ### 4.3 The worked example, recomputed with the corrected algorithm --
-exact fractions, verified by execution
+exact fractions, verified by execution, independently reconfirmed by
+Radu's own execution this round
 
 Same bins as every prior round (`early`, weight `0.7`: security A 3
 rows `[0.8,1.0,1.2]`, security B 1 row `[2.0]`; `late`, weight `0.3`:
@@ -249,24 +357,47 @@ permutation), stronger than marginal equality, and can fail under
 within-security serial correlation or shared time effects (exactly
 the kind of dependence this codebase's own TIME_BLOCK bootstrap design
 already takes seriously elsewhere, per `bootstrap.py`'s own same-day-
-grouping rationale). **Corrected framing:** the procedure is VALID
-under the assumption that, conditional on which security/session
-produced each observation, the recorded values are mutually
-independent draws from a common distribution (full exchangeability,
-not just equal marginals) -- stated as the REQUIRED assumption, not
-claimed as automatically satisfied. **Block/cluster permutation
-(shuffling each security's entire row-set as one unit) has NOT been
-given its own precise definition in any round so far** -- naming it as
-"an alternative" without defining it is not a comparison, just a
-placeholder. **Both remain open,** with the value-level procedure
-representing the weaker, more standard assumption (used throughout the
-rest of this codebase's own permutation/bootstrap machinery, which
-already treats row-level values as the unit of resampling) and
-block-permutation representing a more conservative, NOT YET DEFINED
-alternative that would need its own full specification (how pooled
-candidate groups are formed when the raw-row target count `n_sig`
-doesn't align with whole-security block boundaries) before any
-validity comparison is possible.
+grouping rationale). **Corrected framing:** conditional mutual independence of the
+individual values (given which security/session produced each one)
+plus a common distribution across the pooled group is ONE SUFFICIENT
+condition for exchangeability -- stated this round precisely as
+sufficient, not necessary, correcting an overclaim in this document's
+own prior wording that risked reading as "exchangeability holds if and
+only if this independence condition holds." Exchangeability could in
+principle be satisfied through some other route even where that
+specific independence fails; the point that matters operationally is
+that NEITHER this document nor the codebase has shown exchangeability
+holds for this procedure -- it is stated as the REQUIRED assumption,
+not claimed as automatically satisfied, and not claimed to be the only
+way it could hold. **Block/cluster permutation (shuffling each
+security's entire row-set as one unit) has NOT been given its own
+precise definition in any round so far** -- naming it as "an
+alternative" without defining it is not a comparison, just a
+placeholder.
+
+**A second overclaim, retracted this round: the value-level procedure
+is NOT "the weaker, more standard assumption, already used throughout
+the rest of this codebase's own permutation/bootstrap machinery."**
+Re-read this round: `statistics/bootstrap.py`'s
+`time_block_bootstrap_replicates()` groups ALL values sharing a date
+together first, then resamples CONTIGUOUS BLOCKS of calendar sessions
+(not individual rows, not individual dates) with replacement -- the
+file's own docstring states this explicitly as the reason block
+bootstrap exists at all (preserving a common market/regime shock that
+hits many securities' episodes in the same week). The existing
+bootstrap machinery therefore does NOT treat row-level values as
+mutually independent or as the unit of resampling -- it assumes the
+OPPOSITE, that nearby-in-time rows are dependent and must be resampled
+together. The value-level permutation procedure's independence
+assumption is consequently NOT already validated elsewhere in this
+codebase; it is a DIFFERENT, so far unjustified assumption, in tension
+with the dependence structure the bootstrap design takes seriously.
+**Both the value-level procedure and block permutation remain open,
+with no comparison possible until block permutation is itself given a
+full specification** (how pooled candidate groups are formed when the
+raw-row target count `n_sig` doesn't align with whole-security block
+boundaries) -- neither is presented as the default or the "standard"
+choice going forward.
 
 **The `[5,7]` vs. `[3,4]` example, scoped correctly (not previously
 scoped):** exhaustive enumeration over `C(4,2)=6` splits, two-sided
@@ -319,6 +450,21 @@ for that bin/replicate; the all-bins-excluded boundary case produces
 `None`, identical to option (a)'s own behavior in that same degenerate
 case.
 
+**Which fields this restricts, stated explicitly this round (per
+`spec003_remediation_proposal_2026-10-04.md`'s own F3 section, option
+(b)): restricted to the common-support bin subset (becomes `None`
+outside it, or when no bin qualifies) --** `mean_difference`,
+`median_difference`, `raw_p`, `mean_difference_ci`,
+`standardized_effect` (since its own formula consumes `median_
+difference` and `baseline_iqr` directly, section 4.1). **NOT
+restricted -- stay full-population, unaffected by this fix:** the
+signature's own plain descriptive statistics over its FULL set of
+episodes (`relative_outcome`/`absolute_outcome`, the ordinary
+`DescriptiveStats`, never the baseline comparison) -- nothing about
+common-support requires narrowing what the signature's own raw
+outcomes report, only what is compared against a baseline and tested
+for significance.
+
 ---
 
 ## 7. Config immutability -- full recursive freezing, not `MappingProxyType`
@@ -345,67 +491,282 @@ remains open, named here rather than silently assumed solved.
 ## 8. The AST guard -- project-namespace resolution and a genuine
 negative case
 
-**The matcher fix (`"hypothesis" in m.split(".")`) is necessary but
-not sufficient -- it can also flag an UNRELATED namespace.** Concrete,
-verified-real negative case (not a hypothetical): `hypothesis` is the
-name of a well-known, commonly-used third-party PROPERTY-BASED TESTING
-library on PyPI -- confirmed NOT currently installed in this project
-(`pip show hypothesis` -> not found) and not referenced in any
-requirements file (checked this round), but a plausible FUTURE
-addition for property-based tests. **If it were ever added, `import
-hypothesis` or `from hypothesis import given` (its own real API) would
-be syntactically IDENTICAL, at the AST level, to this project's own
-`import hypothesis`/`from hypothesis import X` style** -- both use the
-same bare top-level name, because this project's own package is
-imported unqualified (`from hypothesis.models.entities import X`, not
-`from trading_sistem.hypothesis.models.entities import X`). **Static
-AST analysis cannot disambiguate these two cases for a bare top-level
-`import hypothesis` or `from hypothesis import <name>`** -- this is an
-inherent limitation of the project's own current unqualified-import
-style, not something the guard's matcher logic can fix by itself.
+**Corrected this round (GPT's review of revision 4, relayed by Radu):
+revision 4's filesystem-existence mitigation was backwards -- it would
+produce a false NEGATIVE on a real violation, exactly where the guard
+matters most.** A guard against reversing the project's one-way
+dependency chain must catch an import of the forbidden namespace even
+when the SPECIFIC submodule named does not exist YET -- e.g. a future
+`from hypothesis.not_yet_written_module import X` inside
+`src/evaluation/` is exactly the kind of violation this test exists to
+catch, and gating on `src/hypothesis/not_yet_written_module.py`
+actually existing on disk would silently let it pass BECAUSE the
+violation targets something not yet written. Filesystem existence is
+not a precondition for a dotted path to "belong to" a package in
+Python's own import resolution -- it is a RUNTIME fact (would this
+import actually succeed), orthogonal to the STATIC architectural
+question this guard asks (does this import statement's top-level
+component name the forbidden namespace).
 
-**Partial, real mitigation:** for a DOTTED path (e.g. `hypothesis.
-registry.hypotheses`, or `from hypothesis.registry import hypotheses`),
-resolve the path against the actual filesystem -- flag it only if
-`src/hypothesis/<rest-of-path>.py` (or `__init__.py`) actually exists
-on disk. This correctly avoids flagging a coincidentally-similar but
-nonexistent dotted path, and correctly still catches every real
-internal-package form, including the prefixed `src.hypothesis.X` case
-from the previous round. **It does NOT resolve the bare top-level
-`import hypothesis` ambiguity** -- both the real internal package and
-the hypothetical third-party library would resolve to "yes, `src/
-hypothesis/__init__.py` exists," without telling us which one a given
-import statement actually intends. **Recommended, not decided:**
-document this collision as a standing project constraint (the
-third-party `hypothesis` library must never be added as a dependency
-while the internal package keeps this unqualified name), rather than
-attempt to resolve it at the AST-guard level, where it cannot be
-resolved. **Relative imports:** confirmed zero usage in `src/` today
-(`grep -rn "^from \.\|^from \.\."`, re-confirmed this round); `node.
-level`/`node.module is None` handling remains a named, unaddressed
-residual limitation given that confirmed absence.
+**Corrected algorithm, namespace-membership first, filesystem as
+auxiliary information only, never as a gate:**
+1. **Recognize this project's own import-resolution environment
+   explicitly:** confirmed this round, `src/` is the root importable
+   directory -- every current import in this codebase is bare
+   (`from hypothesis.models.entities import X`, `from evaluation.
+   models.entities import Y`, never `from src.hypothesis... import
+   X`); a leading `src.` prefix is a defensive secondary form to
+   recognize (raised in an earlier round as a case to catch), not a
+   form this project's code currently uses -- confirmed again this
+   round, zero `src.`-prefixed imports exist anywhere in `src/` or
+   `tests/` (`grep -rn "^from src\.\|^import src\."` -> no matches).
+2. **For an ABSOLUTE import** (`ast.Import`'s `alias.name`, or
+   `ast.ImportFrom` with `node.level == 0`'s `node.module` AND every
+   `alias.name` in `node.names`, per the collector fix already
+   established in revision 3): strip a leading `"src."` if present;
+   the import is a FORBIDDEN hit if and only if the FIRST remaining
+   dotted component equals the forbidden namespace's own top-level
+   package name exactly (`"hypothesis"` for TEST 49's own direction) --
+   **matching the first component only, correcting revision 3/4's
+   own `"hypothesis" in m.split(".")` substring-anywhere-in-the-path
+   matcher**, which would also flag an UNRELATED namespace that merely
+   happens to have a submodule sharing that literal name (e.g. a
+   hypothetical `vendor.hypothesis` package, first component `vendor`,
+   is not this project's `hypothesis` package and must not be flagged;
+   `"hypothesis" in "vendor.hypothesis".split(".")` would wrongly flag
+   it under the prior matcher).
+3. **For a RELATIVE import** (`ast.ImportFrom` with `node.level > 0`):
+   resolve it to its EFFECTIVE absolute dotted path starting from the
+   ANALYZED FILE's own package (derived from the file's path under
+   `src/` -- e.g. `src/evaluation/baseline/universe.py` has package
+   `evaluation.baseline`), climbing up `node.level` components from
+   that package and then appending `node.module` (if any); apply rule
+   2's first-component check to the resolved path. **Confirmed this
+   round: zero relative imports exist anywhere in `src/` today**
+   (`grep -rn "^from \.\|^from \.\."` -> no matches) -- this closes a
+   gap in the CONTRACT (a future relative import could otherwise slip
+   past an absolute-only matcher) without fixing any currently-active
+   false negative, since none exists today.
+4. **Filesystem existence is demoted to a non-gating, informational
+   signal only** -- it MAY be used to enrich an error message (e.g.
+   "no such module exists yet at this path") but must NEVER decide
+   whether an import is flagged; the architectural ban is about
+   NAMESPACE membership, independent of whether any particular
+   submodule has already been written.
+
+**This same algorithm applies uniformly to every guard of this
+structural shape in the codebase** -- Spec #002's TEST 17/18, Spec
+#003's TEST 26 (discovery cannot import evaluation, see new section 9
+below), and Spec #004's TEST 49 (worked through above) all share the
+identical collector/matcher defect pattern and the identical fix;
+TEST 26 does not carry the name-collision concern below (no known
+third-party package named `evaluation` is in use or anticipated here),
+so its own fix is simpler and fully specified, with no open
+contractual question (section 9).
+
+**The bare top-level name-collision case is a SEPARATE, narrower
+problem from the algorithm above, and is NOT a precondition for
+shipping this guard now:** `hypothesis` is the name of a well-known
+third-party PROPERTY-BASED TESTING library on PyPI -- confirmed NOT
+currently installed in this project (`pip show hypothesis` -> not
+found) and not referenced in any requirements file (checked this
+round and re-confirmed), but a plausible FUTURE addition. If it were
+ever added, a bare `import hypothesis`/`from hypothesis import given`
+intending the THIRD-PARTY library would be syntactically IDENTICAL, at
+the AST level, to this project's own unqualified `import hypothesis`
+style -- static analysis alone cannot disambiguate the two for a bare
+top-level form, in either algorithm. **This does not block shipping
+the corrected algorithm above:** within THIS test's own enforcement
+scope, the project can simply DECLARE, by convention, that the bare
+name `hypothesis` is reserved for the internal package for purposes of
+this guard, now -- a declaration, not a resolution, and one that would
+need re-examination only if and when the third-party library is
+actually added as a dependency (not resolved preemptively by changing
+the guard's logic today, and not a reason to withhold the corrected
+algorithm in the meantime).
 
 ---
 
-## 9. #004 mechanisms -- reintegrated in full (not only as deltas)
+## 9. #003 straightforward mechanisms -- reintegrated in full, not
+only "Yes" in a checklist cell (new section this round; GPT's review
+of revision 4, relayed by Radu, found these marked complete in the
+checklist with no mechanism text anywhere in the document's own body)
 
-**Finding 14 (GPT-G1), complete mapping:** the approved-content
-fingerprint covers `direction`, `entry_definition`, `entry_execution_
-policy`, `horizon_candidate_set` (values + `parameter_source`/
-`selection_basis`), AND the proposal's own `exit_hypotheses`
-(canonical content, via the existing `_exit_fp()`/`variant_
-fingerprint()` definition -- corrected in the prior round after the
-fingerprint was found to omit exits entirely). Recorded once, on the
-human-decision record, at approval time -- never recomputed from
-whatever a later caller supplies. At the gate: recompute the identical
-fingerprint from the draft's own corresponding fields plus the exit
-content actually used to materialize variants, compare against the
-frozen approved value, THEN (only after that comparison passes) replay
-`materialize_variants()` to verify the registered variants match.
-`horizon_candidate_set.values` -> `materialize_variants()`'s own
-TIME_EXIT expansion is the one and only allowed "derivation" step
-(verified by replay-equality, not by hashing, since it is a
-one-to-many expansion); every other field requires exact identity.
+**F2a -- frozen signature set accepted without content verification
+(Top Finding 12a):** `run_evaluation()` never recomputes
+`freeze_signature_set()` on the incoming `SignatureSet` to check its
+own `signature_set_id` actually matches its own `signatures`. Fix: at
+the top of `run_evaluation()`, recompute `freeze_signature_set(list(
+signature_set.signatures)).signature_set_id` and raise if it doesn't
+equal `signature_set.signature_set_id` -- a cheap, deterministic
+check, no behavior change for any legitimately-constructed
+`SignatureSet`. Test needed: a `SignatureSet` built via
+`dataclasses.replace()` with mismatched content/id, asserting
+`run_evaluation()` now raises.
+
+**F2b -- duplicate `signature_id` collides in BH correction (Top
+Finding 12b):** nothing rejects two `EvaluationSignatureDefinition`s
+sharing one `signature_id` within a `SignatureSet`; `record_key()`
+then collapses their BH entries into one. The check must sit at
+`run_evaluation()`'s own entry gate, not only inside
+`freeze_signature_set()` -- F2a's own reproduction already shows a
+`SignatureSet` reaching `run_evaluation()` without ever passing
+through `freeze_signature_set()` (built directly via `dataclasses.
+replace()`), so a uniqueness check placed only there would be bypassed
+the same way. Fix: at the top of `run_evaluation()`, alongside F2a's
+check, validate `len({s.signature_id for s in
+signature_set.signatures}) == len(signature_set.signatures)`, raising
+on a duplicate; `freeze_signature_set()` may gain the same check too,
+as defense-in-depth, but never as a substitute for the engine-entry
+gate. Test needed: a `SignatureSet` with two definitions sharing one
+`signature_id`, built via `dataclasses.replace()` (bypassing
+`freeze_signature_set()`), asserting `run_evaluation()` still rejects
+it.
+
+**F6 -- `family_test_count` missing (Top Finding 7):** SS44 names
+`family_test_count` in `BaselineComparison`'s required field list; the
+field exists nowhere in `src/` or `tests/`. Fix: add
+`family_test_count: Optional[int]` to `BaselineComparison`, defined as
+the number of `PValueRecord`s actually included in that record's own
+BH family (`len(fam_records)` for the family `benjamini_hochberg()`
+grouped this profile into) -- never a count of every signature x
+horizon combination in the run. **`family_test_count` is non-`None`
+if and only if `mode == "FORMAL_DEVELOPMENT"` AND this profile's
+`raw_p is not None`** -- exactly mirroring the existing `adjusted_p`/
+`family_id` population rule, independent of `support_status`
+(`stratified_permutation_p_value()` and the support-sufficiency check
+are two independent mechanisms; a profile tagged
+`INSUFFICIENT_SUPPORT` can still have a non-`None` `raw_p`, and vice
+versa). Tests needed: `family_test_count` equals the real family size
+in a multi-signature `FORMAL_DEVELOPMENT` run; `family_test_count is
+None` for every profile in an `EXPLORATORY` run, including one with
+non-`None` `raw_p`; `family_test_count` populated for an
+`INSUFFICIENT_SUPPORT`-tagged profile with non-`None` `raw_p` in a
+`FORMAL_DEVELOPMENT` run (demonstrating the two mechanisms are
+independent).
+
+**#003 G1 -- TEST 26 AST guard blind to the parent-import form (Top
+Finding 18), same defect family as section 8 above, simpler and fully
+specified, no open contractual question:** `_imported_modules()` never
+inspects `ast.ImportFrom`'s `names` (the imported symbols), only
+`.module` -- so `from src import evaluation as ev` inside
+`src/discovery/` is invisible to the guard. Fix: collect `alias.name`
+for each name in `node.names` when the node is an `ast.ImportFrom`,
+exactly as section 8's corrected collector already requires for TEST
+49; apply section 8's same first-component matching rule (no
+`evaluation`-name third-party collision is known or anticipated, so
+TEST 26 needs none of section 8's collision caveat). Test needed: a
+regression using the exact scratch-file probe already used to
+demonstrate this (`from src import evaluation as ev`), asserting the
+guard now fails as expected.
+
+**#003 G2 -- TEST 34's assertions do not test what they claim (Top
+Finding 19), not an AST guard, a plain test-correctness fix:**
+`test_34_holding_decay_curve.py` line 41 ends in `or True`, making the
+assertion unconditionally pass; line 43's `hasattr(curve, "winner")`
+check is trivially true for any plain list, not a guard specific to
+this function. Fix: remove the `or True`; assert on `curve`'s actual
+values directly (the real filter logic lives in `engine.py`'s
+`decay_curve()`, filtering by `signature_id`) rather than re-deriving
+a filtered list from `profiles` only to compare it to itself; for the
+"no winner" check, assert on `EvidenceProfile` itself having no such
+field (via `dataclasses.fields()`), which could meaningfully carry a
+"winner" concept if one were ever added, rather than on a plain list.
+This IS the test fix -- no separate regression beyond correcting
+`test_34` itself.
+
+---
+
+## 10. #004 mechanisms -- reintegrated in full (not only as deltas)
+
+**Finding 14 (GPT-G1), status downgraded to PARTIAL this round (GPT's
+review of revision 4, relayed by Radu): the mapping was incomplete in
+a way confirmed this round by reading the actual gate code
+(`registry/preregistration.py`, `validation/rules.py`,
+`proposals/validator.py`, `models/entities.py` in full).**
+
+**The gap, stated precisely:** `preregister_hypothesis()` and
+`validate_for_preregistration()` NEVER cross-check the `draft`'s
+trading-content fields against the originating `proposal`'s
+corresponding fields at all -- confirmed by reading both functions in
+full. The only link from `draft` back to `proposal` today is
+`draft.hypothesis_provenance.proposal_id == proposal.proposal_id`, a
+STRING-identity check -- and `proposal_id` is NOT content-addressed
+(`normalize_proposal()` reads it verbatim from the caller's raw dict,
+confirmed this round). `validate_for_preregistration()`'s own
+`hypothesis_id`/`definition_hash` check only proves SELF-consistency
+(the hash matches the draft's OWN current fields) -- it proves nothing
+about whether those fields are what the human/consensus process
+actually reviewed. As things stand, a `draft` carrying a `proposal_id`
+that matches some previously-APPROVED proposal's id, but with
+completely different `direction`/`entry_definition`/
+`horizon_candidate_set`/`evidence_provenance` content, would pass
+every existing check, because nothing anywhere compares `draft`'s
+content against `proposal`'s content, or against what the human
+actually approved.
+
+**Corrected design, three parts:**
+1. **`verify_draft_matches_proposal(draft, proposal, variants) ->
+   (bool, errors)`, a new explicit check inside `preregister_
+   hypothesis()`'s existing step 0 block:** field-by-field equality --
+   `draft.direction == proposal.direction`; `draft.entry_definition ==
+   proposal.entry_definition`; `draft.entry_execution_policy ==
+   proposal.entry_execution_policy`; `draft.horizon_candidate_set ==
+   proposal.horizon_candidates`; `draft.evidence_provenance ==
+   proposal.source_evidence`. Exits checked by replay, not by
+   equality, since `materialize_variants()`'s TIME_EXIT expansion is a
+   one-to-many derivation: for each of `proposal.exit_hypotheses`,
+   confirm a variant with the matching `variant_fingerprint()` is
+   present among `variants`, AND that `variants` contains no OTHER
+   content the proposal didn't ask for.
+2. **Tying the human's approval to this exact content:** add
+   `content_fingerprint: str` to `HumanDecision`, populated by
+   whatever process constructs it (the human review step) from the
+   SAME canonical fingerprint -- `direction`/`entry_definition`/
+   `entry_execution_policy`/`horizon_candidates`/`source_evidence` via
+   the existing `_entry_fp()`/`_horizon_fp()`/`_evidence_fp()`
+   component functions, PLUS the exit content via `_exit_fp()` --
+   computed from the `proposal` the human was actually shown. At the
+   gate, recompute this same fingerprint from the LIVE `proposal`
+   argument and require it to equal `consensus.human_decision.
+   content_fingerprint` -- this is what ties "a human approved" to "a
+   human approved THIS content," which nothing today establishes.
+3. **Tying the cached structural-validation result to the same
+   content and the same config -- two options, Radu's own choice
+   between them, not decided here:**
+   - **(i), recommended as the simpler fit with this codebase's own
+     established pattern** of never trusting a cached derived value
+     (the same philosophy behind recomputing `hypothesis_id`/
+     `definition_hash` at the gate instead of trusting a caller's
+     claim): have `preregister_hypothesis()` RE-RUN `validate_
+     proposal()` itself, on the live `proposal` argument, against
+     whatever `HypothesisConfig`/`DiscoveryConfig` versions are
+     currently registered for this operation (tied to Finding 19/11's
+     `RegisteredConfigVersion` mechanism, section 7) -- removing the
+     cached `proposal_validation.valid` flag from the trust boundary
+     entirely, since there is then nothing cached to go stale.
+   - **(ii), the alternative GPT itself named:** keep the cached
+     `ProposalValidationResult`, but add `content_fingerprint: str`
+     (the same canonical fingerprint as above) AND the
+     `hypothesis_config_version`/`discovery_config_version` actually
+     used, populated inside `validate_proposal()` from its own
+     `proposal` argument; the gate then verifies both the content
+     fingerprint and that the recorded config versions still match
+     what's currently registered, re-validating only on a mismatch.
+   Option (i) is simpler and closes the config-staleness question by
+   construction; option (ii) avoids one redundant validation pass at
+   the cost of carrying two more fields and a staleness check. Neither
+   is implemented; **Radu's own choice, not assumed.**
+
+**Methodological metadata, explicitly carved OUT of this binding:**
+`variant_tag`/baseline-designation (added by PATCH #004-A finding #5)
+is deliberately excluded from `variant_fingerprint()` -- it is
+evaluation methodology, not economic content (Finding 16/`register_
+variant()`'s own docstring already states this exclusion). This
+section's content-fingerprint binding covers ONLY trading-meaning
+fields; baseline designation continues to be tracked by its own
+existing, separate mechanism and must never be folded into, or
+confused with, the content fingerprint above.
 
 **Finding 15 (GPT-G2), complete contract:** (i) exactly one TIME_EXIT
 variant per `horizon_candidate_set.values` entry, no fewer and no
@@ -418,17 +779,56 @@ only in `max_holding_bars`/`stop_loss`/`partial_profit`); (iii) every
 variant's family-specific fields validated per the existing rules
 already in `spec004_remediation_proposal...md` section 2.
 
-**Finding 16 (GPT-G3), mechanism and exact guarantee scope:** extract
-`_force_register()`'s and `register_variant()`'s own preconditions
-into two named predicate functions used by BOTH a pre-write dry run
-and the actual write call (one shared implementation, so the two
-cannot independently drift). Guarantees no raise from
-`ImmutableHypothesisError`'s three documented conditions (content
-mismatch; PREREGISTERED-content mismatch; variant content mismatch).
-**Does not and cannot guarantee anything outside those three named
-conditions** (e.g. a storage-layer failure if the registry is ever
-backed by something other than a plain in-memory dict) -- stated as
-the guarantee's exact boundary, not implied to be unconditional.
+**Finding 16 (GPT-G3), mechanism and exact guarantee scope, corrected
+this round (GPT's review of revision 4, relayed by Radu -- confirmed
+by reading `_force_register()`/`register_variant()` in full):**
+extract their own preconditions into two named predicate functions
+used by BOTH a pre-write dry run and the actual write call (one shared
+implementation, so the two cannot independently drift).
+
+**Corrected this round: checking each new item's predicate only
+against the INITIAL (pre-batch) registry state is not enough to
+guarantee all-or-nothing atomicity for a BATCH.** `preregister_
+hypothesis()` writes one hypothesis (`_force_register()`) THEN N
+variants (`register_variant()` in a loop) in that same call. If the
+dry run checked each of the N variants separately against only the
+registry's state BEFORE the batch started, a conflict BETWEEN two
+items of the SAME batch (e.g. two variants in `variants` that would
+collide with each other, not with anything already stored) would be
+invisible to either item's dry-run check -- neither sees the other,
+since neither is in the initial state. The dry run would then pass for
+every item, the real writes would proceed, and the real write call for
+the LATER conflicting item would fail only after the EARLIER one had
+already been committed -- a partial write, exactly the atomicity
+violation this mechanism exists to prevent.
+
+**Fix: the dry run must simulate the SAME sequential insertion order
+the real writes will use, maintaining a virtual registry state that
+starts from the actual initial state and is updated (virtually, never
+committed) as each item is dry-run-checked** -- hypothesis first
+(checked against the initial state), then variant 1 (checked against
+initial + the virtually-inserted hypothesis), then variant 2 (checked
+against initial + hypothesis + virtual variant 1), and so on through
+variant N. Only once every item in this simulated sequence passes does
+the function proceed to perform the real writes, in the identical
+order -- which are then guaranteed to all succeed, having already been
+proven consistent against the exact sequence they will be written in.
+
+**Explicit precondition, stated this round, not previously named:**
+this guarantee holds only under SYNCHRONOUS execution with no write
+from any OTHER caller interleaved between the dry run and the real
+writes on the SAME registry instance -- no locking or concurrency
+control is being added here; this is a single-call-sequence
+correctness guarantee, not a general concurrency-safe atomicity
+mechanism, and must not be described as one.
+
+Guarantees no raise from `ImmutableHypothesisError`'s three documented
+conditions (content mismatch; PREREGISTERED-content mismatch; variant
+content mismatch) PROVIDED the synchronous-execution precondition
+holds. **Does not and cannot guarantee anything outside those three
+named conditions** (e.g. a storage-layer failure if the registry is
+ever backed by something other than a plain in-memory dict) -- stated
+as the guarantee's exact boundary, not implied to be unconditional.
 
 **Findings 17, 18, 20 (GPT-G4, G5, P004C):** unchanged, complete, no
 open design question -- widen `register()`'s guard to any-status-to-
@@ -441,7 +841,7 @@ bin, justified against SS39's own distinct "stability bins" vs. SS57's
 mechanism (one `load_config()` call per operation, immutable per
 section 7's full recursive freeze, three-way concordance check) --
 wiring to the versioning-epoch marker remains open, shared with S2's
-own epoch question (section 11).
+own epoch question (checklist, section 11, row 15).
 
 **Finding 1 (evaluation_mode marking), Finding 2 (research_mode),
 Finding 10 (exit-family count):** unchanged from the prior round --
@@ -453,41 +853,58 @@ stricter behavior was actually intended.
 
 ---
 
-## 10. Checklist -- four axes per item, not one status column
+## 11. Checklist -- four axes per item, not one status column
+
+**Row 9 and row 8 downgraded/corrected, row 11 relabeled, row 20
+added, row 18/19 reworded this round -- see section-by-section
+corrections above for the reasoning behind each change.**
 
 | # | Item | (a) Design complete | (b) Contractual decision needed | (c) Radu's approval | (d) Implementation + verification |
 |---|---|---|---|---|---|
-| 1 | #003 F2a+F2b | Yes | No | Pending | Later stage |
-| 2 | #003 F6 | Yes | No | Pending | Later stage |
+| 1 | #003 F2a+F2b | Yes (section 9) | No | Pending | Later stage |
+| 2 | #003 F6 | Yes (section 9) | No | Pending | Later stage |
 | 3 | #004 Finding 17 | Yes | No | Pending | Later stage |
 | 4 | #004 Finding 20 | Yes | No | Pending | Later stage |
-| 5 | #003 G2 (TEST 34) | Yes | No | Pending | Later stage |
+| 5 | #003 G2 (TEST 34) | Yes (section 9) | No | Pending | Later stage |
 | 6 | #004 Finding 2 | Yes | No | Pending | Later stage |
 | 7 | #004 Finding 18 | Yes | No | Pending | Later stage |
-| 8 | #004 Finding 16 | Yes, with exact 3-condition guarantee scope stated | Whether that scope is sufficient, or a wider guarantee is required | Pending | Later stage |
-| 9 | #004 Finding 14 | Yes, exit content now included | No remaining design gap identified this round | Pending | Later stage |
+| 8 | #004 Finding 16 (GPT-G3) | Yes -- batch-internal simulated-sequential dry run specified (fixes a partial-write gap found this round); explicit synchronous-execution precondition stated; exact 3-condition guarantee scope stated (section 10) | Whether that guarantee scope is sufficient, or a wider one is required | Pending | Later stage |
+| 9 | #004 Finding 14 (GPT-G1) | **PARTIAL this round (downgraded from "Yes" -- GPT's review of revision 4, relayed by Radu, found the gate never cross-checks draft content against the originating proposal at all, confirmed by reading the gate code in full):** `verify_draft_matches_proposal()` specified; `HumanDecision.content_fingerprint` binding specified; methodological-metadata carve-out stated (section 10) | Yes -- choice between gate-time proposal revalidation (recommended) and a content-fingerprint-plus-config-version field on the cached `ProposalValidationResult` (section 10) | Pending | Later stage |
 | 10 | #004 Finding 15 | Yes, full-content key | No remaining design gap identified this round | Pending | Later stage |
-| 11 | #003 G1 (AST guard) | Partial -- matcher + filesystem-resolution specified; bare top-level `hypothesis` collision named as inherently unresolvable by AST alone | Yes -- whether to accept the collision risk, document it as a standing constraint, or rename the package | Pending | Later stage |
+| 11 | #004 TEST 49 (AST guard, evaluation->hypothesis) -- **relabeled this round; was mislabeled "#003 G1" in revision 4** | Partial -- namespace-first-component matcher + relative-import resolution specified, filesystem demoted to non-gating (section 8, corrected this round after the prior filesystem-gating design was found to produce false negatives); bare top-level `hypothesis` collision named as a separate, non-blocking, inherently-unresolvable-by-AST-alone case | Yes -- whether to accept the collision risk via a documented project-convention declaration, or rename the package | Pending | Later stage |
 | 12 | #004 Finding 1 | Yes (marking); policy question separate | Yes -- admission policy, jointly with #003's own OOS-discipline framing | Pending | Later stage |
 | 13 | #004 Finding 10 | Yes (direction) | Yes -- intended-behavior question | Pending | Later stage |
 | 14 | #004 Finding 19 / Finding 11 | Partial -- mechanism named; epoch-marker wiring open | Yes -- versioning-epoch marker, jointly with #003 S2 | Pending | Later stage |
 | 15 | #003 S2 | Partial -- fingerprint extension uncontested; epoch-marker open | Yes -- versioning-epoch marker | Pending | Later stage |
 | 16 | #003 S1 | N/A -- scope question, not a mechanism gap | Yes -- responsibility (code vs. documented trust boundary) | Pending | Later stage |
-| 17 | #003 F1 (complete behavior) | Partial -- same-target-session mechanism and 4-way check complete (sections 1); calendar sourcing and dependency direction open (section 2); sub-daily timeframes out of scope | Yes -- the data-gap status name; the calendar sourcing/relocation decision | Pending | Later stage |
-| 18 | #003 F3+F4+F5 | Partial -- per-security formula correct and scoped (section 3); quantile algorithm now scale-invariant and verified (section 4); CI/bootstrap estimator-vs-interval separation specified (section 6); permutation exchangeability assumption stated but validity still open (section 5) | Yes -- F3's (a)/(b) choice; the scale-invariant-vs-inclusive quantile tradeoff (section 4.2); whether within-bin session-level variation needs its own fix (section 3); the permutation null-model choice (section 5) | Pending | Later stage |
-| 19 | Config immutability + AST (cross-cutting) | Partial -- full recursive freeze specified (section 7); AST filesystem-resolution specified, bare-name collision named unresolvable (section 8) | Yes -- the `hypothesis`-name collision policy | Pending | Later stage |
+| 17 | #003 F1 (complete behavior) | Partial -- same-target-session mechanism and 4-way check complete, now distinguishing bar-missing from bar-present-with-null-price as separate sub-cases (section 1, corrected this round); calendar sourcing and dependency direction open (section 2); sub-daily timeframes out of scope | Yes -- the data-gap status name(s), now covering both the bar-missing and the bar-present-null-price sub-cases; the calendar sourcing/relocation decision | Pending | Later stage |
+| 18 | #003 F3+F4+F5 | Partial -- per-security formula correct and scoped (section 3); **TWO candidate scale-invariant quantile conventions specified and verified this round (midpoint, and a rescaled variant that also reproduces `inclusive` at equal weights), plus a required tie-aggregation rule (verified fix for an order-dependence bug found this round) -- NEITHER convention chosen yet (section 4, corrected this round after an incorrect "impossibility" claim was retracted)**; CI/bootstrap estimator-vs-interval separation specified, F3's exact restricted-vs-unrestricted field list now enumerated (section 6); permutation section corrected this round to remove two overclaims, still fully open (section 5) | Yes -- F3's (a)/(b) choice; **the choice BETWEEN the two scale-invariant quantile conventions (section 4.2), not a single tradeoff as framed in revision 4**; whether within-bin session-level variation needs its own fix (section 3); the permutation null-model choice (section 5) | Pending | Later stage |
+| 19 | Config immutability (cross-cutting) | Yes -- full recursive freeze specified (section 7) | No | Pending | Later stage |
+| 20 | #003 G1 (TEST 26 AST guard, discovery->evaluation) -- **new row this round; previously absent from the checklist entirely** | Yes -- same algorithm family as row 11, fully specified, no collision caveat applies (section 9) | No | Pending | Later stage |
 
 **No row in this checklist is blocked on "implement and run the
 regression matrix" -- that is column (d), explicitly a later,
 not-yet-authorized stage, never a condition for this document's own
 design-completeness claims in column (a).**
 
-**No code or test was changed to produce this revision. Only the
-isolated mathematical checks described above (quantile scale-
-invariance, the corrected worked example, the `hypothesis` package
-collision check) were executed this round -- no project test suite was
-run. Baseline `3cdc532`, historical acceptances, and the Spec
-#005/Batch 3 pause are unchanged. Findings reconciliation remains
-closed (both specs, within each review's own declared scope);
-remediation design remains open; implementation remains not
-authorized.**
+**No code or test was changed to produce this revision. This round's
+verification was, again, isolated Python execution only -- never the
+project's own test suite:** the `R_i` rescaled-quantile counterexample
+(section 4.2, disproving revision 4's impossibility claim); the tie-
+order-dependence counterexample and its aggregation fix (section 4,
+new this round); re-confirmation of Radu's own exact-fraction worked
+example (section 4.3); the `grep` checks confirming zero `src.`-
+prefixed and zero relative imports in `src/` (section 8, re-confirmed
+this round). This round's source grounding also included reading, in
+full, `registry/preregistration.py`, `validation/rules.py`,
+`proposals/validator.py`, the relevant sections of `models/entities.py`
+and `registry/hypotheses.py` (Finding 14/16's corrections), `outcomes/
+forward_returns.py` (F1's correction), `statistics/bootstrap.py`
+(the permutation section's correction), `tests/spec004/
+test_49_evaluation_cannot_import_hypothesis.py`, and
+`spec003_remediation_proposal_2026-10-04.md`'s F2a/F2b/F6/G1/G2
+sections (new section 9) -- no project test suite was run. Baseline
+`3cdc532`, historical acceptances, and the Spec #005/Batch 3 pause are
+unchanged. Findings reconciliation remains closed (both specs, within
+each review's own declared scope); remediation design remains open;
+implementation remains not authorized.**

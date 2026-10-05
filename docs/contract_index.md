@@ -509,53 +509,63 @@ is not itself the audit.
      implementation/acceptance of any fix is NOT AUTHORIZED.** Now
      joined with #004's own remediation design in
      `docs/joint_remediation_design_003_004_2026-10-04.md`
-     (2026-10-04, revision 4, per GPT's own recommendation once both
-     audits closed). **Revision 4 is a self-contained rewrite
-     (not a delta against revision 3), fixing a demonstrated
-     mathematical defect GPT's own follow-up review found in
-     revision 3's weighted-quantile algorithm plus six further
-     consolidation corrections.** The quantile defect: revision 3's
-     rank-based algorithm correctly reproduced Python's `inclusive`
-     convention for literal unit/count weights, but is NOT
-     scale-invariant for genuinely relative weights -- verified by
-     direct execution with an exact-arithmetic counterexample (three
-     different Q1/median/Q3 answers for the identical relative
-     distribution scaled three different ways). Revision 4 replaces it
-     with the midpoint/Hazen convention (`P_i = (C_i - 0.5*w_i)/W`),
-     verified scale-invariant by execution across the same three
-     scalings, with the explicit, declared tradeoff -- stated for
-     Radu's own approval, not silently chosen -- that this convention
-     does NOT reproduce `inclusive` at equal weights. The worked
-     early/late-bin IQR example is recomputed with exact fraction
-     arithmetic under the corrected algorithm, giving a third
-     directional answer (reweight IQR very slightly WIDER than
-     collapse, reversing both revision 2's and revision 3's claimed
-     directions), explicitly flagged as fixture-and-convention-
-     dependent rather than a stable fact. Further corrections: F1's
-     mis-indexed secondary worked example is withdrawn (an entry+N=2
-     example had the wrong target session); the permutation-test
-     section now states that validity depends on full exchangeability,
-     not merely marginal distributional equality, and no longer
-     claims block permutation is unnecessary without defining it;
-     the bootstrap/CI design separates the per-replicate weighted
-     ESTIMATOR from the (unweighted) percentile INTERVAL CONSTRUCTION,
-     and F3's common-support restriction is extended to the
-     signature's own side (not just the baseline side, which left the
-     original population-mismatch bug reachable one level down);
-     config immutability is redesigned as a full recursive freeze
-     covering nested lists, not only dicts; the AST guard's
-     component-membership matcher is kept but now explicitly documents
-     an inherently unresolvable case -- the bare name `hypothesis`
-     collides with a real third-party Python testing library, so no
-     AST-only fix can disambiguate a hypothetical future third-party
-     import from this project's own package. The sign-off checklist
-     is restructured into four separate axes (design completeness /
-     contractual decision needed / Radu's own approval / implementation
-     plus subsequent verification), with implementation and regression
-     execution explicitly stated as never a precondition for the
-     design-completeness column. Design only, not implementation; no
-     code or test changed, no project test suite run -- only isolated
-     mathematical checks executed via inline Python this round.
+     (2026-10-04, revision 5, per GPT's own recommendation once both
+     audits closed). **Revision 5 is a targeted correction of
+     revision 4 (not a full rewrite, per Radu's own explicit
+     instruction), fixing a FALSE impossibility claim revision 4 made
+     about its own quantile algorithm, plus five further corrections
+     GPT's follow-up review found by re-reading the actual gate/
+     bootstrap/AST-guard source code.** The quantile correction, in
+     two parts: (1) revision 4 claimed scale invariance and
+     reproducing Python's `inclusive` convention at equal weights
+     "cannot both hold in general" -- RETRACTED, disproven by a
+     constructive counterexample verified by execution (rescaling the
+     already-scale-invariant midpoint positions onto `[0,1]` via their
+     own first/last points reproduces `inclusive` exactly at equal
+     weights while staying scale-invariant) -- two live candidate
+     conventions now stand, Radu's choice between them still open, not
+     one settled recommendation; (2) a NEW tie-order-dependence defect
+     found and verified by exact-fraction execution (the identical
+     weighted multiset, supplied in two different row orders, produced
+     two different quantile answers), fixed by aggregating weights at
+     identical values before computing any cumulative position.
+     Further corrections: F1's four-way check now distinguishes a
+     missing target bar from a present bar with a null price field
+     (confirmed by reading `outcomes/forward_returns.py`) -- bar
+     presence alone is not sufficient for `VALID`; the permutation
+     section's independence-implies-exchangeability framing is
+     corrected from "equivalent" to "one sufficient condition," and
+     its claim that this codebase's existing bootstrap already treats
+     row-level values as the resampling unit is retracted as flatly
+     contradicted by `statistics/bootstrap.py` (confirmed by reading
+     it: it resamples contiguous blocks of calendar sessions, not
+     rows); F3's common-support restriction's exact field list is now
+     enumerated (restricted vs. full-population fields named
+     explicitly); the AST guard's filesystem-existence check is
+     corrected from a false-negative-producing GATE to a non-gating,
+     informational-only signal, replaced by a namespace-first-
+     component matching rule plus relative-import resolution relative
+     to the analyzing file's own package; #004 Finding 14's design is
+     downgraded from "complete" to "partial" after confirming, by
+     reading `preregistration.py`/`validation/rules.py` in full, that
+     the real gate never cross-checks a draft's content against the
+     proposal it claims to descend from at all -- a new `verify_draft_
+     matches_proposal()` mechanism plus a content-fingerprint binding
+     on the human-approval record are added; #004 Finding 16's
+     atomicity mechanism is corrected to simulate the real sequential
+     write order during its dry run (catching conflicts BETWEEN items
+     of the same batch, not only against the pre-batch registry
+     state), with an explicit synchronous-execution precondition now
+     stated. A new section reintegrates #003's F2a/F2b/F6/G1(TEST 26)/
+     G2(TEST 34) mechanisms, previously marked "Yes" in the checklist
+     with no mechanism text anywhere in the document's own body; a
+     prior "#003 G1" checklist label is corrected -- it was actually
+     describing #004's TEST 49 guard, not #003's own TEST 26 guard,
+     which now has its own separate, fully-specified row. Design only,
+     not implementation; no code or test changed, no project test
+     suite run -- only isolated Python checks executed this round,
+     plus source-code reading across both specs' registries/gates/
+     statistics modules.
    - **Spec #004: two rounds done (2026-10-04).** Round 1 (Claude
      alone): a fresh, high-effort independent re-verification pass,
      requested by Radu specifically to finish before the joint F1-F6
