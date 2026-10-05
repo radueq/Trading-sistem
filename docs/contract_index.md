@@ -509,63 +509,61 @@ is not itself the audit.
      implementation/acceptance of any fix is NOT AUTHORIZED.** Now
      joined with #004's own remediation design in
      `docs/joint_remediation_design_003_004_2026-10-04.md`
-     (2026-10-04, revision 5, per GPT's own recommendation once both
-     audits closed). **Revision 5 is a targeted correction of
-     revision 4 (not a full rewrite, per Radu's own explicit
-     instruction), fixing a FALSE impossibility claim revision 4 made
-     about its own quantile algorithm, plus five further corrections
-     GPT's follow-up review found by re-reading the actual gate/
-     bootstrap/AST-guard source code.** The quantile correction, in
-     two parts: (1) revision 4 claimed scale invariance and
-     reproducing Python's `inclusive` convention at equal weights
-     "cannot both hold in general" -- RETRACTED, disproven by a
-     constructive counterexample verified by execution (rescaling the
-     already-scale-invariant midpoint positions onto `[0,1]` via their
-     own first/last points reproduces `inclusive` exactly at equal
-     weights while staying scale-invariant) -- two live candidate
-     conventions now stand, Radu's choice between them still open, not
-     one settled recommendation; (2) a NEW tie-order-dependence defect
-     found and verified by exact-fraction execution (the identical
-     weighted multiset, supplied in two different row orders, produced
-     two different quantile answers), fixed by aggregating weights at
-     identical values before computing any cumulative position.
-     Further corrections: F1's four-way check now distinguishes a
-     missing target bar from a present bar with a null price field
-     (confirmed by reading `outcomes/forward_returns.py`) -- bar
-     presence alone is not sufficient for `VALID`; the permutation
-     section's independence-implies-exchangeability framing is
-     corrected from "equivalent" to "one sufficient condition," and
-     its claim that this codebase's existing bootstrap already treats
-     row-level values as the resampling unit is retracted as flatly
-     contradicted by `statistics/bootstrap.py` (confirmed by reading
-     it: it resamples contiguous blocks of calendar sessions, not
-     rows); F3's common-support restriction's exact field list is now
-     enumerated (restricted vs. full-population fields named
-     explicitly); the AST guard's filesystem-existence check is
-     corrected from a false-negative-producing GATE to a non-gating,
-     informational-only signal, replaced by a namespace-first-
-     component matching rule plus relative-import resolution relative
-     to the analyzing file's own package; #004 Finding 14's design is
-     downgraded from "complete" to "partial" after confirming, by
-     reading `preregistration.py`/`validation/rules.py` in full, that
-     the real gate never cross-checks a draft's content against the
-     proposal it claims to descend from at all -- a new `verify_draft_
-     matches_proposal()` mechanism plus a content-fingerprint binding
-     on the human-approval record are added; #004 Finding 16's
-     atomicity mechanism is corrected to simulate the real sequential
-     write order during its dry run (catching conflicts BETWEEN items
-     of the same batch, not only against the pre-batch registry
-     state), with an explicit synchronous-execution precondition now
-     stated. A new section reintegrates #003's F2a/F2b/F6/G1(TEST 26)/
-     G2(TEST 34) mechanisms, previously marked "Yes" in the checklist
-     with no mechanism text anywhere in the document's own body; a
-     prior "#003 G1" checklist label is corrected -- it was actually
-     describing #004's TEST 49 guard, not #003's own TEST 26 guard,
-     which now has its own separate, fully-specified row. Design only,
-     not implementation; no code or test changed, no project test
-     suite run -- only isolated Python checks executed this round,
-     plus source-code reading across both specs' registries/gates/
-     statistics modules.
+     (2026-10-04, revision 6, per GPT's own recommendation once both
+     audits closed). **Revision 5 closed its own prior round's
+     observations (confirmed by Radu); revision 6 is a further
+     targeted correction (not a full rewrite), fixing three concrete
+     technical defects GPT's follow-up review found, plus turning five
+     previously-open design questions into concrete recommendations
+     with stated consequences and regressions, plus a new consolidated
+     regression checklist.** The three defects: (1) the `R_i`/
+     `inclusive`-compatibility claim is NARROWED -- it holds only for
+     tie-free, equal-weight ORIGINAL input, verified by a `[0,0,10]`
+     counterexample to no longer hold once the mandatory tie-
+     aggregation rule collapses any tied value, even at equal weights;
+     the non-finite-input contract is also unified to a single hard-
+     fail behavior (was inconsistently "excluded" vs. "rejection"), and
+     the prior justification-by-analogy to `outcomes/forward_
+     returns.py` (which only does `is None` checks) is withdrawn as
+     self-contradictory; (2) the AST guard's relative-import climb is
+     corrected from `node.level` to `node.level - 1` components
+     (verified against Radu's own `.hypothesis`/`..hypothesis`
+     examples), and `ast.ImportFrom`'s per-name candidates are now
+     built from the resolved base plus each imported name (rather than
+     treating each name as an independent absolute namespace), fixing
+     a case that could have turned `vendor.hypothesis` into a false
+     positive and a local relative import into a false positive
+     against the forbidden package; TEST 26 (#003) and TEST 49 (#004)
+     share one corrected algorithm and a new consolidated positive/
+     negative case matrix; (3) #004 Finding 14's cache-preserving
+     option is confirmed insufficient as previously described --
+     `proposals/validator.py`'s `validate_proposal()` also requires
+     `facts_from_evidence`/`interpretation` non-empty, fields outside
+     the trading-content fingerprint, so a cached result tied only to
+     that fingerprint could go stale without detection; gate-time
+     proposal revalidation is now this document's explicit
+     recommendation instead. The five concrete recommendations: relocate
+     the calendar to Data Foundation, with a stated consequence (fixes
+     the import-direction reversal) and regression (existing tests
+     re-run unchanged at the new path, plus a new evaluation-never-
+     imports-backtest guard); add a purely descriptive session-
+     concentration diagnostic rather than a second weighting layer
+     (mirroring the project's own existing `compute_concentration()`
+     pattern); ship value-level permutation as-is and defer block
+     permutation, reaffirming -- not inventing -- the project's own
+     existing position already stated in `comparison.py`'s own
+     docstring (SS47), only correcting that docstring's caveat
+     precision; wire the versioning-epoch marker to the ALREADY
+     content-addressed config-version hashes confirmed present in all
+     three config loaders (hypothesis/evaluation/discovery), making a
+     config change between approval and registration a hard gate
+     failure for the first time; and hard-reject #004 proposals whose
+     evidence traces to an `EXPLORATORY` evaluation run, symmetric with
+     the existing `research_mode` rejection. Design only, not
+     implementation; no code or test changed, no project test suite
+     run -- only isolated Python checks executed this round, plus
+     reading `validate_proposal()`, `materialize_variants()`, and all
+     three config loaders in full.
    - **Spec #004: two rounds done (2026-10-04).** Round 1 (Claude
      alone): a fresh, high-effort independent re-verification pass,
      requested by Radu specifically to finish before the joint F1-F6
