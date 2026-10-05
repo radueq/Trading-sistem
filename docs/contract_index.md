@@ -509,73 +509,54 @@ is not itself the audit.
      implementation/acceptance of any fix is NOT AUTHORIZED.** Now
      joined with #004's own remediation design in
      `docs/joint_remediation_design_003_004_2026-10-04.md`
-     (2026-10-04, revision 7, per GPT's own recommendation once both
-     audits closed). **Revision 6's three technical defect fixes are
-     confirmed largely integrated; revision 7 corrects problems in
-     revision 6's OWN new recommendations.** Most significant: revision
-     6 wired #004's config-content-identity hash to ALSO serve as
-     #003 S2's "run-id scheme changed" marker -- but S2 proposes a
-     CODE/algorithm change to `build_run_id()`'s own field set, which
-     leaves every config file's content, and therefore its hash, byte-
-     identical; config-content identity and run-id SCHEME identity are
-     corrected this round into two separate mechanisms (config hashes
-     unchanged; a new literal `run_id_scheme_version` marker for S2,
-     same discipline as this codebase's existing `OUTCOME_ENGINE_
-     VERSION`-style constants). Revision 6's config-verification
-     mechanism had also regressed below a bar `spec004_remediation_
-     proposal_2026-10-04.md`'s own "Required regression coverage"
-     section already specified for the same finding (Finding 19/
-     GPT-G6) -- comparing three version-LABEL strings for equality
-     does not verify the underlying object's actual CONTENT; corrected
-     to bind every check to one pinned, content-verified
-     `RegisteredConfigVersion` snapshot (its claimed version hash
-     recomputed from its own content, not merely asserted). Further
-     corrections: a SECOND false "impossibility" claim retracted
-     (session-level weighting -- a verified counterexample shows
-     uniform security AND session margins can coexist), and the
-     diagnostic mechanism corrected from a raw row-count `Counter`
-     (which understates Radu's own `5%`/`95%` example as a misleading
-     `~9%`/`~91%`, verified) to a weighted `session_mass` sum using the
-     same per-security weights as the point estimate; "ship permutation
-     as-is, docs-only" (revision 6) was wrong once F4+F5's per-security
-     weighting is adopted for the baseline's own point estimate --
-     would test a different quantity than the one reported -- now a
-     full weighted-estimator mechanism is designed and verified (the
-     equal-weight case reduces byte-identical to today's existing
-     test), kept separate from the still-open, genuinely docs-only
-     exchangeability-acceptance question; the baseline-designation fix
-     (Finding 14) had its own timing corrected ("before any backtest,"
-     not "before any evidence" -- #004 proposals already consume #003
-     evidence) and a linkage gap closed (a lockstep proposal+draft
-     mutation after approval could otherwise change the designation
-     invisibly, since it's deliberately excluded from the economic
-     content fingerprint); the EXPLORATORY-evidence admission policy's
-     claim that re-running under FORMAL_DEVELOPMENT "produces fresh
-     confirmatory evidence" is retracted -- FORMAL_DEVELOPMENT's own
-     actual guarantees (pre-registration, BH correction) are procedural,
-     not a cure for prior selection bias on the same historical data;
-     the mode is now also verified against the real `EvaluationRunRegistry`,
-     not only a self-reported field. Two further local fixes: the AST
-     guard's relative-import beyond-top-level-package boundary,
-     verified against real Python's own `importlib.util.resolve_name()`
-     to trigger one level earlier than revision 6 had it; and a stray
-     claim in the quantile regression matrix wrongly implying both
-     candidate conventions reproduce `inclusive` on tie-free input
-     (only `R_i` does). The consolidated regression checklist (section
-     12) gained the regressions for #004 Findings 15/17/18/20 and the
-     corrected config/S2 coverage, collected from
-     `spec004_remediation_proposal_2026-10-04.md`'s own existing
-     specification rather than invented fresh. A mis-attribution is
-     also corrected throughout: the midpoint-with-aggregation and
-     gate-time-revalidation recommendations are GPT's own technical
-     recommendations, relayed by Radu -- not Radu's personal decisions
-     absent his own explicit confirmation. Design only, not
-     implementation; no code or test changed, no project test suite
-     run -- only isolated Python checks executed this round, plus
-     reading `evaluation/engine.py`, `hypothesis/validation/
-     provenance.py`, `evaluation/models/entities.py`, all three config
-     loaders again, and both remediation-proposal documents' own
-     "Required regression coverage" sections in full.
+     (2026-10-04, revision 8, per GPT's own recommendation once both
+     audits closed). **Revision 7 closed the majority of its own prior
+     round's observations (confirmed by Radu); revision 8 fixes one
+     significant remaining technical blocker in revision 7's own
+     config-verification mechanism, plus two smaller corrections.**
+     The blocker: revision 7's corrected mechanism still compared two
+     hashes computed from genuinely DIFFERENT representations -- the
+     original raw-file-text hash vs. a hash of a canonical
+     re-serialization of the parsed structure -- confirmed this round
+     by executing all three computations (raw text, canonical JSON of
+     the parsed dict, re-serialized YAML) against the ACTUAL
+     `hypothesis.yaml` in this repo: all three differ, so the mechanism
+     would have rejected even a legitimate, unmodified config.
+     **Corrected per GPT's own recipe: the registered snapshot retains
+     the EXACT raw text(s) the loader actually used and the version
+     computed by the EXISTING, unchanged loader algorithm over that
+     text (never a re-derived hash); an externally-supplied object is
+     verified via its claimed-label equality AND its parsed CONTENT's
+     structural equality against the registered snapshot (never a
+     second, incompatible hash); Discovery's own exact multi-source
+     text-combination rule is preserved byte-for-byte; the live
+     re-read at gate time is now explicitly MANDATORY (not "optional,"
+     resolving a prior internal contradiction about whether staleness
+     detection was actually guaranteed).** Also corrected: S2's
+     `run_id_scheme_version` marker must sit INSIDE `build_run_id()`'s
+     own hash preimage, not merely beside it as a provenance field (a
+     provenance-only field would not prevent two different-scheme runs
+     from still colliding on `evaluation_run_id`); and the weighted-
+     permutation estimator's own regression coverage, which previously
+     checked only the observed statistic under unequal weights, gained
+     a full exhaustive-enumeration regression (`4! = 24` orderings of a
+     verified toy fixture, exact `p = 1/3`), kept explicitly distinct
+     from a Monte Carlo estimate and from the still-open
+     exchangeability question. A regression-wording fix for Finding
+     16/GPT-G3 removes an implication that this design offers rollback
+     after a real write (it does not -- conflicts are caught in the dry
+     run's own virtual state, before any real write occurs). A new
+     short decision list (within section 11) splits every mechanism
+     into "design complete, awaiting Radu's own approval" vs. "still
+     incomplete," per Radu's own explicit request -- naming F1's
+     calendar source/verification/provenance as still incomplete even
+     after the constructor's relocation (which only fixes the import
+     direction). Design only, not implementation; no code or test
+     changed, no project test suite run -- only isolated Python hash
+     computations against the actual repo file and an exhaustive
+     permutation enumeration, plus re-reading
+     `discovery/config/loader.py` and `spec003_remediation_proposal_
+     2026-10-04.md`'s S2 section again.
    - **Spec #004: two rounds done (2026-10-04).** Round 1 (Claude
      alone): a fresh, high-effort independent re-verification pass,
      requested by Radu specifically to finish before the joint F1-F6

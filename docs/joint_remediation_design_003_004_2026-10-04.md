@@ -1,42 +1,42 @@
-# Joint Remediation Design -- Spec #003 + Spec #004 (2026-10-04, revision 7)
+# Joint Remediation Design -- Spec #003 + Spec #004 (2026-10-04, revision 8)
 
-**Status: DESIGN ONLY. Implementation NOT AUTHORIZED.** Revision 7 is
-a targeted correction of revision 6 (not a full rewrite -- revision
-6's three technical defect fixes are confirmed largely integrated:
-the narrowed `R_i`/`inclusive` claim, the non-finite hard-fail
-contract, the AST base+alias candidate construction, and the
-insufficiency of Finding 14's cache-preserving option, with gate-time
-revalidation confirmed as the right direction). GPT's follow-up review
-of revision 6 (relayed by Radu, independently re-verified this round
-by execution and by re-reading `evaluation/engine.py`,
-`hypothesis/validation/provenance.py`, all three config loaders, and
-`spec004_remediation_proposal_2026-10-04.md`'s own "Required
-regression coverage" section) found revision 6's NEW recommendations
-introduced their own further problems, most importantly: **config-
-content identity and `build_run_id()`'s own SCHEME identity are two
-different axes -- a config-content hash cannot mark a code-only
-fingerprint-field change, and revision 6 conflated them; its config-
-verification mechanism had also regressed below a bar this project's
-own earlier `spec004_remediation_proposal_2026-10-04.md` document
-already specified for the same finding.** Also corrected this round:
-a second false "impossibility" claim (session-level weighting,
-disproven by a verified counterexample) and a diagnostic that would
-have understated the real skew by roughly half; "ship permutation
-as-is, docs-only" was wrong once F4+F5's weighting is adopted (now a
-designed, verified weighted-estimator mechanism, kept separate from
-the still-open exchangeability-acceptance question); a linkage gap and
-a timing error in the baseline-designation fix; an overclaim that
-re-running EXPLORATORY evidence under FORMAL_DEVELOPMENT produces
-"fresh confirmatory evidence" (retracted; the rule's actual, narrower
-guarantee restated); two further resolution bugs in the AST guard
-(the relative-import boundary, verified against real Python's own
-`importlib.util.resolve_name()`); a stray false quantile claim in the
-regression matrix; several regressions missing from the section-12
-consolidated checklist; and a mis-attribution of GPT's own technical
-recommendations as Radu's personal preferences. This review concerns
-remediation DESIGN only; it does not reopen findings reconciliation
-(closed, both specs, within each review's own declared scope) and does
-not authorize implementation.
+**Status: DESIGN ONLY. Implementation NOT AUTHORIZED.** Revision 8 is
+a targeted correction of revision 7 (not a full rewrite -- revision 7
+closed the majority of its own prior round's observations, confirmed
+by Radu: the weighted session-mass diagnostic, the config/run-id-
+scheme separation IN PRINCIPLE, the baseline-designation approval
+linkage and corrected freeze timing, the retracted FORMAL_DEVELOPMENT
+overclaim, the mode-vs-registry cross-check, the AST relative-import
+boundary, and the quantile regression-matrix fix). **The one
+significant technical blocker GPT's follow-up review of revision 7
+found (relayed by Radu, independently re-verified this round by
+executing hashes against the actual `hypothesis.yaml` in this repo):
+the corrected config-verification mechanism itself compared two
+hashes computed from genuinely DIFFERENT representations (the
+original raw-file-text hash vs. a hash of a canonical re-serialization
+of the parsed structure) -- these do not match even for a legitimate,
+unmodified config, confirmed by executing all three computations on
+the real file. The separation of config-content identity from
+`run_id_scheme_version` was directionally right but `run_id_scheme_
+version` needed to sit INSIDE `build_run_id()`'s own hash preimage,
+not beside it as a provenance field only.** Also corrected this
+round: the weighted-permutation-estimator's own regression coverage
+checked only the observed statistic under unequal weights, never the
+actual enumeration/p-value mechanics -- a full exhaustive-enumeration
+regression is added, independently verified by execution and kept
+explicit about not validating the (separate) exchangeability
+assumption; Finding 16/GPT-G3's own regression wording wrongly implied
+a conflict is caught after a REAL write (implying a rollback capacity
+this design does not offer) rather than after insertion into the dry
+run's own virtual state, before any real write; and a short decision
+list is added (within section 11) splitting every mechanism into
+"design complete, awaiting Radu's own approval" versus "still
+incomplete," per Radu's own explicit request, naming F1's calendar
+source/verification/provenance as still incomplete even after the
+constructor's relocation. This review concerns remediation DESIGN
+only; it does not reopen findings reconciliation (closed, both specs,
+within each review's own declared scope) and does not authorize
+implementation.
 
 **Checklist convention used throughout (Radu's own structure):** every
 item is tracked on four separate axes, never collapsed into one
@@ -594,12 +594,25 @@ genuinely separate items follow, never collapsed into one:**
    the function's signature changes (baseline side needs security
    identity, not just values) -- a real code change, at implementation
    time, not optional. **Regression:** the equal-weight-reduces-to-
-   today's-test property above, locked as its own test; the skewed-
-   weight toy fixture's hand-computed expected observed value, locked
-   as its own test; every EXISTING test currently covering
-   `stratified_permutation_p_value()` re-run and confirmed to still
-   pass under equal weights specifically (proving non-regression for
-   every case that doesn't exercise the new weighting).
+   today's-test property above, locked as its own test; every EXISTING
+   test currently covering `stratified_permutation_p_value()` re-run
+   and confirmed to still pass under equal weights specifically
+   (proving non-regression for every case that doesn't exercise the
+   new weighting). **For UNEQUAL weights, corrected this round (GPT's
+   review, relayed by Radu): verifying only the observed statistic's
+   value, as a prior draft did, does NOT verify the enumeration/
+   p-value mechanics themselves -- a real gap.** **NEW -- a full
+   EXHAUSTIVE-enumeration regression, independently verified this
+   round by execution:** signature `[8]`; baseline `A=[0,2]` (2 rows),
+   `B=[4]` (1 row), `k=2`; fixed per-row weights `[1/4, 1/4, 1/2]`;
+   observed `8 - 2.5 = 5.5`; all `4! = 24` orderings of the four pooled
+   values across the four fixed positions; two-sided, ties-included,
+   gives EXACTLY `8/24 = 1/3`. **This must be kept DISTINCT from a
+   Monte Carlo estimate using the existing add-one continuity
+   correction** (`(extreme+1)/(iterations+1)`) -- the exhaustive count
+   verifies the weighted enumeration's own MECHANICS; it validates
+   nothing about the exchangeability assumption itself, which remains
+   the separate, open question in item 2 below.
 2. **The exchangeability-acceptance question -- stays exactly what it
    was, genuinely docs-only, and does NOT change with the estimator
    fix above:** whether to accept the value-level procedure's own
@@ -738,61 +751,110 @@ hashes for config identity, unchanged; introduce a SEPARATE, literal
 `build_run_id()`'s own field set changes) -- the same discipline
 already used elsewhere in this codebase for `OUTCOME_ENGINE_VERSION`/
 `HYPOTHESIS_ENGINE_VERSION`, not a hash of anything, since there is no
-file whose content tracks an algorithm's own field choices. This
-constant becomes a new field on `EvaluationRunRegistry`, included in
-the run's own provenance. Historical `evaluation_run_id`s computed
-under the OLD scheme are NEVER reinterpreted** -- exactly
-`spec003_remediation_proposal_2026-10-04.md`'s own S2 section already
-says, confirmed by reading it again this round.
+file whose content tracks an algorithm's own field choices. **Placement
+corrected this round (GPT's review, relayed by Radu): this constant
+must be included IN `build_run_id()`'s own FINGERPRINT INPUT itself --
+part of what gets hashed into `evaluation_run_id` -- not merely a
+sibling field recorded alongside the id in `EvaluationRunRegistry`'s
+provenance.** A provenance-only field would let two runs under
+DIFFERENT schemes still collide on `evaluation_run_id` if every
+hashed field happened to match; putting the scheme marker INSIDE the
+hash preimage makes that structurally impossible, the same guarantee
+every other fingerprint in this project already relies on. Historical
+`evaluation_run_id`s computed under the OLD scheme are NEVER
+reinterpreted** -- exactly `spec003_remediation_proposal_2026-10-04.
+md`'s own S2 section already says, confirmed by reading it again this
+round.
 
-**Point 2 -- the verification mechanism had regressed; corrected to
-match this project's OWN earlier, more careful specification for this
-exact finding:** comparing three version-LABEL strings for equality
-does not verify the underlying OBJECT's actual content -- a hand-built
-or mutated-before-freeze object could carry the "correct" label while
-holding wrong data, and label equality alone would not catch it.
-**Confirmed this round: `spec004_remediation_proposal_2026-10-04.md`'s
-own "Required regression coverage" section (Finding 19/GPT-G6) already
-specifies the correct, stronger requirement** -- "the correct-content-
-wrong-`config_version`-label case... is rejected too; and a check that
-passes actually operates on the pinned snapshot afterward, not on the
-original mutable object re-read a second time." **This document's
-revision 6 draft of the mechanism did not meet that bar; corrected
-now:**
-1. `RegisteredConfigVersion` is a concrete object: `{content: <the
-   section-7 fully-frozen recursive structure>, version: <the
-   sha256 hash>}`, built ONCE per operation from a single
-   `load_config()` call.
-2. The version hash is RECOMPUTED from `content` itself (a canonical
-   re-serialization, hashed) and compared against the object's OWN
-   claimed `version` label -- catching a hand-built or mutated-before-
-   freeze object whose label doesn't match its actual content, which
-   label-only equality cannot catch.
-3. Every downstream check (the draft's own recorded version, `Human
-   Decision`'s approval-time snapshot, the gate-time check) operates
-   EXCLUSIVELY against THIS SAME verified, pinned object -- never
-   against a second, independently fresh-loaded config trusted without
-   the same verification.
-4. A FRESH `load_config()` re-read at gate time MAY additionally serve
-   as a secondary POLICY check ("has the config changed since this was
-   registered") -- but this is additional, never a replacement for
-   steps 1-3's binding to the pinned, content-verified snapshot itself.
+**Point 2 -- the verification mechanism compared two INCOMPATIBLE
+hashes; corrected this round (GPT's review, relayed by Radu, verified
+by execution on the actual `hypothesis.yaml` in this repo):** step 2
+of revision 7's own mechanism recomputed a hash from a CANONICAL
+RE-SERIALIZATION of the parsed content and compared it against the
+EXISTING loader's raw-file-text hash -- these are NOT the same
+digest, by construction, and would reject every legitimate config.
+**Verified this round:** `sha256(raw hypothesis.yaml text)[:12]` =
+`e5e262fa1378`; `sha256(canonical JSON of the PARSED dict)[:12]` =
+a DIFFERENT value; `sha256(re-serialized YAML of the same dict)[:12]`
+= a THIRD, also different value -- none of the three re-derived
+digests matches the original loader's own hash, confirming the
+mismatch is real, not edge-case-only.
 
-**Consequence, unchanged in spirit, now correctly mechanized:** today,
-nothing checks that a human's approval-time config snapshot still
-matches what's live at registration time; this design makes a
-mismatch a hard gate failure, via the verified pinned snapshot, not
-via label comparison alone. **Regression, corrected to match
-`spec004_remediation_proposal_2026-10-04.md`'s own existing
-specification (collected in section 12):** the correct-content-wrong-
-label case; the config-mutated-between-approval-and-registration case;
-a passing check operating on the pinned snapshot afterward, not a
-second independent re-read; PLUS, for S2 specifically, a regression
-asserting two runs differing only in `horizons` now produce different
-`evaluation_run_id`s, under the NEW, separate `run_id_scheme_version`.
-**Radu's own approval needed for:** adopting the config-identity wiring
-and the separate `run_id_scheme_version` marker -- two distinct
-mechanisms now, not assumed by this document.
+**Corrected mechanism, per GPT's own recipe, relayed by Radu --
+historical identity preserved, content verified SEPARATELY via
+structural equality, never via a second incompatible hash:**
+1. `RegisteredConfigVersion` retains the EXACT raw text(s) the loader
+   actually used, AND the version computed by the EXISTING, unchanged
+   loader algorithm over that exact text (`sha256(raw_text)[:12]` for
+   `hypothesis`/`evaluation`; `sha256("".join(raw_texts))[:12]` for
+   `discovery` -- preserving `discovery/config/loader.py`'s own exact
+   multi-source-combination rule, never a different combination rule).
+   No hash is RE-DERIVED from anything else; the registered version IS
+   the loader's own output, carried forward unchanged.
+2. The section-7 fully-frozen recursive structure is built by PARSING
+   those SAME retained raw texts -- used for immutability (preventing
+   downstream mutation of the loaded structure), never for re-deriving
+   a hash.
+3. For an OBJECT received from outside (a caller-supplied
+   `HypothesisConfig`, or any config object not sourced from this
+   exact registered snapshot): verify BOTH (a) its claimed version
+   label equals the registered snapshot's own version string, AND (b)
+   its actual parsed CONTENT is STRUCTURALLY EQUAL (plain Python
+   value equality on the parsed dict, e.g. `==`) to the registered
+   snapshot's own parsed content -- catching a hand-built or mutated
+   object whose label lies about its content, WITHOUT requiring any
+   second hash computation to agree with the first (which, as verified
+   above, it generally will not even for legitimate data). **A
+   separate, additional "semantic canonical digest" MAY exist for
+   other purposes, but must NEVER be compared directly against the
+   original raw-text-based version** -- the two serve different
+   purposes and are not interchangeable.
+4. The operation then uses EXCLUSIVELY this verified, registered
+   snapshot -- never a second, independently-loaded object trusted
+   without the same two-part check.
+
+**File-mutation-after-registration policy -- EXPLICITLY CHOSEN this
+round (GPT's review, relayed by Radu: the prior draft incoherently
+named live re-reading "optional" while also promising mandatory
+staleness detection -- one behavior, chosen now, not both implied at
+once):** this document chooses design (b) -- a FRESH `load_config()`
+re-read at `preregister_hypothesis()` gate time is MANDATORY, not
+optional, and its version is compared against the approval-time
+pinned snapshot's own version; a mismatch is a hard gate failure. This
+is the design consistent with what this document has stated as its
+own purpose since revision 6 (detecting a config change between
+approval and registration). **Design (a) -- proceed using only the
+approved, pinned snapshot, with no live re-check at all -- is named
+here as the explicit alternative NOT chosen**, since it would silently
+let registration proceed under a config the approving human never
+saw, defeating the stated purpose; **Radu's own approval needed** for
+this choice between (a) and (b), not assumed final by this document
+alone.
+
+**Consequence, unchanged in spirit, now correctly mechanized without
+incompatible hashes:** today, nothing checks that a human's approval-
+time config snapshot still matches what's live at registration time;
+this design makes a mismatch a hard gate failure, via the retained
+loader-native version and a mandatory live re-read, never via a
+re-derived, incompatible digest. **Regression (collected in section
+12):** the correct-content-wrong-label case, now verified achievable
+WITHOUT a hash mismatch masking it (structural-equality check, not a
+second hash); the config-mutated-between-approval-and-registration
+case, caught by the now-mandatory live re-read; a passing check
+operating on the pinned snapshot afterward, not a second independent
+re-read; Discovery's own multi-source combination rule preserved
+byte-for-byte in the registered snapshot; PLUS, for S2 specifically, a
+regression asserting two runs differing ONLY in `run_id_scheme_version`
+(identical config, identical every other hashed field) produce
+DIFFERENT `evaluation_run_id`s -- proving the scheme marker is inside
+the hash preimage, not just alongside it -- distinguished from a
+SEPARATE regression asserting two runs differing only in `horizons`
+(same scheme) also produce different ids, showing the two axes
+(config/fields vs. scheme) are each independently captured. **Radu's
+own approval needed for:** adopting the config-identity wiring, the
+separate `run_id_scheme_version` marker inside the hash preimage, and
+the mandatory-live-re-read policy choice -- not assumed by this
+document.
 
 ---
 
@@ -1402,6 +1464,62 @@ intended.
 section-by-section corrections above for the reasoning behind each
 change. A consolidated regression list follows in section 12.**
 
+**Short decision list, per Radu's own explicit request this round --
+NOT a new summary invented fresh, a separation of what the table below
+already shows into two buckets, since the table's own column (a) does
+exactly this per-row but a short list makes the overall picture
+legible at a glance:**
+
+**(A) DESIGN COMPLETE, awaiting Radu's own approval (rows below) --
+nothing further needs inventing for these, only his decision:** F2a+
+F2b, F6, G2/TEST 34, G1/TEST 26 AST guard (rows 1, 2, 5, 20); Findings
+17, 18, 20, 2, 10-direction (rows 3, 4, 6, 13); Finding 16/GPT-G3's
+batch-safe dry run (row 8); Finding 15/GPT-G2's full-content variant
+key (row 10); Finding 1's marking AND admission-policy recommendation
+(row 12); Finding 14/GPT-G1's draft-vs-proposal/human-approval/
+baseline-designation binding (row 9); the config-identity mechanism
+and S2's separate `run_id_scheme_version` marker, BOTH corrected this
+round (rows 14-15); the quantile tie-aggregation requirement, the
+WEIGHTED session-mass diagnostic, and the weighted-permutation-
+estimator mechanism (all three now fully specified within row 18);
+TEST 49's AST algorithm (row 11, EXCEPT the bare-name collision,
+which is its own separate, acknowledged-unresolvable item).
+
+**(B) STILL INCOMPLETE -- no full mechanism exists yet; Radu's
+approval would not yet mean anything concrete for these:**
+- **F1's calendar (row 17) -- NAMED AGAIN this round, per Radu's own
+  explicit correction: relocating `TradingCalendar` only fixes the
+  import-DIRECTION problem (section 2's dependency-direction issue).
+  It does NOT define the actual SOURCE of real session dates
+  (independent of any price series), that source's own verification,
+  or the snapshot PROVENANCE (which calendar identity+version a run
+  used) -- all three remain exactly as unresolved as section 2 itself
+  already states, listed there as open bullets, not design gaps this
+  round closed. F1 must not be declared complete while these three
+  remain undesigned.**
+- **#003 S1 (row 16):** a scope/responsibility question (code vs.
+  documented trust boundary), not a mechanism gap -- no design exists
+  because none has been attempted, this is Radu's own call on scope.
+- **Within-bin SESSION-level weighting, as a REAL mechanism** (beyond
+  the diagnostic in (A) above): only pursued if Radu judges the
+  diagnostic an insufficient response to SS74C -- not designed, since
+  not yet known to be needed.
+- **Block permutation:** explicitly named, in every round since
+  revision 4, as NOT YET DEFINED -- no design exists, deliberately,
+  per this project's own existing "v2 if diagnostics show it's needed"
+  position (section 5).
+- **An out-of-sample confirmation protocol** for the EXPLORATORY-
+  evidence admission policy (section 10, Finding 1): named this round
+  as the deeper question the admission rule alone does not resolve --
+  not designed, Radu's own call on whether and how to define it.
+
+**Attribution, reaffirmed this round per Radu's own explicit
+instruction: the midpoint-with-aggregation convention and the gate-
+time-revalidation recommendation (Finding 14, option (i)) are GPT's
+own technical recommendations, relayed by Radu -- NOT decisions Radu
+has made or approved. Nothing in bucket (A) above is an approval;
+"design complete" means ready FOR his approval, not already given.**
+
 | # | Item | (a) Design complete | (b) Contractual decision needed | (c) Radu's approval | (d) Implementation + verification |
 |---|---|---|---|---|---|
 | 1 | #003 F2a+F2b | Yes (section 9) | No | Pending | Later stage |
@@ -1417,7 +1535,7 @@ change. A consolidated regression list follows in section 12.**
 | 11 | #004 TEST 49 (AST guard, evaluation->hypothesis) | Partial -- **shared algorithm's two resolution bugs fixed this round** (base+alias candidate construction for `ImportFrom`, corrected `level - 1` relative-import climb, verified by execution against Radu's own `.hypothesis`/`..hypothesis` examples; consolidated positive/negative case matrix added, section 8) -- the ONLY remaining open item is the bare top-level `hypothesis` collision, named as a separate, non-blocking, inherently-unresolvable-by-AST-alone case | Yes -- whether to accept the collision risk via a documented project-convention declaration, or rename the package | Pending | Later stage |
 | 12 | #004 Finding 1 | Yes -- marking AND a concrete admission-policy recommendation (hard-reject `evaluation_mode == "EXPLORATORY"`, symmetric with Finding 2's own `research_mode` treatment, verified against the REAL `EvaluationRunRegistry`, not a self-reported field, section 10); the overclaim that re-running under FORMAL_DEVELOPMENT "produces fresh confirmatory evidence" RETRACTED this round -- the rule enforces procedural discipline only, the deeper selection-bias question stays open | Yes -- whether to adopt the hard-reject recommendation or a weaker marking-only response; separately, whether/how to define a genuine out-of-sample confirmation protocol | Pending | Later stage |
 | 13 | #004 Finding 10 | Yes (direction) | Yes -- intended-behavior question | Pending | Later stage |
-| 14 | #004 Finding 19 / Finding 11 | Yes -- config-identity wiring corrected this round to bind to a content-VERIFIED pinned `RegisteredConfigVersion` snapshot (recomputed hash vs. claimed label, not label-equality alone -- restoring a bar `spec004_remediation_proposal...md` already specified and this document had regressed below), reusing the ALREADY content-addressed `hypothesis_config_version` hash (section 7) | Yes -- whether to adopt this wiring | Pending | Later stage |
+| 14 | #004 Finding 19 / Finding 11 | Yes -- **corrected AGAIN this round (GPT's review, relayed by Radu, verified by execution on the actual `hypothesis.yaml`): the prior draft compared two INCOMPATIBLE hashes (a re-serialization's digest vs. the loader's own raw-text digest -- confirmed by execution to differ even for legitimate config) -- fixed by retaining the loader's own raw-text-based version unchanged and verifying external objects via STRUCTURAL CONTENT EQUALITY, never a second hash; the live-re-read policy is now explicitly MANDATORY, not "optional," resolving a prior internal contradiction** (section 7) | Yes -- whether to adopt this corrected wiring and the mandatory-live-re-read choice | Pending | Later stage |
 | 15 | #003 S2 | Yes -- but CORRECTED this round: S2 needs its OWN separate `run_id_scheme_version` literal marker, NOT row 14's config-content hash (a `build_run_id()` field-set change is a code change, invisible to any YAML hash) -- two distinct mechanisms now, not one shared wiring as previously drafted (section 7) | Yes -- whether to adopt the separate `run_id_scheme_version` marker | Pending | Later stage |
 | 16 | #003 S1 | N/A -- scope question, not a mechanism gap | Yes -- responsibility (code vs. documented trust boundary) | Pending | Later stage |
 | 17 | #003 F1 (complete behavior) | Partial -- same-target-session mechanism and 4-way check complete, distinguishing bar-missing from bar-present-with-null-price (section 1); calendar sourcing recommendation (relocate to Data Foundation) now has a stated consequence and regression (section 2); dependency direction still open; sub-daily timeframes out of scope | Yes -- the data-gap status name(s); the calendar sourcing/relocation decision (recommendation given, not yet approved) | Pending | Later stage |
@@ -1486,11 +1604,29 @@ regression, not docs-only):** the equal-per-security-weight case
 reduces BYTE-IDENTICAL to today's existing plain-mean
 `stratified_permutation_p_value()` (same observed value, same p-value,
 verified this round on a toy fixture -- the natural backward-
-compatibility lock); a skewed-weight toy fixture's hand-computed
-weighted observed statistic is reproduced exactly (verified this round:
-a 2-row-vs-1-row fixture mirroring section 3's own asymmetry); every
-EXISTING test currently covering `stratified_permutation_p_value()`
-re-run and confirmed to still pass under equal weights.
+compatibility lock); every EXISTING test currently covering
+`stratified_permutation_p_value()` re-run and confirmed to still pass
+under equal weights. **For UNEQUAL weights, corrected this round
+(GPT's review, relayed by Radu): the prior draft verified only the
+observed statistic, never the actual p-value mechanics under unequal
+weights -- a real gap, since the observed statistic matching alone
+does not prove the PERMUTATION/enumeration logic itself is correct.**
+**NEW -- full exhaustive-enumeration regression, independently
+verified this round:** signature `[8]`; baseline rows `A=[0,2]`
+(2 rows), `B=[4]` (1 row), `k=2`; fixed per-row baseline weights
+`[1/4, 1/4, 1/2]`; observed difference `8 - 2.5 = 5.5` (verified by
+exact-fraction execution); all `4! = 24` orderings of the four pooled
+values across the four FIXED positions (1 signature slot, 3 weighted
+baseline slots); two-sided test with ties counted as "at least as
+extreme" gives EXACTLY `8/24 = 1/3` (verified by exhaustive execution,
+not sampled). **This exact enumeration regression must be kept
+DISTINCT from, and never conflated with, a Monte Carlo estimate using
+the existing add-one continuity correction** (`(extreme+1)/
+(iterations+1)`, as `permutation_p_value()`/`stratified_permutation_p_
+value()` already use for the iteration-sampled case) -- the exhaustive
+count verifies the MECHANICS of the weighted enumeration itself; it
+does not and cannot validate the exchangeability assumption, which
+remains the separate, open question above.
 
 **Section 6 (bootstrap/F3):** NEW -- `time_block_bootstrap_
 replicates()`'s extended `list[tuple[str, str, float]]` signature
@@ -1515,22 +1651,33 @@ to a sibling module, per the corrected `level - 1` climb); `from
 beyond-root boundary, own diagnostic, neither flagged nor silently
 passed -- verified this round to trigger at `level=3`, not `level=4`).
 
-**Section 7 (config identity) + S2 (run-id scheme), corrected and now
-TWO separate items, not one:** config identity -- a correct-content-
+**Section 7 (config identity) + S2 (run-id scheme), corrected AGAIN
+this round -- the verification mechanism itself was fixed, so these
+regressions are restated against the CORRECTED design, not the
+incompatible-hash version:** config identity -- a correct-content-
 WRONG-label case (a hand-built or mutated-before-freeze object whose
-claimed version string doesn't match its actual content) is REJECTED;
-a config mutated between approval and registration is rejected against
-the PINNED, content-verified snapshot (not a second independent
-re-read); a check that passes operates on the pinned snapshot
-afterward, not the original mutable object re-read again -- all three
-already specified in `spec004_remediation_proposal_2026-10-04.md`'s
-own "Required regression coverage" for Finding 19/GPT-G6, collected
-here by reference, corrected to replace this document's own previously
-weaker (label-equality-only) draft. S2 -- SEPARATELY, a regression
-asserting two runs differing only in `horizons` now produce different
-`evaluation_run_id`s under the NEW, distinct `run_id_scheme_version`
-marker (not the config hash, which would stay unchanged by this
-code-only change).
+claimed version string doesn't match its actual content) is REJECTED
+via STRUCTURAL CONTENT EQUALITY against the registered snapshot (never
+via a second, independently-recomputed hash, which this round's own
+execution confirmed would not even match for LEGITIMATE configs); a
+config mutated between approval and registration is rejected by the
+now-MANDATORY live re-read against the pinned, content-verified
+snapshot; a check that passes operates on the pinned snapshot
+afterward, not the original mutable object re-read again; Discovery's
+own exact multi-source combination rule (`"".join(raw_texts)` before
+hashing) preserved byte-for-byte in the registered snapshot, never
+replaced by a different combination rule -- all specified in
+`spec004_remediation_proposal_2026-10-04.md`'s own "Required
+regression coverage" for Finding 19/GPT-G6, collected here by
+reference. S2 -- SEPARATELY, and corrected this round: a regression
+asserting two runs with IDENTICAL config and every other hashed field
+but DIFFERENT `run_id_scheme_version` produce DIFFERENT `evaluation_
+run_id`s -- proving the scheme marker is inside `build_run_id()`'s own
+fingerprint INPUT, not merely a sibling provenance field (a provenance-
+only field would not force this); a SEPARATE regression asserting two
+runs differing only in `horizons` (same scheme) also produce different
+ids, showing the two axes (config/fields vs. scheme) are each
+independently captured by the fingerprint.
 
 **Section 9 (#003 F2a/F2b/F6/G2, already specified there in full,
 collected here by reference):** F2a -- a `SignatureSet` built via
@@ -1573,10 +1720,17 @@ checklist until this round):**
   `exit_execution_policy`).
 - **Finding 16 (GPT-G3):** the batch-internal simulated-sequential dry
   run catches a conflict BETWEEN two items of the SAME batch (not only
-  against the pre-batch registry state) AFTER at least one variant in
-  that batch has already been successfully written, AND a conflict
-  where the hypothesis id pre-existed as a DRAFT before the call --
-  both must leave the registry in the exact pre-call state.
+  against the pre-batch registry state) AFTER an earlier item has
+  already been inserted into the dry run's own VIRTUAL state --
+  **wording corrected this round (GPT's review, relayed by Radu): NOT
+  "after it has been written" -- this mechanism never performs a real
+  write until the ENTIRE simulated sequence has passed conflict-free,
+  so no rollback of a real write is ever needed or offered; demanding
+  a test for a conflict found after a REAL write would wrongly imply
+  a rollback capability this design does not provide** -- AND a
+  conflict where the hypothesis id pre-existed as a DRAFT before the
+  call; both must leave the registry in the exact pre-call state (no
+  real write having occurred in either case).
 - **Finding 17 (GPT-G4):** every public-API transition path into
   PREREGISTERED is rejected, AND the legitimate existing use of
   `register()` (idempotent re-registration of an ALREADY-PREREGISTERED
@@ -1594,29 +1748,20 @@ checklist until this round):**
 
 **No code or test was changed to produce this revision. This round's
 verification was, again, isolated Python execution only -- never the
-project's own test suite:** the `A`/`B`/`C` session-weighting
-counterexample disproving the second "impossibility" claim (section
-3, verified: uniform security AND session margins coexist); the
-weighted- vs. raw-`Counter` session-diagnostic comparison (confirming
-the true `5%`/`95%` vs. a misleading `~9%`/`~91%`, section 3); the
-weighted-permutation-estimator design's equal-weight-reduces-to-today
-property and its skewed-weight toy fixture, both verified on
-executable fixtures (section 5); the corrected AST relative-import
-boundary verified against real Python's own `importlib.util.
-resolve_name()` (`...x` from a 2-deep package raising exactly as
-predicted, section 8). This round's source grounding also included
-re-reading `evaluation/engine.py` (FORMAL_DEVELOPMENT's actual, narrower
-guarantees), `hypothesis/validation/provenance.py`'s `check_
-provenance_matches_run()` in full (confirming it does not check
-`mode` today), `evaluation/models/entities.py` (`EvaluationRunRegistry.
-mode`, `EvidenceProfile.evaluation_mode`), all three config loaders
-again (confirming config-content identity and `build_run_id()`'s own
-scheme identity are genuinely separate axes), and
-`spec003_remediation_proposal_2026-10-04.md`'s S2 section plus
-`spec004_remediation_proposal_2026-10-04.md`'s own "Required
-regression coverage" section in full (both already specifying
-requirements this document's own revision 6 draft had fallen short
-of) -- no project test suite was run. Baseline `3cdc532`, historical
+project's own test suite:** three hash computations on the ACTUAL
+`hypothesis.yaml` file in this repository -- `sha256(raw text)`,
+`sha256(canonical JSON of the parsed dict)`, and `sha256(re-serialized
+YAML of the same dict)` -- confirming all three differ, grounding the
+config-verification fix (section 7); the exhaustive `4! = 24`
+enumeration of the weighted-permutation toy fixture (signature `[8]`,
+baseline `A=[0,2]`/`B=[4]`, weights `[1/4,1/4,1/2]`), confirming
+`observed = 5.5` and exact `p = 8/24 = 1/3` (section 5, new this
+round). This round's source grounding also included re-reading
+`discovery/config/loader.py` (confirming its own exact multi-source
+raw-text-combination rule, preserved rather than replaced) and
+re-confirming `spec003_remediation_proposal_2026-10-04.md`'s S2
+section's own already-correct `run_id_scheme_version` framing -- no
+project test suite was run. Baseline `3cdc532`, historical
 acceptances, and the Spec #005/Batch 3 pause are unchanged. Findings
 reconciliation remains closed (both specs, within each review's own
 declared scope);
