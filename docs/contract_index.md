@@ -590,7 +590,37 @@ is not itself the audit.
      implementation plan with stages and acceptance criteria, for
      execution authorization; the eventual result must be demonstrated
      on two separate axes (technical correctness and strategy
-     performance), never conflated.
+     performance), never conflated. **Revision 4, this round (GPT's
+     review, relayed by Radu): a proposal Claude writes does not
+     automatically become a shared GPT-Claude decision -- the registry
+     now records proposal and review verdict separately per item.**
+     Six items corrected: A1 gains the decisive PARTIAL-common-support
+     regression (the whole comparison goes `None`, not only the
+     zero-support case); A3's "zero #004 impact" claim is wrong --
+     the quantile convention determines `baseline_iqr`, which feeds
+     `standardized_effect` into `EvidencePacket`/Research Queue, the
+     same real consequence as A1, just via the scale denominator rather
+     than the numerator; A4 is corrected substantially -- accepting the
+     estimator's mechanics is not accepting its p-values as validated
+     evidence, so a new `exchangeability_status` field keeps this
+     mechanism's `raw_p`/`adjusted_p` out of automated Research Queue
+     ranking until a dependency-adequate method exists (BH correction
+     does not repair an invalid p-value); E1's known limitation is
+     restated as a present gap in today's in-memory registry, not one
+     that only appears after a future storage migration; B3 is
+     reframed -- identifying an adequate calendar source is GPT/Claude's
+     own research task, escalated to Radu only if a real cost or
+     commitment results, not a forced binary upfront; **J1's proposal
+     is rejected outright** -- `docs/spec003_remediation_proposal_2026-
+     10-04.md`'s own S1 section already specifies a finite-and-positive
+     price check routing to `INVALID_INPUT`, so "no design exists" was
+     false, and GPT's decision (code enforcement, applied to both entry/
+     exit and benchmark prices) is adopted instead. G2 gains an
+     architecture constraint (any future protocol must be the one
+     genuine use of Spec #003's own existing Locked OOS boundary, never
+     a parallel mechanism, never reused for calibration) without being
+     designed yet. Implementation remains not authorized; the next step
+     is a separate implementation plan.
    - **Spec #004: two rounds done (2026-10-04).** Round 1 (Claude
      alone): a fresh, high-effort independent re-verification pass,
      requested by Radu specifically to finish before the joint F1-F6
