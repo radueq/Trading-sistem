@@ -509,29 +509,53 @@ is not itself the audit.
      implementation/acceptance of any fix is NOT AUTHORIZED.** Now
      joined with #004's own remediation design in
      `docs/joint_remediation_design_003_004_2026-10-04.md`
-     (2026-10-04, revision 3, per GPT's own recommendation once both
-     audits closed). **Revision 3 corrects eight substantive problems
-     GPT's own follow-up review found in revision 2's claimed-complete
-     mechanisms** -- a genuine arithmetic error in the weighted-IQR
-     worked example (verified by direct execution this round: the
-     original example's claimed direction was backwards), F1's
-     classification and return calculation resolving to two different,
-     uncoordinated exits under a data-gap scenario (now fixed by using
-     one target session for both), the reused calendar object being a
-     plain constructor rather than a verified data source (and
-     importing it from `backtest` reversing this project's own
-     one-way module dependency direction), the per-security baseline
-     weighting leaving within-bin cross-session universe-size variation
-     unaddressed, the permutation-test extension's null hypothesis
-     never having been stated, #004 Finding 14's fingerprint omitting
-     exit content entirely, Finding 15's uniqueness key being too
-     coarse, and two further mechanism gaps (config immutability,
-     the AST guard's matcher logic). The sign-off checklist now
-     separates genuinely complete, ready-to-approve mechanisms from
-     those downgraded back to "design advanced, not complete" --
-     several of revision 2's rows moved to the second category. Design
-     only, not implementation; no code or test changed, no tests
-     rerun.
+     (2026-10-04, revision 4, per GPT's own recommendation once both
+     audits closed). **Revision 4 is a self-contained rewrite
+     (not a delta against revision 3), fixing a demonstrated
+     mathematical defect GPT's own follow-up review found in
+     revision 3's weighted-quantile algorithm plus six further
+     consolidation corrections.** The quantile defect: revision 3's
+     rank-based algorithm correctly reproduced Python's `inclusive`
+     convention for literal unit/count weights, but is NOT
+     scale-invariant for genuinely relative weights -- verified by
+     direct execution with an exact-arithmetic counterexample (three
+     different Q1/median/Q3 answers for the identical relative
+     distribution scaled three different ways). Revision 4 replaces it
+     with the midpoint/Hazen convention (`P_i = (C_i - 0.5*w_i)/W`),
+     verified scale-invariant by execution across the same three
+     scalings, with the explicit, declared tradeoff -- stated for
+     Radu's own approval, not silently chosen -- that this convention
+     does NOT reproduce `inclusive` at equal weights. The worked
+     early/late-bin IQR example is recomputed with exact fraction
+     arithmetic under the corrected algorithm, giving a third
+     directional answer (reweight IQR very slightly WIDER than
+     collapse, reversing both revision 2's and revision 3's claimed
+     directions), explicitly flagged as fixture-and-convention-
+     dependent rather than a stable fact. Further corrections: F1's
+     mis-indexed secondary worked example is withdrawn (an entry+N=2
+     example had the wrong target session); the permutation-test
+     section now states that validity depends on full exchangeability,
+     not merely marginal distributional equality, and no longer
+     claims block permutation is unnecessary without defining it;
+     the bootstrap/CI design separates the per-replicate weighted
+     ESTIMATOR from the (unweighted) percentile INTERVAL CONSTRUCTION,
+     and F3's common-support restriction is extended to the
+     signature's own side (not just the baseline side, which left the
+     original population-mismatch bug reachable one level down);
+     config immutability is redesigned as a full recursive freeze
+     covering nested lists, not only dicts; the AST guard's
+     component-membership matcher is kept but now explicitly documents
+     an inherently unresolvable case -- the bare name `hypothesis`
+     collides with a real third-party Python testing library, so no
+     AST-only fix can disambiguate a hypothetical future third-party
+     import from this project's own package. The sign-off checklist
+     is restructured into four separate axes (design completeness /
+     contractual decision needed / Radu's own approval / implementation
+     plus subsequent verification), with implementation and regression
+     execution explicitly stated as never a precondition for the
+     design-completeness column. Design only, not implementation; no
+     code or test changed, no project test suite run -- only isolated
+     mathematical checks executed via inline Python this round.
    - **Spec #004: two rounds done (2026-10-04).** Round 1 (Claude
      alone): a fresh, high-effort independent re-verification pass,
      requested by Radu specifically to finish before the joint F1-F6
