@@ -1,30 +1,42 @@
-# Joint Remediation Design -- Spec #003 + Spec #004 (2026-10-04, revision 6)
+# Joint Remediation Design -- Spec #003 + Spec #004 (2026-10-04, revision 7)
 
-**Status: DESIGN ONLY. Implementation NOT AUTHORIZED.** Revision 6 is
-a targeted correction of revision 5 (not a full rewrite -- revision 5
-is confirmed to have closed its own prior round's observations: the
-bar-missing/null-price split, the permutation/bootstrap overclaim
-retractions, G3's batch-simulating dry run with its stated
-preconditions, the F2a/F2b/F6 reintegration, and the AST-guard
-mislabeling fix). This round, per Radu's own explicit instruction,
-does three things: (1) fixes three further, concrete technical defects
-GPT's follow-up review of revision 5 found (relayed by Radu,
-independently re-verified this round by execution and by re-reading
-`proposals/validator.py` and `registry/hypotheses.py`'s
-`materialize_variants()` in full) -- a scope error in the `R_i`
-quantile-compatibility claim, two remaining resolution bugs in the
-corrected AST algorithm, and a real gap in both of Finding 14's
-options for tying cached validation to proposal content; (2) turns
-five previously-open design questions (calendar sourcing, within-bin
-session weighting, the permutation null-model choice, the config/
-versioning epoch marker, and #004's EXPLORATORY-evidence admission
-policy) into concrete recommendations, each with its own stated
-consequence and regression, not merely a list of alternatives; (3)
-adds a consolidated regression checklist (new section 12) collecting
-every test named across this document, rather than leaving them
-scattered. This review concerns remediation DESIGN only; it does not
-reopen findings reconciliation (closed, both specs, within each
-review's own declared scope) and does not authorize implementation.
+**Status: DESIGN ONLY. Implementation NOT AUTHORIZED.** Revision 7 is
+a targeted correction of revision 6 (not a full rewrite -- revision
+6's three technical defect fixes are confirmed largely integrated:
+the narrowed `R_i`/`inclusive` claim, the non-finite hard-fail
+contract, the AST base+alias candidate construction, and the
+insufficiency of Finding 14's cache-preserving option, with gate-time
+revalidation confirmed as the right direction). GPT's follow-up review
+of revision 6 (relayed by Radu, independently re-verified this round
+by execution and by re-reading `evaluation/engine.py`,
+`hypothesis/validation/provenance.py`, all three config loaders, and
+`spec004_remediation_proposal_2026-10-04.md`'s own "Required
+regression coverage" section) found revision 6's NEW recommendations
+introduced their own further problems, most importantly: **config-
+content identity and `build_run_id()`'s own SCHEME identity are two
+different axes -- a config-content hash cannot mark a code-only
+fingerprint-field change, and revision 6 conflated them; its config-
+verification mechanism had also regressed below a bar this project's
+own earlier `spec004_remediation_proposal_2026-10-04.md` document
+already specified for the same finding.** Also corrected this round:
+a second false "impossibility" claim (session-level weighting,
+disproven by a verified counterexample) and a diagnostic that would
+have understated the real skew by roughly half; "ship permutation
+as-is, docs-only" was wrong once F4+F5's weighting is adopted (now a
+designed, verified weighted-estimator mechanism, kept separate from
+the still-open exchangeability-acceptance question); a linkage gap and
+a timing error in the baseline-designation fix; an overclaim that
+re-running EXPLORATORY evidence under FORMAL_DEVELOPMENT produces
+"fresh confirmatory evidence" (retracted; the rule's actual, narrower
+guarantee restated); two further resolution bugs in the AST guard
+(the relative-import boundary, verified against real Python's own
+`importlib.util.resolve_name()`); a stray false quantile claim in the
+regression matrix; several regressions missing from the section-12
+consolidated checklist; and a mis-attribution of GPT's own technical
+recommendations as Radu's personal preferences. This review concerns
+remediation DESIGN only; it does not reopen findings reconciliation
+(closed, both specs, within each review's own declared scope) and does
+not authorize implementation.
 
 **Checklist convention used throughout (Radu's own structure):** every
 item is tracked on four separate axes, never collapsed into one
@@ -206,51 +218,74 @@ weight = `W_b/20` = 5% of the bin; session 2's = `W_b/20 +
 security's total weight equal) and does NOT claim to equalize
 session-level representation -- that is a separate, unaddressed
 property, possibly also within SS74C's "large universe periods"
-language. **Concrete recommendation this round (per Radu's own request -- a
-recommendation with consequences, not only alternatives):** do NOT add
-a further within-bin session-level normalization layer now. Two
-reasons: (1) layering a session-level normalization on top of the
-per-security formula would, in general, break the per-security
-formula's own already-agreed property (every security's TOTAL weight
-within a bin equal) -- the two objectives (equal security weight,
-equal session weight) cannot both hold simultaneously except in the
-degenerate case where every security appears in exactly the same
-sessions; (2) this project already has an established, precedented
-pattern for exactly this situation -- `statistics/concentration.py`'s
-`compute_concentration()` is a PURELY DESCRIPTIVE diagnostic (its own
-docstring: "feeds no significance calculation") over a signature's own
-episode security distribution, added specifically so a concentration
-problem is "visible, not buried" without being silently folded into
-the weighting itself.
+language.
 
-**Recommended mechanism, same pattern, baseline side:** add an
-analogous, purely descriptive diagnostic over the BASELINE pool's
-own session-date distribution within each bin (same `Counter`-based
-shape as `compute_concentration()`, keyed by session date instead of
-security id), surfaced as a new field or via `warnings` on
-`BaselineComparison` -- NEVER consumed by `stratified_baseline_point_
-estimate()` or any weight/significance formula. **Consequence:** zero
-change to the already-agreed per-security weighting's own behavior;
-Radu's own example (1 security/2 sessions vs. 9 securities/1 session,
-5%/95% split) becomes VISIBLE in the output rather than silently
-absorbed, without this document inventing a second, possibly-
-conflicting weighting objective. **If this diagnostic, once
-implemented and run against real data, shows severe session-level
-skew is common and distorts reported results in practice, THAT
-finding -- not a decision made here -- would be the trigger for
-designing a real second mechanism** (mirroring the exact "diagnostic-
-first, mechanism-only-if-shown-needed" philosophy section 5 below
-reaffirms for the permutation/block question, not a new philosophy
-invented for this section alone). **Regression:** a test asserting the
-new session-concentration diagnostic correctly reports a 1-security/
-2-sessions vs. 9-securities/1-session bin's own session shares (e.g.
-reproducing Radu's own 5%/95% example as the diagnostic's OWN reported
-numbers, not as a weighting outcome); a test asserting
-`stratified_baseline_point_estimate()`'s own output is byte-identical
-before and after this diagnostic is added (proving it is additive,
-not a behavior change). **Radu's own approval needed:** whether to
-adopt the diagnostic-only recommendation, or require a real second
-weighting mechanism instead -- not assumed by this document.
+**Impossibility claim RETRACTED this round (GPT's review, relayed by
+Radu, verified by execution): equal per-security weight and equal
+per-session weight are NOT mutually exclusive except in the degenerate
+same-sessions case -- that was a false general claim.** Counterexample,
+verified: `A` and `B` each present in sessions `S1` and `S2` (weights
+`1/4` and `1/12` respectively), `C` present only in `S2` (weight
+`1/3`). Security totals: `A=B=C=1/3` each (uniform). Session totals:
+`S1=S2=1/2` each (ALSO uniform) -- despite `A`/`B` and `C` having
+DIFFERENT presence patterns (2 sessions vs. 1). Both margins can be
+uniform simultaneously under a non-trivial joint weighting; whether
+that is ACHIEVABLE for this project's actual observed data (whose
+presence structure is not chosen, unlike the counterexample) is a
+separate, structure-dependent question, not a closed impossibility. A
+naive normalization layered mechanically on top of the existing per-
+security formula could still break its agreed property in practice --
+that narrower, practical risk stands -- but "impossible in general" is
+withdrawn.
+
+**Diagnostic mechanism CORRECTED this round -- a raw row-count
+`Counter` understates the real weighted skew, verified by execution:**
+for Radu's own 1-security/2-sessions vs. 9-securities/1-session
+example, a row-count `Counter` over session dates (mirroring
+`compute_concentration()`'s own unweighted-row-counting shape
+literally) gives `S1=1/11≈9.09%`, `S2=10/11≈90.91%` -- NOT the `5%`/
+`95%` figure that actually motivated this concern, which comes from
+the WEIGHTED per-security formula (`w=W_b/(k*n_i)`) applied to the
+SAME example, verified: `S1`'s total weight (`A`'s one `S1` row at
+`W_b/20`) is exactly `5%`, `S2`'s (`A`'s `S2` row plus the 9 others'
+`W_b/10` each) is exactly `95%`. **A row-count diagnostic would
+misreport the actual influence skew as roughly half its true size --
+the diagnostic must sum ROW WEIGHTS per session, not count rows:**
+`session_mass[t] = sum(w_row for every row dated t)` (using the SAME
+per-security `w_row` already computed for the point estimate), then
+normalize within the bin -- NOT a `Counter` of raw row occurrences.
+
+**Concrete recommendation, corrected (per Radu's own request -- a
+recommendation with consequences, not only alternatives):** add the
+WEIGHTED `session_mass` diagnostic above (not a plain `Counter`),
+surfaced as a new field or via `warnings` on `BaselineComparison`,
+NEVER consumed by `stratified_baseline_point_estimate()` or any
+weight/significance formula -- still a purely descriptive addition,
+same category as `compute_concentration()`'s own established pattern,
+just corrected to actually report WEIGHTED influence rather than raw
+row counts. **Consequence:** zero change to the already-agreed per-
+security weighting's own behavior; Radu's own example now becomes
+visible as its TRUE `5%`/`95%` split, not a misleadingly milder
+`9%`/`91%`. **This diagnostic, by itself, does NOT remedy the
+within-bin session-level variation it reports -- it only makes it
+visible.** Accepting the diagnostic as a SUFFICIENT response (rather
+than requiring an actual further weighting mechanism) is its own
+explicit contractual decision against SS74C's own text, not settled
+by adding the diagnostic -- stated precisely this round, not implied.
+**If the diagnostic, once implemented and run against real data, shows
+severe session-level skew is common and materially distorts reported
+results, THAT finding would be a candidate trigger for designing a
+real second mechanism** (mirroring the "diagnostic-first" philosophy
+section 5 below also uses for the permutation/block question) -- not
+decided here either way. **Regression:** a test asserting the
+corrected WEIGHTED diagnostic reproduces the true `5%`/`95%` split for
+Radu's own example (not the `9%`/`91%` a row-count `Counter` would
+give); a test asserting `stratified_baseline_point_estimate()`'s own
+output is byte-identical before and after this diagnostic is added.
+**Radu's own approval needed:** whether the weighted diagnostic is a
+sufficient response to SS74C's own text, or whether a real second
+weighting mechanism is required instead -- not assumed by this
+document.
 
 ---
 
@@ -345,10 +380,12 @@ tie-free, equal-weight input; loses that property the moment
 mandatory aggregation collapses any tie, which can happen even at
 equal weights). Both remain live candidates for Radu's own choice; `R_i`
 is a disproof of revision 4's impossibility claim, not an automatic
-production recommendation.** **Radu's own stated leaning, noted here
-without closing column (c): midpoint with mandatory tie-aggregation,
-its properties declared explicitly as above** -- a recommendation,
-not yet the document's own formal approval.
+production recommendation.** **GPT's own stated recommendation,
+relayed by Radu -- corrected attribution this round: this is GPT's
+technical recommendation, not Radu's own personal preference, absent
+his own explicit confirmation -- noted here without closing column
+(c): midpoint with mandatory tie-aggregation, its properties declared
+explicitly as above.**
 
 **A second, independent defect found this round (GPT's review,
 relayed by Radu): the midpoint convention (and `R_i`, since it is
@@ -411,7 +448,12 @@ cannot justify a finiteness-based exclusion policy here):**
 
 **Recommended regression matrix, not yet implemented:** unit-weight
 reproduction of `statistics.quantiles(..., method="inclusive")` on
-TIE-FREE input (both conventions agree here); the `[0,0,10]`
+TIE-FREE input by `R_i` specifically -- **corrected this round (GPT's
+review, relayed by Radu): midpoint does NOT reproduce `inclusive` even
+on tie-free, equal-weight input** (verified in 4.2: `[0,10,20]` gives
+midpoint `[2.5,10,17.5]` vs. `inclusive`'s `[5,10,15]` -- a prior draft
+of this matrix wrongly said "both conventions agree here"; only `R_i`
+does); the `[0,0,10]`
 tie-at-equal-weight case above, confirming midpoint and `R_i` now
 DISAGREE post-aggregation (not a bug to fix, a property to regression-
 lock); weight-rescaling invariance across at least three distinct
@@ -510,33 +552,76 @@ raw-row target count `n_sig` doesn't align with whole-security block
 boundaries) -- neither is presented as the default or the "standard"
 choice going forward.
 
-**Concrete recommendation this round (per Radu's own request): ship
-value-level permutation as-is for now; defer block permutation --
-this is not a new choice invented here, it is the project's OWN
-already-stated position, confirmed by reading `comparison.py`'s own
-module docstring (lines 24-29) in full this round:** "a full two-way
-clustered permutation is a natural v2 refinement if the concentration/
-stability diagnostics ever show it's needed, not built speculatively
-now (Spec #003 SS47)." **This document's only correction to that
-existing position is to its CAVEAT's precision, not its decision:**
-the docstring's current wording ("does not model finer-grained
-dependence") should be tightened to state the actual required
-assumption named in section 5 above -- full exchangeability
-(conditional mutual independence plus a common distribution), not
-merely "finer-grained dependence" -- so a future reader sees the
-PRECISE gap, not a vague one. **Consequence:** no mechanism change;
-this is a documentation-only correction to an already-shipped,
-already-tested function's stated assumptions. **Regression:** none
-needed beyond what TEST(s) already cover `stratified_permutation_p_
-value()` -- no behavior changes, so no new test is required; the
-change is confined to the module docstring and to
-`docs/known_limitations_spec003.md` (or wherever this limitation is
-currently user-facing), both doc-only edits, consistent with this
-being a design document, not an implementation. **The trigger for
-actually building block permutation stays exactly what the existing
-docstring already names:** the concentration/stability diagnostics
-(section 3's new session-level diagnostic among them) showing a real
-problem in practice -- not decided preemptively here.
+**Corrected this round (GPT's review, relayed by Radu): "ship as-is,
+docs-only" is WRONG once F4+F5's per-security weighting is adopted for
+the baseline's own point estimate.** `stratified_permutation_p_value()`
+is confirmed, by re-reading `comparison.py` in full, to compute PLAIN,
+unweighted within-bin means (`sum(base_vals)/len(base_vals)`) on both
+the observed statistic and every permuted replicate. If the baseline's
+REPORTED point estimate becomes per-security-weighted (section 3) while
+this function stays plain-mean, the permutation test would be testing
+significance of a DIFFERENT quantity than the one actually reported --
+reintroducing an F3-style "reported effect and tested significance
+describe different populations" mismatch, one level over. **Two
+genuinely separate items follow, never collapsed into one:**
+
+1. **The estimator mismatch -- needs design, code, and regression (not
+   docs-only); DESIGNED in full this round, verified by execution:**
+   extend each bin's baseline side to carry `(security_id, value)` per
+   row (not a plain value list). Precompute each row's own FIXED
+   per-security weight ONCE from the TRUE baseline composition (section
+   3's existing `w = W_b/(k*n_i)` formula, scoped to this bin). Build
+   the pooled array exactly as today (`signature values ++ baseline
+   values`), but ALSO build a PARALLEL, FIXED weight array aligned to
+   the SAME positions (`None` for every signature-side position, the
+   precomputed weight for every baseline-side position) -- the weight
+   stays bound to its POSITION in the pool, never to whichever value a
+   shuffle later places there. For both `observed` and every permuted
+   replicate: shuffle the VALUES only; the signature-side statistic is
+   the plain mean of whichever values land in the (fixed-count,
+   fixed-position) signature slots; the baseline-side statistic is the
+   WEIGHTED mean of whichever values land in the baseline slots, using
+   each slot's OWN fixed weight (never recomputed from whatever
+   security the shuffled value happened to originally belong to).
+   **Verified by execution this round:** at equal per-security weights
+   (the degenerate case), this reduces BYTE-IDENTICAL to today's plain
+   test (same observed value, same p-value, same RNG-driven sequence,
+   confirmed on a toy fixture) -- a natural, automatic backward-
+   compatibility regression. At skewed weights (a 2-row vs. 1-row toy
+   fixture mirroring section 3's own asymmetry), the weighted observed
+   statistic correctly reflects the heavier security's own dominance,
+   verified against a hand-computed expected value. **Consequence:**
+   the function's signature changes (baseline side needs security
+   identity, not just values) -- a real code change, at implementation
+   time, not optional. **Regression:** the equal-weight-reduces-to-
+   today's-test property above, locked as its own test; the skewed-
+   weight toy fixture's hand-computed expected observed value, locked
+   as its own test; every EXISTING test currently covering
+   `stratified_permutation_p_value()` re-run and confirmed to still
+   pass under equal weights specifically (proving non-regression for
+   every case that doesn't exercise the new weighting).
+2. **The exchangeability-acceptance question -- stays exactly what it
+   was, genuinely docs-only, and does NOT change with the estimator
+   fix above:** whether to accept the value-level procedure's own
+   required assumption (full exchangeability, not merely marginal
+   equality) as a documented, temporary limitation for V1, or to
+   require block permutation first. This remains the project's OWN
+   already-stated position otherwise, confirmed by reading
+   `comparison.py`'s own module docstring (lines 24-29): "a full
+   two-way clustered permutation is a natural v2 refinement if the
+   concentration/stability diagnostics ever show it's needed, not
+   built speculatively now (Spec #003 SS47)." **This document's
+   correction to that existing position is still only to its CAVEAT's
+   precision** (state "full exchangeability," not the vaguer "finer-
+   grained dependence") **-- but this acceptance decision is now
+   explicitly scoped to apply to the WEIGHTED estimator above, once
+   implemented, not to the plain-mean version it replaces.** Diagnostics
+   alone (concentration/stability/the new session-mass diagnostic) do
+   not by themselves certify that the weighted test's own p-values are
+   correctly calibrated -- they are a trigger for building block
+   permutation if they show a problem, never a substitute for defining
+   it. **The trigger for actually building block permutation stays
+   exactly what the existing docstring already names.**
 
 **The `[5,7]` vs. `[3,4]` example, scoped correctly (not previously
 scoped):** exhaustive enumeration over `C(4,2)=6` splits, two-sided
@@ -626,42 +711,88 @@ reaches `hypothesis_config_version`/the versioning-epoch marker)
 remains open, named here rather than silently assumed solved.
 
 **Concrete recommendation this round (per Radu's own request),
-grounded by reading all three config loaders in full:** the
-"versioning-epoch marker" does not need a NEW mechanism invented --
-`hypothesis_config_version`, `evaluation_config_version`, and
-`discovery_config_version` are ALREADY content-addressed, confirmed
-this round: all three loaders (`hypothesis/config/loader.py`,
-`evaluation/config/loader.py`, `discovery/config/loader.py`) compute
-`sha256(raw_file_text)[:12]` (or, for discovery, the concatenation of
-its several raw config texts) fresh at every `load_config()` call --
-exactly the "a silent parameter change is structurally impossible to
-hide" discipline the `hypothesis.yaml` file's own comment already
-states. **The wiring is therefore:** `RegisteredConfigVersion.version`
-is set to this EXISTING hash, unchanged, carried into the recursively-
-frozen snapshot above; the three-way check becomes exact STRING
-EQUALITY between (a) this hash as recorded on the draft/proposal at
-build time (`StrategyHypothesis.strategy_config_version`/
-`HypothesisComplexitySnapshot.hypothesis_config_version`), (b) the
-same hash recorded on `HumanDecision`'s approval-time snapshot (new
-field, tying into Finding 14/section 10's own content-fingerprint
-binding), and (c) a FRESH `load_config()` call's hash at
-`preregister_hypothesis()` gate time. **Consequence, a genuine new
-behavior, not merely bookkeeping:** today, NOTHING checks that (a)/(b)
-still match (c) -- if `hypothesis.yaml` is edited between a human's
-approval and the actual preregistration call, the gate currently
-proceeds silently under the NEW config's rules while the human
-approved under the OLD one. This design makes that a HARD FAIL
-instead. **Regression:** a test that builds a draft and a
-`HumanDecision` under one `hypothesis.yaml` content, then mutates the
-config file's content (or substitutes a `HypothesisConfig` with a
-different raw text) before calling `preregister_hypothesis()`,
-asserting the gate now raises on the version mismatch -- distinct
-from the EXISTING TEST 63, which only checks the draft's own
-fields are self-consistent with its OWN claimed `definition_hash`,
-never against a freshly-reloaded, possibly-changed LIVE config.
-**Radu's own approval needed for:** adopting this wiring as the
-versioning-epoch marker (shared with #003's own S2, same mechanism,
-same three config loaders) -- not assumed by this document.
+grounded by reading all three config loaders in full -- CORRECTED
+this round (GPT's review, relayed by Radu) on two points: it had
+conflated two genuinely different "versions," and its own
+verification mechanism had regressed below what
+`spec004_remediation_proposal_2026-10-04.md`'s OWN "Required
+regression coverage" section already specified for this exact
+finding.**
+
+**Point 1 -- config-content identity and run-id SCHEME identity are
+two different axes, never one marker:** `hypothesis_config_version`,
+`evaluation_config_version`, and `discovery_config_version` ARE
+already content-addressed (confirmed this round: all three loaders
+compute `sha256(raw_file_text)[:12]` fresh at every `load_config()`
+call) -- this hash is the right identity for "has the YAML content
+changed," and nothing further needs inventing for THAT question.
+**But S2 (`build_run_id()`'s fingerprint gaining `security_ids`/
+`benchmark_security_id`/`data_as_of`/`horizons`) is a CODE/ALGORITHM
+change -- which FIELDS the fingerprint hashes -- that can happen with
+ZERO change to any YAML file's content. The config hash would stay
+byte-identical across that change, so it CANNOT serve as S2's own
+"scheme changed" marker** -- revision 6 wrongly proposed reusing it
+for both purposes. **Corrected: keep the existing config-content
+hashes for config identity, unchanged; introduce a SEPARATE, literal
+`run_id_scheme_version` constant (e.g. `"v2"`, bumped by hand whenever
+`build_run_id()`'s own field set changes) -- the same discipline
+already used elsewhere in this codebase for `OUTCOME_ENGINE_VERSION`/
+`HYPOTHESIS_ENGINE_VERSION`, not a hash of anything, since there is no
+file whose content tracks an algorithm's own field choices. This
+constant becomes a new field on `EvaluationRunRegistry`, included in
+the run's own provenance. Historical `evaluation_run_id`s computed
+under the OLD scheme are NEVER reinterpreted** -- exactly
+`spec003_remediation_proposal_2026-10-04.md`'s own S2 section already
+says, confirmed by reading it again this round.
+
+**Point 2 -- the verification mechanism had regressed; corrected to
+match this project's OWN earlier, more careful specification for this
+exact finding:** comparing three version-LABEL strings for equality
+does not verify the underlying OBJECT's actual content -- a hand-built
+or mutated-before-freeze object could carry the "correct" label while
+holding wrong data, and label equality alone would not catch it.
+**Confirmed this round: `spec004_remediation_proposal_2026-10-04.md`'s
+own "Required regression coverage" section (Finding 19/GPT-G6) already
+specifies the correct, stronger requirement** -- "the correct-content-
+wrong-`config_version`-label case... is rejected too; and a check that
+passes actually operates on the pinned snapshot afterward, not on the
+original mutable object re-read a second time." **This document's
+revision 6 draft of the mechanism did not meet that bar; corrected
+now:**
+1. `RegisteredConfigVersion` is a concrete object: `{content: <the
+   section-7 fully-frozen recursive structure>, version: <the
+   sha256 hash>}`, built ONCE per operation from a single
+   `load_config()` call.
+2. The version hash is RECOMPUTED from `content` itself (a canonical
+   re-serialization, hashed) and compared against the object's OWN
+   claimed `version` label -- catching a hand-built or mutated-before-
+   freeze object whose label doesn't match its actual content, which
+   label-only equality cannot catch.
+3. Every downstream check (the draft's own recorded version, `Human
+   Decision`'s approval-time snapshot, the gate-time check) operates
+   EXCLUSIVELY against THIS SAME verified, pinned object -- never
+   against a second, independently fresh-loaded config trusted without
+   the same verification.
+4. A FRESH `load_config()` re-read at gate time MAY additionally serve
+   as a secondary POLICY check ("has the config changed since this was
+   registered") -- but this is additional, never a replacement for
+   steps 1-3's binding to the pinned, content-verified snapshot itself.
+
+**Consequence, unchanged in spirit, now correctly mechanized:** today,
+nothing checks that a human's approval-time config snapshot still
+matches what's live at registration time; this design makes a
+mismatch a hard gate failure, via the verified pinned snapshot, not
+via label comparison alone. **Regression, corrected to match
+`spec004_remediation_proposal_2026-10-04.md`'s own existing
+specification (collected in section 12):** the correct-content-wrong-
+label case; the config-mutated-between-approval-and-registration case;
+a passing check operating on the pinned snapshot afterward, not a
+second independent re-read; PLUS, for S2 specifically, a regression
+asserting two runs differing only in `horizons` now produce different
+`evaluation_run_id`s, under the NEW, separate `run_id_scheme_version`.
+**Radu's own approval needed for:** adopting the config-identity wiring
+and the separate `run_id_scheme_version` marker -- two distinct
+mechanisms now, not assumed by this document.
 
 ---
 
@@ -738,24 +869,33 @@ auxiliary information only, never as a gate:**
    `node.level` -- level 1 means "this same package," not "climb one
    level up"), then `node.module`'s own components (if any) appended;
    from there, candidates are built exactly as in rule 2's `ImportFrom`
-   case (base alone, and base + each `alias.name`). **If `node.level -
-   1` exceeds the package tuple's own length (climbing past the `src/`
-   root), the import cannot be resolved to a definite namespace by
-   this rule at all -- flagged separately as its own diagnostic
+   case (base alone, and base + each `alias.name`). **Boundary
+   condition CORRECTED again this round (GPT's review, relayed by
+   Radu, verified against real Python's own `importlib.util.
+   resolve_name()` this round): the unresolvable "beyond top-level
+   package" case triggers when `node.level - 1 >= len(package tuple)`
+   -- NOT only when it strictly EXCEEDS the length, as a prior draft
+   of this rule said.** Verified by execution: `importlib.util.
+   resolve_name("...x", "evaluation.baseline")` (package tuple length
+   2, `level=3`, so `level-1=2`) raises Python's own `ImportError:
+   attempted relative import beyond top-level package` -- the
+   unresolvable case already triggers AT `level=3` from this 2-deep
+   package, not only at `level=4` as a prior draft claimed. **Flagged
+   separately as its own diagnostic**
    (`"relative import climbs above its package root, cannot verify
    architectural direction"`), never silently passed, never silently
-   assumed forbidden.** **Verified by execution against package
-   `("evaluation", "baseline")`:** `.hypothesis` (`level=1, module=
-   "hypothesis"`) resolves to `["evaluation", "baseline",
-   "hypothesis"]` -- first component `evaluation`, correctly NOT
-   flagged (it is `evaluation`'s own sibling module, confusingly named
-   but internal); `..hypothesis` (`level=2, module="hypothesis"`)
-   resolves to `["evaluation", "hypothesis"]` -- first component
-   `evaluation`, also correctly NOT flagged, for the same reason, one
-   level further up; a hypothetical `...hypothesis` climbing past
-   `evaluation` entirely (`level=4` from this 2-deep package) hits the
-   beyond-root case above. **Confirmed this round: zero relative
-   imports exist anywhere in `src/` today**
+   assumed forbidden. **Verified by execution against package
+   `("evaluation", "baseline")`, including the corrected boundary:**
+   `.hypothesis` (`level=1, module="hypothesis"`) resolves to
+   `["evaluation", "baseline", "hypothesis"]` -- first component
+   `evaluation`, correctly NOT flagged (it is `evaluation`'s own
+   sibling module, confusingly named but internal); `..hypothesis`
+   (`level=2, module="hypothesis"`) resolves to `["evaluation",
+   "hypothesis"]` -- first component `evaluation`, also correctly NOT
+   flagged, one level further up; `...hypothesis` (`level=3`) hits the
+   beyond-root case NOW, confirmed by `importlib.util.resolve_name()`
+   itself raising at this exact level, not at `level=4`. **Confirmed
+   this round: zero relative imports exist anywhere in `src/` today**
    (`grep -rn "^from \.\|^from \.\."` -> no matches) -- this closes a
    gap in the CONTRACT (a future relative import could otherwise slip
    past an absolute-only matcher, or be mis-resolved by the off-by-one
@@ -1017,11 +1157,13 @@ actually approved.
    re-reads the live proposal in full every time. Option (ii), even
    once corrected with the wider validation-input fingerprint above,
    still carries more fields and a staleness check for the sake of
-   avoiding one redundant validation pass. **Radu's own explicit
-   recommendation this round: option (i).** Neither is implemented;
-   formally, Radu's own choice, not assumed by this document alone --
-   but (i) is no longer presented as one of two equally-weighted
-   alternatives.
+   avoiding one redundant validation pass. **GPT's own explicit
+   recommendation, relayed by Radu, this round: option (i) --
+   corrected attribution (GPT's technical recommendation, not Radu's
+   personal decision absent his own confirmation).** Neither is
+   implemented; formally, Radu's own choice, not assumed by this
+   document alone -- but (i) is no longer presented as one of two
+   equally-weighted alternatives.
 
 **Methodological metadata -- the "existing separate mechanism" named
 precisely this round (GPT's review of revision 5, relayed by Radu:
@@ -1041,28 +1183,57 @@ whether that FIRST value was truthful, i.e. that it actually matches
 whatever was decided before any evidence/backtest existed, as opposed
 to being picked after the fact and simply never touched again.
 
-**Corrected source and verification, before the first write:** add an
-explicit field recording the pre-designated baseline horizon at
-PROPOSAL time -- e.g. `designated_baseline_bars: Optional[int]` on
-`HorizonCandidateSet` (set, if at all, when the proposal is first
-written, before any evidence exists to be biased by) -- EXCLUDED from
-`_horizon_fp()`/`hypothesis_fingerprint()`, the same exclusion
-discipline as `variant_tag` itself, since this is still methodology,
-not economic content. `preregister_hypothesis()` then reads
-`baseline_time_exit_bars` for its call to `materialize_variants()`
-FROM `proposal.horizon_candidates.designated_baseline_bars`
-exclusively -- never as a free argument supplied independently at the
-call site -- so the value written on first registration is
-traceable to a declaration made at proposal time, before backtesting,
-rather than trusted on the caller's unverified say-so. **Consequence:**
+**Corrected source, verification, and TIMING this round (GPT's review,
+relayed by Radu, catching two further gaps in the above):**
+
+**Timing, corrected:** "at proposal time, before any evidence exists"
+is WRONG -- Spec #004 proposals already, necessarily, consume Spec
+#003 Evaluation evidence (that is exactly what `EvidenceProvenance`
+is); evidence legitimately PRECEDES and motivates a proposal. The
+actual bias risk this designation guards against is hindsight
+temptation created by BACKTEST RESULTS (Spec #005) -- a horizon
+retroactively declared "the baseline" after seeing which one performed
+best in a backtest. **Corrected statement: the designation must be
+frozen before any Spec #005 backtest/exit-engine run ever executes
+using these materialized variants** -- not before evidence, which is
+both normal and required.
+
+**Linkage, corrected -- confirmed this round, a real gap in the design
+above:** `designated_baseline_bars` is (correctly) EXCLUDED from
+`_horizon_fp()`/`hypothesis_fingerprint()`, since it is methodology,
+not economic content -- but Finding 14's own approval-time
+`HumanDecision.content_fingerprint` (above) is built from exactly
+those SAME excluding component functions. **If `proposal` and `draft`
+are mutated TOGETHER after approval (the SAME scenario `spec004_
+remediation_proposal_2026-10-04.md`'s own "Required regression
+coverage" section already names for Finding 14 generally), a change to
+`designated_baseline_bars` made in lockstep with everything else would
+be invisible to BOTH the draft-vs-current-proposal comparison (since
+both sides moved together) AND the economic content fingerprint
+(since this field isn't part of what it hashes) -- it would simply
+never be checked by anything.** **Fix: add a SEPARATE field,
+`HumanDecision.approved_designated_baseline_bars: Optional[int]`,
+recorded independently at approval time (not derived from or folded
+into `content_fingerprint`), verified at the gate to equal the LIVE
+`proposal.horizon_candidates.designated_baseline_bars` -- its own
+explicit check, specifically because this field is, by design, outside
+the economic fingerprint's own coverage.** `preregister_hypothesis()`
+then reads `baseline_time_exit_bars` for its call to `materialize_
+variants()` FROM `proposal.horizon_candidates.designated_baseline_
+bars` exclusively, AFTER this separate check passes -- never as a free
+argument supplied independently at the call site. **Consequence:**
 closes the gap without touching the economic hash at all (the new
-field is proposal/draft-level methodology, structurally parallel to
-`variant_tag`, never part of any content-addressed identity).
-**Regression:** a test asserting `preregister_hypothesis()` rejects a
-call whose `materialize_variants()` invocation would tag a DIFFERENT
-horizon BASELINE_VARIANT than `proposal.horizon_candidates.
-designated_baseline_bars` declares (proving the source is actually
-enforced, not merely documented).
+field remains proposal/draft-level methodology, structurally parallel
+to `variant_tag`, never part of any content-addressed identity) --
+AND without relying on the economic fingerprint to catch a change it
+was never designed to catch. **Regression:** a test asserting
+`preregister_hypothesis()` rejects a call whose `materialize_
+variants()` invocation would tag a DIFFERENT horizon
+`BASELINE_VARIANT` than `proposal.horizon_candidates.designated_
+baseline_bars` declares; a SEPARATE test asserting rejection when
+`proposal`/`draft` are mutated TOGETHER after approval, changing
+`designated_baseline_bars` while leaving every economically-hashed
+field unchanged (the specific lockstep-mutation gap this round found).
 
 **Finding 15 (GPT-G2), complete contract:** (i) exactly one TIME_EXIT
 variant per `horizon_candidate_set.values` entry, no fewer and no
@@ -1153,19 +1324,68 @@ Finding 2 already treats a non-confirmed RESEARCH status as
 disqualifying outright, not merely flaggable; EXPLORATORY evidence
 (found via a less-constrained search, carrying a materially higher
 false-discovery risk than a FORMAL_DEVELOPMENT run) warrants the
-identical treatment on the EVALUATION side, for consistency, not a
-weaker marking-only response. **Consequence:** a hypothesis whose
-evidence traces to an EXPLORATORY run can no longer reach
-PREREGISTERED at all -- the SAME signature must be re-run under
-FORMAL_DEVELOPMENT first, producing fresh, confirmatory evidence,
-before it can be proposed; this is a real process consequence (an
-extra, mandatory Evaluation pass), not just a bookkeeping field.
-**Regression:** a test asserting `preregister_hypothesis()` rejects a
-proposal whose `source_evidence.evaluation_mode == "EXPLORATORY"`,
-mirroring the existing/recommended test pattern for Finding 2's
-`research_mode` rejection. **Radu's own approval needed:** whether to
-adopt the hard-reject policy, or a weaker marking-only response --
-not assumed by this document.
+identical PROCEDURAL treatment on the EVALUATION side, for
+consistency, not a weaker marking-only response.
+
+**Overclaim RETRACTED this round (GPT's review, relayed by Radu):
+re-running the SAME signature under FORMAL_DEVELOPMENT does NOT, by
+itself, "produce fresh, confirmatory evidence" -- that claim is
+withdrawn.** Confirmed by reading `engine.py` again this round:
+FORMAL_DEVELOPMENT's own actual guarantees are PROCEDURAL --every
+signature must already be PRE_REGISTERED (frozen before this
+particular evaluation run, with matching timeframe/discovery-version
+provenance) and the BH multiple-testing correction is applied across
+the family. **Neither guarantee makes the underlying HISTORICAL DATA
+new.** Re-running the identical signature over the identical historical
+window under a different mode label does not remove whatever
+selection bias was introduced when the signature was originally
+surfaced by a less-constrained EXPLORATORY search -- it is the same
+data, re-labeled, not a new confirmatory test. **Corrected statement:
+the hard-reject rule enforces the PROCEDURAL discipline FORMAL_
+DEVELOPMENT already provides (pre-registration, BH correction) -- it
+does NOT, by itself, resolve the deeper methodological question of
+whether the same pattern was already peeked at during the exploratory
+phase. Defining a genuine confirmation protocol (e.g. a requirement
+that the FORMAL_DEVELOPMENT run cover a held-out/out-of-sample period
+the exploratory search never touched) is a separate, substantive,
+NOT-resolved-here question -- Radu's own call on whether and how to
+define it, not implied by adopting this admission rule.**
+
+**A further gap, closed this round:** the admission check must verify
+`evaluation_mode` against the REAL `EvaluationRunRegistry` the
+evidence actually traces to, not only trust the caller-declared field
+inside `source_evidence` -- mirroring `check_provenance_matches_run()`'s
+own existing pattern (confirmed by reading it in full: it currently
+checks `evaluation_run_id`/engine and config versions/`signature_set_
+id`/`timeframe`, but NOT mode at all). Once `evaluation_mode` is added
+to `EvidenceProvenance` (marking, above), `check_provenance_matches_
+run()` must ALSO verify `evidence_provenance.evaluation_mode ==
+run_registry.mode` (note the field-name asymmetry: `EvaluationRunRegistry`
+calls its own field `mode`, not `evaluation_mode`) -- otherwise a
+caller could simply DECLARE `"FORMAL_DEVELOPMENT"` in `source_evidence`
+for evidence that actually came from a real `EXPLORATORY` run, and
+nothing would catch the lie.
+
+**Consequence:** a hypothesis whose evidence traces to an EXPLORATORY
+run can no longer reach PREREGISTERED at all, enforced against the
+REAL run record, not a self-reported field -- the SAME signature would
+need a genuine FORMAL_DEVELOPMENT run (ideally over data the
+exploratory phase never saw, per the open confirmation-protocol
+question above) before it can be proposed; this is a real process
+consequence, not just a bookkeeping field, and its actual statistical
+benefit is bounded by whatever confirmation protocol is (separately)
+defined. **Regression:** a test asserting `preregister_hypothesis()`
+rejects a proposal whose `source_evidence.evaluation_mode ==
+"EXPLORATORY"`, mirroring the existing/recommended test pattern for
+Finding 2's `research_mode` rejection; a SEPARATE test asserting
+rejection when `source_evidence.evaluation_mode` FALSELY claims
+`"FORMAL_DEVELOPMENT"` for evidence whose real `EvaluationRunRegistry`
+record shows `mode == "EXPLORATORY"` (the mode-vs-registry cross-check
+this round added). **Radu's own approval needed:** whether to adopt
+the hard-reject policy (with its now-honestly-stated, bounded
+benefit), or a weaker marking-only response; and separately, whether
+and how to define a genuine out-of-sample confirmation protocol --
+neither assumed by this document.
 
 **Finding 2 (research_mode), Finding 10 (exit-family count):**
 unchanged from the prior round -- reject `research_mode !=
@@ -1192,16 +1412,16 @@ change. A consolidated regression list follows in section 12.**
 | 6 | #004 Finding 2 | Yes | No | Pending | Later stage |
 | 7 | #004 Finding 18 | Yes | No | Pending | Later stage |
 | 8 | #004 Finding 16 (GPT-G3) | Yes -- batch-internal simulated-sequential dry run specified (fixes a partial-write gap found this round); explicit synchronous-execution precondition stated; exact 3-condition guarantee scope stated (section 10) | Whether that guarantee scope is sufficient, or a wider one is required | Pending | Later stage |
-| 9 | #004 Finding 14 (GPT-G1) | Partial -- `verify_draft_matches_proposal()`, `HumanDecision.content_fingerprint`, and the baseline-designation source/verification (`designated_baseline_bars`) all specified; option (i) (gate-time revalidation) now this document's explicit RECOMMENDATION, option (ii) corrected to require a second, WIDER validation-input fingerprint (covering `facts_from_evidence`/`interpretation`, confirmed this round as fields option (ii) would otherwise miss) if kept at all (section 10) | Yes -- (i) vs. corrected (ii); not a free choice between equals any more, (i) is recommended | Pending | Later stage |
+| 9 | #004 Finding 14 (GPT-G1) | Partial -- `verify_draft_matches_proposal()`, `HumanDecision.content_fingerprint`, and the baseline-designation source/verification (`designated_baseline_bars`, now with its OWN separate `approved_designated_baseline_bars` approval-time check, closing a lockstep-mutation gap found this round) all specified; the designation's own timing corrected to "before any Spec #005 backtest," not "before evidence" (#004 already consumes #003 evidence); option (i) (gate-time revalidation) GPT's own recommendation, relayed by Radu, option (ii) corrected to require a second, WIDER validation-input fingerprint (covering `facts_from_evidence`/`interpretation`) if kept at all (section 10) | Yes -- (i) vs. corrected (ii); not a free choice between equals any more, (i) is GPT's own recommendation | Pending | Later stage |
 | 10 | #004 Finding 15 | Yes, full-content key | No remaining design gap identified this round | Pending | Later stage |
 | 11 | #004 TEST 49 (AST guard, evaluation->hypothesis) | Partial -- **shared algorithm's two resolution bugs fixed this round** (base+alias candidate construction for `ImportFrom`, corrected `level - 1` relative-import climb, verified by execution against Radu's own `.hypothesis`/`..hypothesis` examples; consolidated positive/negative case matrix added, section 8) -- the ONLY remaining open item is the bare top-level `hypothesis` collision, named as a separate, non-blocking, inherently-unresolvable-by-AST-alone case | Yes -- whether to accept the collision risk via a documented project-convention declaration, or rename the package | Pending | Later stage |
-| 12 | #004 Finding 1 | Yes -- marking AND a concrete admission-policy recommendation added this round (hard-reject `evaluation_mode == "EXPLORATORY"`, symmetric with Finding 2's own `research_mode` treatment, section 10) | Yes -- whether to adopt the hard-reject recommendation or a weaker marking-only response | Pending | Later stage |
+| 12 | #004 Finding 1 | Yes -- marking AND a concrete admission-policy recommendation (hard-reject `evaluation_mode == "EXPLORATORY"`, symmetric with Finding 2's own `research_mode` treatment, verified against the REAL `EvaluationRunRegistry`, not a self-reported field, section 10); the overclaim that re-running under FORMAL_DEVELOPMENT "produces fresh confirmatory evidence" RETRACTED this round -- the rule enforces procedural discipline only, the deeper selection-bias question stays open | Yes -- whether to adopt the hard-reject recommendation or a weaker marking-only response; separately, whether/how to define a genuine out-of-sample confirmation protocol | Pending | Later stage |
 | 13 | #004 Finding 10 | Yes (direction) | Yes -- intended-behavior question | Pending | Later stage |
-| 14 | #004 Finding 19 / Finding 11 | Yes -- concrete epoch-marker wiring recommended this round, reusing the ALREADY content-addressed `hypothesis_config_version`/`evaluation_config_version`/`discovery_config_version` hashes confirmed present in all three config loaders (section 7) | Yes -- whether to adopt this wiring, jointly with #003 S2 (same mechanism) | Pending | Later stage |
-| 15 | #003 S2 | Yes -- same epoch-marker wiring as row 14 (section 7), fingerprint extension uncontested | Yes -- whether to adopt the wiring | Pending | Later stage |
+| 14 | #004 Finding 19 / Finding 11 | Yes -- config-identity wiring corrected this round to bind to a content-VERIFIED pinned `RegisteredConfigVersion` snapshot (recomputed hash vs. claimed label, not label-equality alone -- restoring a bar `spec004_remediation_proposal...md` already specified and this document had regressed below), reusing the ALREADY content-addressed `hypothesis_config_version` hash (section 7) | Yes -- whether to adopt this wiring | Pending | Later stage |
+| 15 | #003 S2 | Yes -- but CORRECTED this round: S2 needs its OWN separate `run_id_scheme_version` literal marker, NOT row 14's config-content hash (a `build_run_id()` field-set change is a code change, invisible to any YAML hash) -- two distinct mechanisms now, not one shared wiring as previously drafted (section 7) | Yes -- whether to adopt the separate `run_id_scheme_version` marker | Pending | Later stage |
 | 16 | #003 S1 | N/A -- scope question, not a mechanism gap | Yes -- responsibility (code vs. documented trust boundary) | Pending | Later stage |
 | 17 | #003 F1 (complete behavior) | Partial -- same-target-session mechanism and 4-way check complete, distinguishing bar-missing from bar-present-with-null-price (section 1); calendar sourcing recommendation (relocate to Data Foundation) now has a stated consequence and regression (section 2); dependency direction still open; sub-daily timeframes out of scope | Yes -- the data-gap status name(s); the calendar sourcing/relocation decision (recommendation given, not yet approved) | Pending | Later stage |
-| 18 | #003 F3+F4+F5 | Partial -- per-security formula correct and scoped, with a concrete session-weighting recommendation added this round (diagnostic only, no second weighting layer, section 3); quantile section corrected this round -- the `R_i`/`inclusive` compatibility claim NARROWED to tie-free equal-weight input only (does not survive mandatory tie-aggregation, verified by a `[0,0,10]` counterexample), and the non-finite-input contract unified to a hard-fail (was inconsistently "excluded" vs. "rejection"), section 4; CI/bootstrap estimator-vs-interval separation and F3's field list specified (section 6); permutation section now carries a concrete recommendation (ship value-level as-is, defer block to v2, reaffirming the code's own existing SS47 position; only a docstring-precision fix needed) (section 5) | Yes -- F3's (a)/(b) choice; the choice between midpoint and `R_i` (narrowed scope now stated, section 4.2); whether the session-weighting diagnostic recommendation is adopted (section 3); whether the permutation recommendation (ship as-is, defer block) is adopted (section 5) | Pending | Later stage |
+| 18 | #003 F3+F4+F5 | Partial -- per-security formula correct and scoped; session-weighting "impossibility" claim RETRACTED this round (a counterexample shows uniform security AND session margins can coexist), diagnostic mechanism corrected from a raw `Counter` (understates the real skew, verified) to a WEIGHTED `session_mass` sum (section 3); quantile section -- the `R_i`/`inclusive` compatibility claim NARROWED further this round to tie-free, equal-weight ORIGINAL input only, verified by a `[0,0,10]` counterexample that it does not survive mandatory tie-aggregation even at equal weights; non-finite-input contract unified to a hard-fail (section 4); CI/bootstrap estimator-vs-interval separation and F3's field list specified (section 6); permutation section CORRECTED this round -- "ship as-is, docs-only" was wrong once F4+F5's weighting is adopted (would test a different quantity than reported); a full weighted-estimator mechanism is now designed and verified (equal-weight case reduces byte-identical to today's test), the exchangeability-ACCEPTANCE question kept separately open (section 5) | Yes -- F3's (a)/(b) choice; the choice between midpoint and `R_i`; whether the WEIGHTED session-diagnostic recommendation is a sufficient response to SS74C, or a real second mechanism is required (section 3); whether the weighted-permutation-estimator design is adopted, and separately whether to accept the exchangeability limitation for V1 (section 5) | Pending | Later stage |
 | 19 | Config immutability (cross-cutting) | Yes -- full recursive freeze specified (section 7) | No | Pending | Later stage |
 | 20 | #003 G1 (TEST 26 AST guard, discovery->evaluation) | **Yes -- no longer merely "same algorithm family," the shared algorithm's own bugs are now fixed (row 11), so TEST 26 has no remaining open item of any kind (section 9)** | No | Pending | Later stage |
 
@@ -1223,9 +1443,15 @@ listed here, none executed.
 
 **Section 1 (F1):** TEST 27's own assertion, restated as a regression
 GOAL (CROSSES_LOCKED_OOS fires correctly), not yet a verified result;
-NEW -- a case asserting the bar-present-but-null-price sub-case (4b)
-is distinguished from the bar-missing sub-case (4a) in the actual
-returned status.
+NEW -- a case EXERCISING both the bar-missing sub-case (4a) and the
+bar-present-with-null-price sub-case (4b), asserting whichever status-
+naming policy Radu approves (one shared name, or two distinct names)
+is applied CONSISTENTLY -- corrected wording this round (GPT's review,
+relayed by Radu): the status-naming choice itself is still open per
+section 1's own text (same name permitted as one option), so this
+regression must not presuppose the two sub-cases get DIFFERENT
+statuses, only that whichever policy is approved is applied the same
+way every time.
 
 **Section 2 (calendar):** every EXISTING test currently exercising
 `build_trading_calendar()`/`require_verified_calendar_for_formal_run()`
@@ -1233,22 +1459,38 @@ re-run unchanged at its relocated import path; NEW -- a guard test in
 the TEST 26/TEST 49 family asserting `src/evaluation/` never imports
 `src/backtest/` at all.
 
-**Section 3 (session weighting):** NEW -- the session-concentration
-diagnostic reproduces Radu's own 1-security/2-sessions vs.
-9-securities/1-session 5%/95% example as its own reported numbers;
-NEW -- `stratified_baseline_point_estimate()`'s output is
-byte-identical before/after the diagnostic is added.
+**Section 3 (session weighting):** NEW -- the WEIGHTED `session_mass`
+diagnostic (summing per-security row weights per session, NOT a raw
+`Counter`) reproduces Radu's own 1-security/2-sessions vs.
+9-securities/1-session TRUE `5%`/`95%` split (a raw `Counter` would
+wrongly give `~9%`/`~91%`, regression-locked as the WRONG answer this
+diagnostic must not reproduce); NEW --
+`stratified_baseline_point_estimate()`'s output is byte-identical
+before/after the diagnostic is added.
 
 **Section 4 (quantiles), the full matrix stated in section 4 itself,
 collected here by reference:** unit-weight reproduction of
-`statistics.quantiles(..., method="inclusive")` on tie-free input; the
-`[0,0,10]` tied-equal-weight case, regression-locking that midpoint
-and `R_i` now DISAGREE post-aggregation; weight-rescaling invariance
-across >= 3 scale factors; input-order permutation of tied rows with
-DIFFERING weights (the `[(0,1),(0,3),(10,1)]` vs. `[(0,3),(0,1),
-(10,1)]` case); mass split vs. merge at an identical value; zero-weight
-exclusion; negative-weight hard-fail; non-finite hard-fail; empty-input
-`None`; single-distinct-value input.
+`statistics.quantiles(..., method="inclusive")` on tie-free input BY
+`R_i` SPECIFICALLY (midpoint does not reproduce it even tie-free,
+corrected this round); the `[0,0,10]` tied-equal-weight case,
+regression-locking that midpoint and `R_i` now DISAGREE post-
+aggregation; weight-rescaling invariance across >= 3 scale factors;
+input-order permutation of tied rows with DIFFERING weights (the
+`[(0,1),(0,3),(10,1)]` vs. `[(0,3),(0,1),(10,1)]` case); mass split vs.
+merge at an identical value; zero-weight exclusion; negative-weight
+hard-fail; non-finite hard-fail; empty-input `None`;
+single-distinct-value input.
+
+**Section 5 (permutation estimator, NEW this round -- design/code/
+regression, not docs-only):** the equal-per-security-weight case
+reduces BYTE-IDENTICAL to today's existing plain-mean
+`stratified_permutation_p_value()` (same observed value, same p-value,
+verified this round on a toy fixture -- the natural backward-
+compatibility lock); a skewed-weight toy fixture's hand-computed
+weighted observed statistic is reproduced exactly (verified this round:
+a 2-row-vs-1-row fixture mirroring section 3's own asymmetry); every
+EXISTING test currently covering `stratified_permutation_p_value()`
+re-run and confirmed to still pass under equal weights.
 
 **Section 6 (bootstrap/F3):** NEW -- `time_block_bootstrap_
 replicates()`'s extended `list[tuple[str, str, float]]` signature
@@ -1268,17 +1510,27 @@ forbidden name): `import <name>`; `from <name>.x import y`; `from
 src.<name> import X`; `from src import <name>` (FLAGGED, all four);
 `from vendor import <name>` (NOT flagged); `from .<name> import X` and
 `from ..<name> import X` from a 2-deep package (NOT flagged, resolves
-to a sibling module, per the corrected `level - 1` climb); a relative
-import exceeding its package root (own diagnostic, neither flagged nor
-silently passed).
+to a sibling module, per the corrected `level - 1` climb); `from
+...<name> import X` from the same 2-deep package (the corrected
+beyond-root boundary, own diagnostic, neither flagged nor silently
+passed -- verified this round to trigger at `level=3`, not `level=4`).
 
-**Section 7/14/15 (config epoch marker, #003 S2 + #004 Finding
-19/11):** NEW -- a draft and `HumanDecision` built under one
-`hypothesis.yaml` content, the file's content then mutated before
-`preregister_hypothesis()` is called, asserting the gate now raises on
-the version mismatch (distinct from the EXISTING TEST 63, which only
-checks self-consistency against the draft's OWN current fields, never
-against a freshly-reloaded config).
+**Section 7 (config identity) + S2 (run-id scheme), corrected and now
+TWO separate items, not one:** config identity -- a correct-content-
+WRONG-label case (a hand-built or mutated-before-freeze object whose
+claimed version string doesn't match its actual content) is REJECTED;
+a config mutated between approval and registration is rejected against
+the PINNED, content-verified snapshot (not a second independent
+re-read); a check that passes operates on the pinned snapshot
+afterward, not the original mutable object re-read again -- all three
+already specified in `spec004_remediation_proposal_2026-10-04.md`'s
+own "Required regression coverage" for Finding 19/GPT-G6, collected
+here by reference, corrected to replace this document's own previously
+weaker (label-equality-only) draft. S2 -- SEPARATELY, a regression
+asserting two runs differing only in `horizons` now produce different
+`evaluation_run_id`s under the NEW, distinct `run_id_scheme_version`
+marker (not the config hash, which would stay unchanged by this
+code-only change).
 
 **Section 9 (#003 F2a/F2b/F6/G2, already specified there in full,
 collected here by reference):** F2a -- a `SignatureSet` built via
@@ -1291,40 +1543,82 @@ rejection; F6 -- three tests (family size in a multi-signature
 `INSUFFICIENT_SUPPORT`-tagged profile with non-`None` `raw_p`); G2 --
 the `test_34` fix IS the test, no separate regression.
 
-**Section 10 (#004 mechanisms):** Finding 1 -- a proposal whose
-`source_evidence.evaluation_mode == "EXPLORATORY"` is rejected at
-`preregister_hypothesis()`; Finding 14 -- `verify_draft_matches_
-proposal()` rejects a draft whose content differs from its originating
-proposal, field by field, AND rejects a human-decision/validation-
-result fingerprint mismatch; Finding 14 (baseline designation) -- a
-call whose `materialize_variants()` invocation would tag a DIFFERENT
-horizon `BASELINE_VARIANT` than `proposal.horizon_candidates.
-designated_baseline_bars` declares is rejected; Finding 16 -- the
-batch-internal simulated-sequential dry run catches a conflict BETWEEN
-two items of the SAME batch (not only against the pre-batch registry
-state).
+**Section 10 (#004 mechanisms), NOW including Findings 15/17/18/19/20,
+collected by reference from `spec004_remediation_proposal_2026-10-04.
+md`'s own "Required regression coverage" section (missing from this
+checklist until this round):**
+- **Finding 1:** a proposal whose `source_evidence.evaluation_mode ==
+  "EXPLORATORY"` is rejected at `preregister_hypothesis()`; SEPARATELY
+  -- a proposal whose `source_evidence.evaluation_mode` FALSELY claims
+  `"FORMAL_DEVELOPMENT"` while the real `EvaluationRunRegistry` record
+  shows `mode == "EXPLORATORY"` is ALSO rejected (the mode-vs-registry
+  cross-check added this round).
+- **Finding 14:** `verify_draft_matches_proposal()` rejects a draft
+  whose content differs from its originating proposal, field by
+  field, AND rejects a human-decision/validation-result fingerprint
+  mismatch, AND rejects content changed under the SAME approved id
+  when `proposal` and `draft` are mutated TOGETHER (not just a draft
+  diverging from an unmodified proposal).
+- **Finding 14 (baseline designation):** a call whose `materialize_
+  variants()` invocation would tag a DIFFERENT horizon
+  `BASELINE_VARIANT` than `proposal.horizon_candidates.designated_
+  baseline_bars` declares is rejected; SEPARATELY -- rejection when
+  `proposal`/`draft` are mutated TOGETHER after approval, changing
+  `designated_baseline_bars` while every economically-hashed field
+  stays unchanged (the lockstep-mutation gap found this round).
+- **Finding 15 (GPT-G2):** both directions of incompleteness (missing
+  AND extra TIME_EXIT variants relative to `horizon_candidate_set.
+  values`) and at least one invalid exit-semantics case per field
+  (`time_exit_bars` sign, `horizon_reference_point`,
+  `exit_execution_policy`).
+- **Finding 16 (GPT-G3):** the batch-internal simulated-sequential dry
+  run catches a conflict BETWEEN two items of the SAME batch (not only
+  against the pre-batch registry state) AFTER at least one variant in
+  that batch has already been successfully written, AND a conflict
+  where the hypothesis id pre-existed as a DRAFT before the call --
+  both must leave the registry in the exact pre-call state.
+- **Finding 17 (GPT-G4):** every public-API transition path into
+  PREREGISTERED is rejected, AND the legitimate existing use of
+  `register()` (idempotent re-registration of an ALREADY-PREREGISTERED
+  record with identical content, e.g. audit-log replay) continues to
+  succeed unchanged.
+- **Finding 18 (GPT-G5):** stability-bin values placed into the
+  `EvidencePacket` are asserted to actually reach it with CORRECT
+  values, not merely that a presence flag is set.
+- **Finding 20 (P004C):** both nested types round-trip (`StopLossRule`
+  AND `PartialProfitRule`), AND a full `STOP_MANAGED_INVALIDATION`
+  hypothesis+variant family survives a complete persist-then-reload
+  cycle through `JsonlAuditLog.append()`/`replay()`.
 
 ---
 
 **No code or test was changed to produce this revision. This round's
 verification was, again, isolated Python execution only -- never the
-project's own test suite:** the `[0,0,10]` tie-at-equal-weight
-counterexample narrowing the `R_i`/`inclusive` compatibility claim
-(section 4.2); the `.hypothesis`/`..hypothesis` relative-import
-resolution check against Radu's own worked examples, confirming the
-corrected `level - 1` climb (section 8). This round's source grounding
-also included reading, in full, `proposals/validator.py`'s complete
-`validate_proposal()` function (confirming the `facts_from_evidence`/
-`interpretation` gap in Finding 14's option (ii)) and `registry/
-hypotheses.py`'s `materialize_variants()` (confirming the untraced
-`baseline_time_exit_bars` argument), plus all three config loaders
-(`hypothesis/config/loader.py`, `evaluation/config/loader.py`,
-`discovery/config/loader.py`, confirming all three already compute a
-content-addressed `sha256`-based version) and
-`statistics/concentration.py`'s `compute_concentration()` (grounding
-the session-weighting diagnostic recommendation) -- no project test
-suite was run. Baseline `3cdc532`, historical acceptances, and the
-Spec #005/Batch 3 pause are unchanged. Findings reconciliation remains
-closed (both specs, within each review's own declared scope);
+project's own test suite:** the `A`/`B`/`C` session-weighting
+counterexample disproving the second "impossibility" claim (section
+3, verified: uniform security AND session margins coexist); the
+weighted- vs. raw-`Counter` session-diagnostic comparison (confirming
+the true `5%`/`95%` vs. a misleading `~9%`/`~91%`, section 3); the
+weighted-permutation-estimator design's equal-weight-reduces-to-today
+property and its skewed-weight toy fixture, both verified on
+executable fixtures (section 5); the corrected AST relative-import
+boundary verified against real Python's own `importlib.util.
+resolve_name()` (`...x` from a 2-deep package raising exactly as
+predicted, section 8). This round's source grounding also included
+re-reading `evaluation/engine.py` (FORMAL_DEVELOPMENT's actual, narrower
+guarantees), `hypothesis/validation/provenance.py`'s `check_
+provenance_matches_run()` in full (confirming it does not check
+`mode` today), `evaluation/models/entities.py` (`EvaluationRunRegistry.
+mode`, `EvidenceProfile.evaluation_mode`), all three config loaders
+again (confirming config-content identity and `build_run_id()`'s own
+scheme identity are genuinely separate axes), and
+`spec003_remediation_proposal_2026-10-04.md`'s S2 section plus
+`spec004_remediation_proposal_2026-10-04.md`'s own "Required
+regression coverage" section in full (both already specifying
+requirements this document's own revision 6 draft had fallen short
+of) -- no project test suite was run. Baseline `3cdc532`, historical
+acceptances, and the Spec #005/Batch 3 pause are unchanged. Findings
+reconciliation remains closed (both specs, within each review's own
+declared scope);
 remediation design remains open; implementation remains not
 authorized.**

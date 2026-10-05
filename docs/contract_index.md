@@ -509,61 +509,73 @@ is not itself the audit.
      implementation/acceptance of any fix is NOT AUTHORIZED.** Now
      joined with #004's own remediation design in
      `docs/joint_remediation_design_003_004_2026-10-04.md`
-     (2026-10-04, revision 6, per GPT's own recommendation once both
-     audits closed). **Revision 5 closed its own prior round's
-     observations (confirmed by Radu); revision 6 is a further
-     targeted correction (not a full rewrite), fixing three concrete
-     technical defects GPT's follow-up review found, plus turning five
-     previously-open design questions into concrete recommendations
-     with stated consequences and regressions, plus a new consolidated
-     regression checklist.** The three defects: (1) the `R_i`/
-     `inclusive`-compatibility claim is NARROWED -- it holds only for
-     tie-free, equal-weight ORIGINAL input, verified by a `[0,0,10]`
-     counterexample to no longer hold once the mandatory tie-
-     aggregation rule collapses any tied value, even at equal weights;
-     the non-finite-input contract is also unified to a single hard-
-     fail behavior (was inconsistently "excluded" vs. "rejection"), and
-     the prior justification-by-analogy to `outcomes/forward_
-     returns.py` (which only does `is None` checks) is withdrawn as
-     self-contradictory; (2) the AST guard's relative-import climb is
-     corrected from `node.level` to `node.level - 1` components
-     (verified against Radu's own `.hypothesis`/`..hypothesis`
-     examples), and `ast.ImportFrom`'s per-name candidates are now
-     built from the resolved base plus each imported name (rather than
-     treating each name as an independent absolute namespace), fixing
-     a case that could have turned `vendor.hypothesis` into a false
-     positive and a local relative import into a false positive
-     against the forbidden package; TEST 26 (#003) and TEST 49 (#004)
-     share one corrected algorithm and a new consolidated positive/
-     negative case matrix; (3) #004 Finding 14's cache-preserving
-     option is confirmed insufficient as previously described --
-     `proposals/validator.py`'s `validate_proposal()` also requires
-     `facts_from_evidence`/`interpretation` non-empty, fields outside
-     the trading-content fingerprint, so a cached result tied only to
-     that fingerprint could go stale without detection; gate-time
-     proposal revalidation is now this document's explicit
-     recommendation instead. The five concrete recommendations: relocate
-     the calendar to Data Foundation, with a stated consequence (fixes
-     the import-direction reversal) and regression (existing tests
-     re-run unchanged at the new path, plus a new evaluation-never-
-     imports-backtest guard); add a purely descriptive session-
-     concentration diagnostic rather than a second weighting layer
-     (mirroring the project's own existing `compute_concentration()`
-     pattern); ship value-level permutation as-is and defer block
-     permutation, reaffirming -- not inventing -- the project's own
-     existing position already stated in `comparison.py`'s own
-     docstring (SS47), only correcting that docstring's caveat
-     precision; wire the versioning-epoch marker to the ALREADY
-     content-addressed config-version hashes confirmed present in all
-     three config loaders (hypothesis/evaluation/discovery), making a
-     config change between approval and registration a hard gate
-     failure for the first time; and hard-reject #004 proposals whose
-     evidence traces to an `EXPLORATORY` evaluation run, symmetric with
-     the existing `research_mode` rejection. Design only, not
+     (2026-10-04, revision 7, per GPT's own recommendation once both
+     audits closed). **Revision 6's three technical defect fixes are
+     confirmed largely integrated; revision 7 corrects problems in
+     revision 6's OWN new recommendations.** Most significant: revision
+     6 wired #004's config-content-identity hash to ALSO serve as
+     #003 S2's "run-id scheme changed" marker -- but S2 proposes a
+     CODE/algorithm change to `build_run_id()`'s own field set, which
+     leaves every config file's content, and therefore its hash, byte-
+     identical; config-content identity and run-id SCHEME identity are
+     corrected this round into two separate mechanisms (config hashes
+     unchanged; a new literal `run_id_scheme_version` marker for S2,
+     same discipline as this codebase's existing `OUTCOME_ENGINE_
+     VERSION`-style constants). Revision 6's config-verification
+     mechanism had also regressed below a bar `spec004_remediation_
+     proposal_2026-10-04.md`'s own "Required regression coverage"
+     section already specified for the same finding (Finding 19/
+     GPT-G6) -- comparing three version-LABEL strings for equality
+     does not verify the underlying object's actual CONTENT; corrected
+     to bind every check to one pinned, content-verified
+     `RegisteredConfigVersion` snapshot (its claimed version hash
+     recomputed from its own content, not merely asserted). Further
+     corrections: a SECOND false "impossibility" claim retracted
+     (session-level weighting -- a verified counterexample shows
+     uniform security AND session margins can coexist), and the
+     diagnostic mechanism corrected from a raw row-count `Counter`
+     (which understates Radu's own `5%`/`95%` example as a misleading
+     `~9%`/`~91%`, verified) to a weighted `session_mass` sum using the
+     same per-security weights as the point estimate; "ship permutation
+     as-is, docs-only" (revision 6) was wrong once F4+F5's per-security
+     weighting is adopted for the baseline's own point estimate --
+     would test a different quantity than the one reported -- now a
+     full weighted-estimator mechanism is designed and verified (the
+     equal-weight case reduces byte-identical to today's existing
+     test), kept separate from the still-open, genuinely docs-only
+     exchangeability-acceptance question; the baseline-designation fix
+     (Finding 14) had its own timing corrected ("before any backtest,"
+     not "before any evidence" -- #004 proposals already consume #003
+     evidence) and a linkage gap closed (a lockstep proposal+draft
+     mutation after approval could otherwise change the designation
+     invisibly, since it's deliberately excluded from the economic
+     content fingerprint); the EXPLORATORY-evidence admission policy's
+     claim that re-running under FORMAL_DEVELOPMENT "produces fresh
+     confirmatory evidence" is retracted -- FORMAL_DEVELOPMENT's own
+     actual guarantees (pre-registration, BH correction) are procedural,
+     not a cure for prior selection bias on the same historical data;
+     the mode is now also verified against the real `EvaluationRunRegistry`,
+     not only a self-reported field. Two further local fixes: the AST
+     guard's relative-import beyond-top-level-package boundary,
+     verified against real Python's own `importlib.util.resolve_name()`
+     to trigger one level earlier than revision 6 had it; and a stray
+     claim in the quantile regression matrix wrongly implying both
+     candidate conventions reproduce `inclusive` on tie-free input
+     (only `R_i` does). The consolidated regression checklist (section
+     12) gained the regressions for #004 Findings 15/17/18/20 and the
+     corrected config/S2 coverage, collected from
+     `spec004_remediation_proposal_2026-10-04.md`'s own existing
+     specification rather than invented fresh. A mis-attribution is
+     also corrected throughout: the midpoint-with-aggregation and
+     gate-time-revalidation recommendations are GPT's own technical
+     recommendations, relayed by Radu -- not Radu's personal decisions
+     absent his own explicit confirmation. Design only, not
      implementation; no code or test changed, no project test suite
      run -- only isolated Python checks executed this round, plus
-     reading `validate_proposal()`, `materialize_variants()`, and all
-     three config loaders in full.
+     reading `evaluation/engine.py`, `hypothesis/validation/
+     provenance.py`, `evaluation/models/entities.py`, all three config
+     loaders again, and both remediation-proposal documents' own
+     "Required regression coverage" sections in full.
    - **Spec #004: two rounds done (2026-10-04).** Round 1 (Claude
      alone): a fresh, high-effort independent re-verification pass,
      requested by Radu specifically to finish before the joint F1-F6
