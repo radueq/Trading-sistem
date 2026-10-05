@@ -562,19 +562,35 @@ is not itself the audit.
      admission/trust check of any kind), not by new execution.
      **Radu confirms revision 11 closes the F1/calendar admission-
      contract observations at the design level (not a full approval of
-     the joint design, and not an implementation authorization).** Per
-     Radu's own request, every remaining open choice across both specs
-     is now collected into one approvable-per-row sheet:
-     `docs/decision_sheet_003_004_2026-10-05.md` (2026-10-05) -- common
-     support, session weighting, the quantile convention, and
-     permutation exchangeability (Spec #003 statistics); calendar
-     strictness, data-gap naming, who performs admission/verification,
-     calendar relocation, and #005's own eventual adoption (the
-     calendar group); the mandatory-live-re-read config choice, Finding
-     14's gate-time revalidation option, and Finding 16/GPT-G3's
-     atomicity guarantee scope (Spec #004). Each row points into
-     revision 11's own existing text; approving a row approves that one
-     design choice only and never authorizes implementation.
+     the joint design, and not an implementation authorization).**
+     `docs/decision_sheet_003_004_2026-10-05.md` collects every
+     remaining choice across both specs, in three revisions to date:
+     revision 1 (approvable-per-row sheet); revision 2 (GPT's review,
+     relayed by Radu, catching an overstated completeness claim --
+     five open checklist items missing from revision 1 -- plus wording/
+     attribution/downstream-impact corrections, detailed in the file's
+     own revision-2 note); **revision 3, this round -- Radu delegates
+     technical design decisions (algorithms, statistical conventions,
+     validation mechanisms, module organization, status names) to GPT
+     and Claude, reserving only strategy/objectives changes, budgets/
+     vendor costs/external commitments, and financial risk/capital/
+     live-trading launch for himself.** The sheet is restructured into
+     a Technical Decision Registry: every former open choice is now
+     DECIDED (chosen solution, justification, known limitation,
+     required verification), except one (who performs calendar
+     admission/verification -- a vendor/cost choice, explicitly left to
+     Radu). Decisions that reduce an assumed guarantee or bound how much
+     confidence a result deserves (session-weighting's uncorrected
+     skew, the accepted permutation-exchangeability risk, the atomicity
+     guarantee's stated scope, the still-undesigned out-of-sample
+     confirmation protocol) are flagged in plain language for Radu's own
+     eventual capital-risk judgment, never as a request to pick the
+     underlying mechanism. Delegating these decisions is explicitly NOT
+     an implementation authorization -- the next step is a separate
+     implementation plan with stages and acceptance criteria, for
+     execution authorization; the eventual result must be demonstrated
+     on two separate axes (technical correctness and strategy
+     performance), never conflated.
    - **Spec #004: two rounds done (2026-10-04).** Round 1 (Claude
      alone): a fresh, high-effort independent re-verification pass,
      requested by Radu specifically to finish before the joint F1-F6
