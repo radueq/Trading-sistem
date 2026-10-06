@@ -706,10 +706,48 @@ is not itself the audit.
      validation_finite_positive_prices.py` adds the full 20-case
      matrix plus `None`/`VALID`-path regressions (22 tests, all
      passing); full project suite: 749 passed, 1 skipped (pre-existing,
-     unrelated) -- no regression. Every other stage remains
-     unauthorized; findings reconciliation stays closed, the calendar
-     admission/trust contract stays closed and untouched, and the Spec
-     #005/Batch 3 pause is unchanged.
+     unrelated) -- no regression. **ACCEPTED, GPT's own independent
+     verification, relayed by Radu (delivery `063d1a7`): "Stage 1 / J1
+     -- ACCEPTED in the agreed scope," scope limited to the price
+     validation delivered in Stage 1, not a general exception/numeric-
+     issue guarantee.**
+     **Stage 2 IMPLEMENTED, 2026-10-06, per Radu's own explicit
+     authorization scoped to Stage 2 only -- commit `7fcf78d` on
+     `claude/spec004-audit`.** New shared `src/data_foundation/
+     calendar/` package: admission (Step 0, fixture-only -- no real
+     provider, no cost), `verify_calendar_against_source()`/
+     `CalendarVerificationRecord`/`CalendarRegistry` (Steps 3-6, atomic,
+     no partial state on failure); `TradingCalendar`/`build_trading_
+     calendar()` relocated out of `src/backtest/` as a byte-identical
+     move (`src/backtest/models/entities.py`/`src/backtest/data/
+     calendar.py` now re-export the SAME objects -- confirmed by
+     `is`-identity tests and by `tests/spec005/` re-run unchanged, 419
+     passed). `OutcomeStatus.DATA_GAP` added; `compute_forward_outcome()`
+     gains an OPTIONAL `calendar=`/`data_as_of=` parameter implementing
+     the four-way target-session check (calendar-insufficient ->
+     Locked-OOS -> not-yet-reached -> data-gap/valid) -- omitted
+     (default), the original bar-position path is 100% unchanged.
+     `run_evaluation()` gains OPTIONAL `calendar_registry=`/
+     `calendar_id=` parameters wiring B1's `OFFICIAL_VERIFIED`-only
+     FORMAL_DEVELOPMENT strictness; `build_run_id()`'s fingerprint
+     gains, together, the calendar's own identity, `security_ids`
+     (sorted), `benchmark_security_id`, `data_as_of`, `horizons`
+     (sorted), and the new `RUN_ID_SCHEME_VERSION="v2"` marker.
+     **Flagged, documented, not fixed:** `backtest/provenance/
+     evaluation_run.py`'s `LEGACY_RUN_ID_FIELDS` cross-check now
+     recomputes against the OLD 8-field set only and will not match a
+     genuinely-produced future run-id; confirmed by grep that no
+     existing #005 test exercises that recompute against a real
+     `run_evaluation()` output, so nothing breaks today. 40 new tests
+     across `tests/data_foundation/` (21) and `tests/spec003/`
+     (test_42/43/44, 19), all passing; full project suite: 789 passed,
+     1 skipped (pre-existing, unrelated) -- zero regression from the
+     pre-Stage-2 baseline of 749. #005 does NOT adopt the new registry
+     this round (not authorized); a real `OFFICIAL_VERIFIED` calendar
+     for actual formal runs remains operationally blocked, unchanged.
+     Every stage beyond Stage 2 remains unauthorized; findings
+     reconciliation stays closed, the calendar admission/trust contract
+     stays closed, and the Spec #005/Batch 3 pause is unchanged.
    - **Spec #004: two rounds done (2026-10-04).** Round 1 (Claude
      alone): a fresh, high-effort independent re-verification pass,
      requested by Radu specifically to finish before the joint F1-F6

@@ -1,14 +1,21 @@
-# Implementation Plan -- Spec #003 + Spec #004 remediation (2026-10-05/06, revision 3)
+# Implementation Plan -- Spec #003 + Spec #004 remediation (2026-10-05/06, revision 4)
 
-**Status: NOT AUTHORIZED.** Built from `docs/joint_remediation_design_
-003_004_2026-10-04.md` (revision 11, closed calendar contract included)
-and `docs/decision_sheet_003_004_2026-10-05.md` (revision 6, the
-Technical Decision Registry). **Precedence: the registry's own decisions
-replace revision 11's open alternatives; this plan only sequences
-already-made decisions, it does not re-decide anything.** No project
-code or test was written or run to produce it; one standalone
-arithmetic check (not project code) was run to verify Stage 4's own
-numeric regression -- see the registry's own revision-6 note.
+**Status: Stage 1 and Stage 2 IMPLEMENTED, each under Radu's own
+separate, explicit, staged authorization. Stage 3 onward: NOT
+AUTHORIZED.** Built from `docs/joint_remediation_design_003_004_2026-
+10-04.md` (revision 11, closed calendar contract included) and
+`docs/decision_sheet_003_004_2026-10-05.md` (revision 7, the Technical
+Decision Registry). **Precedence: the registry's own decisions replace
+revision 11's open alternatives; this plan only sequences already-made
+decisions, it does not re-decide anything.**
+
+**Revision 4 records Stage 2's implementation (commit `7fcf78d`) and
+Stage 1's GPT-ACCEPTED verdict -- it does not re-sequence or re-decide
+anything.** See Stage 1 and Stage 2's own sections below for what was
+delivered, the exact tests, and the full-suite verification numbers.
+Revision 3's own text (below) describes the PLAN as it stood before
+either stage was implemented and is kept for its own historical
+record.
 
 **Revision 3 corrects four further items (per GPT's own decisions,
 relayed by Radu, given explicitly rather than left as alternatives):**
@@ -114,9 +121,18 @@ parameterized cases plus the `None`-distinct and `VALID`-unaffected
 regressions), all passing; full project suite (`pytest tests/`): 749
 passed, 1 skipped (pre-existing, unrelated) -- no regression.**
 
+**ACCEPTED, GPT's own independent verification, relayed by Radu
+(delivery `063d1a7`).** Verdict: Stage 1 / J1 -- ACCEPTED in the agreed
+scope (price validation only, not a general exception/numeric-issue
+guarantee). See registry revision 7, J1's own entry for the full
+verdict text.
+
 ---
 
 ## Stage 2 -- Calendar foundation AND the run-identity fingerprint change (#003, Spec #005 boundary)
+
+**IMPLEMENTED -- Radu's explicit authorization, 2026-10-06, Stage 2
+only. Commit `7fcf78d` on `claude/spec004-audit`.**
 
 **Independent of Stage 1.** **Corrected this round: I1's `run_id_
 scheme_version` marker is delivered TOGETHER WITH this stage, not in
@@ -151,7 +167,7 @@ schemes could collide on one `evaluation_run_id`.**
   `src/backtest/` -- a pure, behavior-preserving move, independently
   parallelizable with the rest of this stage.
 
-**Acceptance criteria.** The five admission/registry regressions
+**Acceptance criteria -- met.** The five admission/registry regressions
 (direct construction without a record refused; record linked to wrong
 calendar/artifact rejected; session/exception discrepancy rejected;
 failed registration leaves no partial state; valid case resolves from
@@ -164,6 +180,37 @@ in `data_as_of`, only in `horizons`, and only in `run_id_scheme_version`
 each produce different `evaluation_run_id`s (five independent-axis
 checks, not one); B4's byte-identical relocation regression plus the
 `evaluation` -> `backtest` import-direction guard test.
+
+**Verified: `tests/data_foundation/` (21 tests: admission, source
+verification, atomic registry incl. the five+one named regressions,
+relocation-identity + `evaluation`->`backtest` import guard);
+`tests/spec003/test_42_calendar_aware_target_session_resolution.py`
+(11 tests: calendar-insufficient, Locked-OOS, not-yet-reached, DATA_GAP
+4a/4b, VALID, entry-bar-missing, non-finite-price, legacy-path-
+unaffected); `tests/spec003/test_43_run_identity_fingerprint_s2.py` (5
+tests: the five independent-axis fingerprint regressions);
+`tests/spec003/test_44_formal_development_calendar_strictness.py` (3
+tests: FORMAL_DEVELOPMENT refuses SYNTHETIC_TEST_FIXTURE, succeeds
+against a registry-resolved OFFICIAL_VERIFIED calendar, and
+calendar_registry/calendar_id must be supplied together). `tests/
+spec005/` re-run at the relocated import path: 419 passed, zero
+change. Full project suite (`pytest tests/`): 789 passed, 1 skipped
+(pre-existing, unrelated) -- zero regression from the pre-Stage-2
+baseline of 749.**
+
+**Explicitly NOT done this stage, carried forward as-is:** `#005`'s own
+adoption of `CalendarRegistry` (B5, separate, not authorized); a real,
+genuinely-attested `OFFICIAL_VERIFIED` calendar for actual formal runs
+(B3's real-source gap, unchanged, operationally blocked); threading
+the new calendar-aware `compute_forward_outcome()` path into
+`run_evaluation()`'s own per-observation outcome computation beyond
+session-date resolution and the FORMAL_DEVELOPMENT strictness gate
+(the capability is implemented and tested at the function level; its
+further integration into the production per-signature pipeline is not
+part of this stage's own authorized scope and is not assumed by any
+later stage below). The `backtest/provenance/evaluation_run.py`
+`LEGACY_RUN_ID_FIELDS` consequence (registry I1) is documented, not
+fixed.
 
 ---
 
