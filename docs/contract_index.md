@@ -697,6 +697,19 @@ is not itself the audit.
      acceptance criterion drops the "rejects or correctly reports"
      alternative for a config mismatch -- rejection is the only outcome,
      verified as two separate checks (label, structural equality).
+     **Stage 1 IMPLEMENTED, 2026-10-06, per Radu's own explicit
+     authorization scoped to Stage 1 only -- commit `7195fe4` on
+     `claude/spec004-audit`.** `compute_forward_outcome()`/`attach_
+     benchmark_return()` now reject non-finite or non-positive prices
+     (security entry/exit, benchmark entry/exit) as `INVALID_INPUT`;
+     `None` handling is untouched. `tests/spec003/test_41_numeric_
+     validation_finite_positive_prices.py` adds the full 20-case
+     matrix plus `None`/`VALID`-path regressions (22 tests, all
+     passing); full project suite: 749 passed, 1 skipped (pre-existing,
+     unrelated) -- no regression. Every other stage remains
+     unauthorized; findings reconciliation stays closed, the calendar
+     admission/trust contract stays closed and untouched, and the Spec
+     #005/Batch 3 pause is unchanged.
    - **Spec #004: two rounds done (2026-10-04).** Round 1 (Claude
      alone): a fresh, high-effort independent re-verification pass,
      requested by Radu specifically to finish before the joint F1-F6

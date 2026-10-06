@@ -89,6 +89,9 @@ needed." Not duplicated here.)*
 
 ## Stage 1 -- Numeric safety net (#003)
 
+**IMPLEMENTED -- Radu's explicit authorization, 2026-10-06, Stage 1
+only. Commit `7195fe4` on `claude/spec004-audit`.**
+
 **No dependency on any other stage.**
 
 - **J1:** `compute_forward_outcome()` and the benchmark-price path used
@@ -105,7 +108,11 @@ price roles (security entry price, security exit price, benchmark
 entry price, benchmark exit price): 20 cases, each modifying exactly
 one position with the rest valid, each asserting `INVALID_INPUT`;
 `None` cases stay separate, through the existing missing-data contract;
-existing `VALID`-path tests unaffected.
+existing `VALID`-path tests unaffected. **Verified: `tests/spec003/
+test_41_numeric_validation_finite_positive_prices.py`, 22 tests (the 20
+parameterized cases plus the `None`-distinct and `VALID`-unaffected
+regressions), all passing; full project suite (`pytest tests/`): 749
+passed, 1 skipped (pre-existing, unrelated) -- no regression.**
 
 ---
 
