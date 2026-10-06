@@ -621,6 +621,53 @@ is not itself the audit.
      a parallel mechanism, never reused for calibration) without being
      designed yet. Implementation remains not authorized; the next step
      is a separate implementation plan.
+     **Revision 5, this round (GPT's review, relayed by Radu): the
+     registry is made self-sufficient (every entry states its full
+     decision, not "unchanged from a prior revision" the current file
+     no longer contains) and an explicit precedence rule is added --
+     the registry's own decisions replace revision 11's open
+     alternatives; the implementation plan only sequences them.** A4's
+     `exchangeability_status` design is completed end to end: a
+     missing gap in revision 4 is closed by specifying propagation
+     through `DecayPoint` and `EvidencePacket.primary_exchangeability_
+     status`, a rule that a missing/unknown value is never read as
+     `"VERIFIED"`, a rule that the field is never caller-settable (so
+     no caller can activate inferential use by supplying the text
+     "VERIFIED"), an inventory of consumers beyond Research Queue
+     ranking (the two report-generation scripts, confirmed by reading
+     them to print `adjusted_p` directly; BH correction, kept
+     diagnostic-only), and an end-to-end integration regression running
+     the real Evaluation pipeline rather than a hand-built packet. A3's
+     scope is corrected again -- the convention governs `baseline_iqr`
+     specifically; whether it should also replace `baseline_median`'s
+     own separate, Level-1 bin-averaging mechanism is named as an open
+     consistency question, not resolved by inventing an unverified
+     claim either way. B3 now separates the admission MECHANISM
+     (buildable and testable now with fixtures) from actually having a
+     real, usable calendar for real formal runs (still blocked on
+     source identification). G2's own over-attribution is retracted --
+     the "first and only use, per signature" rule and the claim that a
+     Development-internal split can't be genuinely out-of-sample were
+     never established by the review; only the narrower requirement
+     (reconcile with the existing architecture, keep Locked OOS
+     protected, never reuse it for calibration) stands, with the exact
+     protocol and access unit left open. The implementation plan
+     (revision 2) is corrected to match: the run-id scheme marker moves
+     into the SAME stage as the calendar-identity fingerprint change
+     (not a later stage, since the marker must accompany the first
+     actual hash-preimage change); the quantile convention and the
+     permutation estimator are restated as siblings under F4+F5, not
+     sequential; the evidence/queue stage's false functional dependency
+     on the preregistration gate is removed; A4's #003 field and its
+     #004 consumers are moved into one bundle so no intermediate state
+     ships with the status unrespected; the full S2 field set is
+     enumerated; Research Queue's own config read is added to the
+     shared config-identity stage; the bootstrap/CI design is carried
+     forward explicitly; J1's acceptance criterion becomes the full
+     15-case parameterized matrix; E1's acceptance criterion states the
+     in-memory gap as present, not future. Attribution corrected: the
+     archive comparison and technical review in the prior round were
+     GPT's work, relayed by Radu, not Radu's own personal verification.
    - **Spec #004: two rounds done (2026-10-04).** Round 1 (Claude
      alone): a fresh, high-effort independent re-verification pass,
      requested by Radu specifically to finish before the joint F1-F6
