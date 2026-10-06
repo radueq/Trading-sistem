@@ -1,12 +1,30 @@
-# Implementation Plan -- Spec #003 + Spec #004 remediation (2026-10-05/06, revision 2)
+# Implementation Plan -- Spec #003 + Spec #004 remediation (2026-10-05/06, revision 3)
 
 **Status: NOT AUTHORIZED.** Built from `docs/joint_remediation_design_
 003_004_2026-10-04.md` (revision 11, closed calendar contract included)
-and `docs/decision_sheet_003_004_2026-10-05.md` (revision 5, the
+and `docs/decision_sheet_003_004_2026-10-05.md` (revision 6, the
 Technical Decision Registry). **Precedence: the registry's own decisions
 replace revision 11's open alternatives; this plan only sequences
-already-made decisions, it does not re-decide anything.** No code or
-test was written or run to produce it.
+already-made decisions, it does not re-decide anything.** No project
+code or test was written or run to produce it; one standalone
+arithmetic check (not project code) was run to verify Stage 4's own
+numeric regression -- see the registry's own revision-6 note.
+
+**Revision 3 corrects four further items (per GPT's own decisions,
+relayed by Radu, given explicitly rather than left as alternatives):**
+Stage 4's A3 is rebuilt around ONE pooled weighted baseline distribution
+feeding `baseline_mean`/`baseline_median`/`baseline_iqr` together,
+replacing `stratified_baseline_point_estimate()`'s own Level-1
+mechanism (confirmed unable to implement per-security weighting at all,
+since its signature carries no security identity); Stage 4's A4 #004
+wiring is now UNCONDITIONAL (`p_key = inf` always, in V1, never a
+branch on `exchangeability_status`'s text), replacing a rejected
+"no constructor argument" structural check with behavioral tests; Stage
+1's J1 matrix grows from 15 to 20 cases (four price positions, not
+three -- the benchmark has its own separate entry and exit price);
+Stage 3's acceptance criterion drops the "rejects or correctly reports"
+alternative -- a mismatched config is rejected, full stop, verified as
+two separate checks (label, structural equality).
 
 **Revision 2 corrects revision 1's own dependency errors (per GPT's
 review, relayed by Radu):** a wrong stage cross-reference for the
@@ -47,7 +65,7 @@ needed." Not duplicated here.)*
 
 | Item | Stage | Regression reference |
 |---|---|---|
-| J1 (S1 numeric validation) | 1 | Registry J1; 15-case parameterized matrix below |
+| J1 (S1 numeric validation) | 1 | Registry J1; 20-case parameterized matrix below (4 price positions) |
 | Calendar admission/registry (section 2) | 2 | Registry B1-B4; joint design section 2's 5 named regressions |
 | Target-session resolution (section 1.3) | 2 | Joint design section 1.3/12 |
 | Run-identity linkage + S2 (I1) | 2 | Registry I1; joint design section 12 |
@@ -77,10 +95,16 @@ needed." Not duplicated here.)*
   for relative return reject non-finite or non-positive prices with
   `INVALID_INPUT`, never a raised exception or a nonsensical `VALID`.
 
-**Acceptance criteria -- full parameterized matrix, not a sample.** Five
-bad values (`0.0`, negative, `NaN`, `+inf`, `-inf`) crossed against
-three price roles (security entry price, security exit price,
-benchmark price): 15 cases minimum, each asserting `INVALID_INPUT`;
+**Acceptance criteria -- full parameterized matrix, corrected this
+round (per GPT's own decision, relayed by Radu): FOUR price positions,
+not three -- `attach_benchmark_return()` reads a separate benchmark
+entry price (the division's own denominator) AND benchmark exit price
+(the numerator), confirmed by reading the function in full.** Five bad
+values (`0.0`, negative, `NaN`, `+inf`, `-inf`) crossed against FOUR
+price roles (security entry price, security exit price, benchmark
+entry price, benchmark exit price): 20 cases, each modifying exactly
+one position with the rest valid, each asserting `INVALID_INPUT`;
+`None` cases stay separate, through the existing missing-data contract;
 existing `VALID`-path tests unaffected.
 
 ---
@@ -155,80 +179,115 @@ construction (`build_research_queue()`'s own read of `config.data[
   registered, frozen config snapshot per queue-build operation, not an
   unguarded direct `load_config()` call.
 
-**Acceptance criteria.** The correct-content-wrong-label case rejected
-by the label check; the correct-label-wrong-content case rejected by
-structural equality, both sides normalized before comparing; config-
-mutated-between-approval-and-registration caught by the mandatory live
-re-read; a SEPARATE regression confirming `build_research_queue()`
-rejects or correctly reports when its own config snapshot doesn't match
-its registered version, mirroring the preregistration gate's own check.
+**Acceptance criteria, corrected this round (per GPT's own decision,
+relayed by Radu): the mismatch case has exactly ONE outcome, not two.**
+A config object whose label OR content is incompatible with the
+registered snapshot MUST BE REJECTED before Research Queue construction
+proceeds -- reporting the discrepancy and continuing the computation
+does NOT satisfy this invariant; "rejects OR correctly reports" is not
+an acceptable pair of alternatives. The correct-content-wrong-label case
+rejected by the label check specifically; the correct-label-wrong-
+content case rejected by structural equality specifically, both sides
+normalized before comparing -- the two mismatches verified as TWO
+SEPARATE regressions, not one combined "mismatch" case, mirroring the
+preregistration gate's own discipline. Once verified, the operation
+uses EXCLUSIVELY the frozen, registered snapshot -- never a second,
+independently-loaded config object, for `build_research_queue()` any
+more than for the preregistration gate.
 
 ---
 
 ## Stage 4 -- #003 statistics AND its #004 consumers, delivered as one bundle
 
 **Depends on Stage 2 (same calendar-resolved session dates feed
-bootstrap/bin assignment). Internal structure corrected this round: A3
-and A4 are SIBLINGS, both consuming the SAME weighted pool F4+F5
-establishes -- neither depends on the other; there is no sequencing
-between them.** **Also corrected: A4's own `exchangeability_status`
-field (#003) and its #004 consumers (`evidence/queue.py`'s ranking
-fallback, the two report scripts) are delivered TOGETHER, inside this
-same stage -- not deferred to Stage 8, so that no intermediate state
-ever exists where #003 produces the new status and #004 doesn't yet
-respect it.**
+bootstrap/bin assignment).** **A3 corrected this round, per GPT's own
+decision, relayed by Radu: A3 is no longer a narrow `baseline_iqr`-only
+fix layered beside an unchanged `stratified_baseline_point_estimate()`.
+That function's own signature receives only `(date, value)` pairs, with
+NO security identity -- it cannot implement per-security weighting at
+all, for any statistic, regardless of what `stat` callable is passed
+in. Keeping it unchanged does not defer F4+F5 for the reported baseline
+mean/median, it fails to deliver F4+F5 for them.** A4 remains a SIBLING
+of A3 (both consume the ONE pooled weighted distribution below; neither
+depends on the other). A4's own `exchangeability_status` field (#003)
+and its #004 consumers ship TOGETHER inside this same stage -- not
+deferred to Stage 8.
 
 - F2a/F2b (frozen signature-set content/id verification; duplicate
   `signature_id` rejection) and F6 (`family_test_count`) -- design-
   complete, section 9.
 - **A2:** `session_mass` diagnostic (measurement only).
-- **F4+F5's own per-security weighting formula**, establishing the
-  weighted baseline pool both A3 and A4 draw from independently.
-- **A3:** midpoint-with-tie-aggregation convention, computing `baseline_
-  iqr` from that weighted pool (section 4.1/4.2) -- replacing today's
-  unweighted `robust_iqr()` call. Does not touch `stratified_baseline_
-  point_estimate()`'s own `baseline_mean`/`baseline_median` computation
-  (Level 1, unchanged) or the signature's own unweighted `DescriptiveStats`.
-- **Bootstrap/CI, carried forward explicitly (joint design section 6):**
-  the per-replicate weighted estimator (recompute `k_rep`/`n_i_rep` from
-  EACH replicate's own composition, applying F4+F5's weight formula
+- **F4+F5's own per-security weighting formula, now actually wired
+  into the baseline's own point estimate (the gap this round closes):**
+  `stratified_baseline_point_estimate()`'s own signature changes to
+  accept security identity (or pre-computed per-row weights), and its
+  internal algorithm changes from "per-bin PLAIN stat, then bin-
+  weighted-average" (today's Level 1) to building ONE pooled weighted
+  distribution across every eligible row, each row carrying its own
+  `W_b/(k_b*n_i,b)` weight.
+- **A3:** that ONE pooled weighted distribution feeds `baseline_mean`
+  (weighted mean), `baseline_median` (weighted Q(0.5)), AND `baseline_
+  iqr` (Q(0.75)-Q(0.25)) TOGETHER -- midpoint convention with mandatory
+  tie-aggregation (section 4.1/4.2) for both quantile-based statistics,
+  replacing today's unweighted `robust_iqr()` call AND the Level-1
+  mechanism in one change, not two separate ones. Does not touch the
+  signature's own unweighted `DescriptiveStats`.
+- **Bootstrap/CI and the permutation estimator (A4) now explicitly
+  consume this SAME corrected baseline computation, per GPT's own
+  instruction that they must correspond to the reported mean:** the
+  per-replicate weighted estimator (recompute `k_rep`/`n_i_rep` from
+  EACH replicate's own composition, applying the SAME weight formula
   with replicate-local values) stays the mechanism that consumes
-  weights; interval construction from the `B` replicate statistic values
-  is the UNWEIGHTED `2.5`th/`97.5`th percentile of those plain numbers
-  -- weighting is NOT reapplied at that second step.
+  weights for bootstrap; interval construction from the `B` replicate
+  statistic values is the UNWEIGHTED `2.5`th/`97.5`th percentile of
+  those plain numbers. The permutation test's own "observed difference"
+  draws from this SAME pooled weighted `baseline_mean`, never a
+  separately-computed row-mean.
 - **A1:** F3 common support, (a) UNAVAILABLE -- full comparison
   blackout on partial OR zero common support; signature's own full-
   population `DescriptiveStats` unaffected.
 - **A4, #003 side:** weighted-permutation estimator mechanics; new
   `exchangeability_status` field on `BaselineComparison`, hard-coded
   `"UNVERIFIED"`, propagated to `DecayPoint` and `EvidencePacket.
-  primary_exchangeability_status` (registry A4, full propagation
-  design).
-- **A4, #004 side, SAME bundle:** `evidence/queue.py`'s `compute_review_
-  priority()` treats `p_key` as `float("inf")` whenever `primary_
-  exchangeability_status != "VERIFIED"` (always true for V1); `tests/
-  spec003/generate_report_artifacts.py` and `tests/spec004/generate_
-  report_artifacts.py` updated to print the qualifier or label the
-  figure as diagnostic-only wherever `adjusted_p`/`standardized_effect`
-  appear.
+  primary_exchangeability_status` (registry A4).
+- **A4, #004 side, SAME bundle, corrected this round -- UNCONDITIONAL,
+  not a status-conditioned branch (per GPT's own decision: a "no
+  constructor argument" check does not prove authenticity, and is
+  rejected):** `evidence/queue.py`'s `compute_review_priority()` sets
+  `p_key = float("inf")` UNCONDITIONALLY for V1 -- it does not read or
+  branch on `exchangeability_status` at all, so no value that field
+  could ever hold (including an artificially-injected `"VERIFIED"`)
+  changes the ranking. `tests/spec003/generate_report_artifacts.py` and
+  `tests/spec004/generate_report_artifacts.py` updated to print the
+  qualifier or label the figure as diagnostic-only wherever `adjusted_
+  p`/`standardized_effect` appear.
 
 **Acceptance criteria.** F2a/F2b/F6 regressions (section 9); the
 WEIGHTED `session_mass` reproducing the 5%/95% split, regression-
-locking the raw-`Counter` wrong answer; weight-rescaling invariance
-(>= 3 scale factors) and the tie/weight-permutation matrix applied to
-`baseline_iqr`'s own computation; A1's partial-support regression
-(full blackout, descriptive stats intact) plus the zero-support
-degenerate case; the exhaustive-enumeration permutation regression
-(signature `[8]`, baseline `[0,2]`/`[4]`, weights `[1/4,1/4,1/2]`,
-observed `5.5`, exact `p = 8/24 = 1/3`) kept distinct from any Monte
-Carlo estimate; the equal-weight case verified byte-identical to
-today's existing `stratified_permutation_p_value()` test; the FULL
-integration regression (real `run_evaluation()` -> `build_evidence_
-packet()` -> `compute_review_priority()`, never a hand-built packet)
-confirming `exchangeability_status == "UNVERIFIED"` survives intact and
-that an artificially small `adjusted_p` ranks NO HIGHER than `adjusted_
-p = None` would; a structural check that no function in `packet.py`/
-`entities.py` accepts `exchangeability_status` as an external argument.
+locking the raw-`Counter` wrong answer; **the numeric regression
+closing this round's gap, verified by direct computation (`python3`,
+exact fractions) -- one bin, security A values `[0,2]`, security B
+value `[4]`, weights `[1/4,1/4,1/2]`: today's row computation gives
+mean `2.0`/median `2.0`; the corrected pooled weighted computation
+gives mean `5/2 = 2.5`, median `8/3`, Q1 `1`, Q3 `4`, IQR `3` -- locked
+as an exact-fraction test, with a SEPARATE assertion that `baseline_
+median` and `baseline_iqr`'s own Q1/Q3 are read from the IDENTICAL
+pooled set, not two independently-built distributions;** weight-
+rescaling invariance (>= 3 scale factors) and the tie/weight-
+permutation matrix applied to this one mechanism; A1's partial-support
+regression (full blackout, descriptive stats intact) plus the zero-
+support degenerate case; the exhaustive-enumeration permutation
+regression (signature `[8]`, baseline `[0,2]`/`[4]`, weights
+`[1/4,1/4,1/2]`, observed `5.5`, exact `p = 8/24 = 1/3`) kept distinct
+from any Monte Carlo estimate; the equal-weight case verified byte-
+identical to today's existing `stratified_permutation_p_value()` test;
+the FULL integration regression (real `run_evaluation()` -> `build_
+evidence_packet()` -> `compute_review_priority()`, never a hand-built
+packet); **BEHAVIORAL tests, replacing the rejected structural-
+signature check:** `exchangeability_status` absent/`None`, an unknown
+string, and an artificially-injected `"VERIFIED"` (via `dataclasses.
+replace()`) ALL leave `p_key = inf` and rank NO HIGHER than `adjusted_p
+= None` would -- three cases, not one structural scan.
 
 ---
 
@@ -343,6 +402,17 @@ additional criteria beyond what those findings already specify.
   acceptance criterion above; not scoped by this plan at all.
 
 ---
+
+**Readiness note, per Radu's own closing instruction this round: stages
+independent of Stage 4 stay technically prepared as stated -- the whole
+package is not declared accepted ahead of this round's own Stage 4/
+Stage 1/Stage 3 adjustments being checked.** Stages 2, 5, 6, 7 have no
+dependency on Stage 4 and are unaffected by this round's corrections.
+Stage 8 depends on Stage 4's `EvidencePacket` structure but not on its
+own A3/A4 numeric corrections specifically (Finding 18/20 are
+unaffected). Stage 4 itself and Stage 1/Stage 3 (both corrected this
+round) should be read as freshly revised, not as previously-verified
+and merely restated.
 
 **Authorization.** Every stage above is a PROPOSAL for sequencing
 already-decided design work. No stage may begin until Radu explicitly

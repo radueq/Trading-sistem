@@ -668,6 +668,35 @@ is not itself the audit.
      in-memory gap as present, not future. Attribution corrected: the
      archive comparison and technical review in the prior round were
      GPT's work, relayed by Radu, not Radu's own personal verification.
+     **Revision 6, this round: GPT gives four explicit technical
+     decisions, relayed by Radu, closing points revision 5 had left
+     open or stated too weakly -- none sent back to Radu as a choice.**
+     A3 is REPLACED, not merely corrected -- `stratified_baseline_
+     point_estimate()`'s own signature receives only `(date, value)`
+     pairs, no security identity, so it cannot implement F4+F5's
+     per-security weighting for `baseline_mean`/`baseline_median` at
+     all; confirmed by a verified numeric counterexample (one bin,
+     security A `[0,2]`, security B `[4]`: today's row mean `2.0` vs.
+     the agreed weighted mean `5/2`). ONE pooled weighted baseline
+     distribution now feeds `baseline_mean`, `baseline_median` (the
+     weighted Q(0.5)), and `baseline_iqr` together, replacing the
+     Level-1 mechanism entirely; the permutation and bootstrap
+     estimators are wired to draw from this same corrected baseline.
+     A4's V1 protection is simplified -- the "no constructor argument"
+     structural check is rejected (it doesn't cover reconstructed
+     objects or loaded data); `compute_review_priority()` now sets
+     `p_key = inf` UNCONDITIONALLY in V1, never branching on
+     `exchangeability_status`'s text, so no injected `"VERIFIED"`
+     string can activate anything -- a future version permitting
+     inferential use needs its own, separately-verified authorization
+     mechanism, not a retrofit of this flag. J1's matrix grows from 15
+     to 20 cases: `attach_benchmark_return()` reads a separate
+     benchmark entry AND exit price, confirmed by reading the function,
+     not one combined "benchmark price." The implementation plan
+     (revision 3) picks up all four corrections, plus Stage 3's
+     acceptance criterion drops the "rejects or correctly reports"
+     alternative for a config mismatch -- rejection is the only outcome,
+     verified as two separate checks (label, structural equality).
    - **Spec #004: two rounds done (2026-10-04).** Round 1 (Claude
      alone): a fresh, high-effort independent re-verification pass,
      requested by Radu specifically to finish before the joint F1-F6
