@@ -22,6 +22,17 @@ class OutcomeStatus(str, Enum):
     CROSSES_LOCKED_OOS = "CROSSES_LOCKED_OOS"
     MISSING_BENCHMARK = "MISSING_BENCHMARK"
     INVALID_INPUT = "INVALID_INPUT"
+    # Joint remediation design 003+004, section 1.3; decision registry
+    # B2, revision 5; authorized 2026-10-06, Stage 2. Covers BOTH "no
+    # bar at the calendar-resolved target session" and "a bar exists at
+    # the target session but its own price is None" -- both a data-
+    # quality gap at an ALREADY-REACHED session, never conflated with
+    # INSUFFICIENT_FUTURE_DATA's own "not yet reached" meaning. Produced
+    # only by compute_forward_outcome()'s calendar-aware path (the
+    # `calendar=` parameter); the legacy bar-position-based path's own
+    # existing INSUFFICIENT_FUTURE_DATA mapping for a None exit price is
+    # unchanged.
+    DATA_GAP = "DATA_GAP"
 
 
 class EvaluationMode(str, Enum):

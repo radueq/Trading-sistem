@@ -25,11 +25,21 @@ import json
 import re
 from dataclasses import asdict, dataclass, field
 from datetime import date, time
-from enum import Enum
 from typing import Optional
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from evaluation.models.entities import EvaluationRunRegistry
+
+from data_foundation.calendar.entities import (
+    CalendarCoverageIncompleteError,
+    CalendarNotVerifiedError,
+    CalendarSource,
+    TradingCalendar,
+    build_calendar_id,
+    calendar_fingerprint,
+    verify_calendar_content_address,
+    verify_calendar_structure,
+)
 
 
 def canonical_json(value) -> str:
@@ -99,190 +109,20 @@ def _is_strict_positive_int(value) -> bool:
 
 
 # --------------------------------------------------------------------------
-# Calendar (Spec #005 SS11: "a separate, verified, versioned input, not
-# inferred from benchmark bars or a vote/union of security series")
+# Calendar (Spec #005 SS11) -- RELOCATED to `data_foundation.calendar.
+# entities` (joint remediation design 003+004, section 2; decision
+# registry B4, revision 5; authorized 2026-10-06, Stage 2).
+# `CalendarSource`, `TradingCalendar`, `calendar_fingerprint`,
+# `build_calendar_id`, `verify_calendar_content_address`,
+# `verify_calendar_structure`, `CalendarNotVerifiedError`,
+# `CalendarCoverageIncompleteError` are imported above and re-exported
+# here UNCHANGED, so every existing import site
+# (`from backtest.models.entities import ...`) keeps working without
+# modification -- a pure relocation, not a behavior change. New code
+# (Spec #003 Evaluation) imports directly from `data_foundation.
+# calendar.entities` instead, so `evaluation` never needs to import
+# `backtest` for this.
 # --------------------------------------------------------------------------
-
-class CalendarSource(str, Enum):
-    """A formal run requires OFFICIAL_VERIFIED (SS11/SS24: "Without a
-    verified calendar covering the stage and required warm-up, fail
-    closed"). SYNTHETIC_TEST_FIXTURE exists so infrastructure tests can
-    supply a trivial calendar of their own -- SS11 is explicit that such
-    a fixture "cannot label it a verified real-market calendar", so it
-    must never satisfy the formal-run gate."""
-    OFFICIAL_VERIFIED = "OFFICIAL_VERIFIED"
-    SYNTHETIC_TEST_FIXTURE = "SYNTHETIC_TEST_FIXTURE"
-
-
-@dataclass(frozen=True)
-class TradingCalendar:
-    """Spec #005 SS11: "Record its source, calendar identifier, version,
-    covered dates, timezone, session open/close times (including
-    holidays, early closes and exceptional closures), verification
-    provenance and content hash." `session_dates` is the ground truth of
-    which dates ARE trading sessions -- a date's absence from every price
-    series does NOT make it a non-session (SS11: "An expected session
-    without a bar is a data gap and remains a session for
-    NEXT_SESSION_OPEN and holding counts, even if the date is absent
-    from every series"). Reconciling this calendar against actual price
-    series (detecting a genuine gap vs. an unexpected bar on a
-    non-session) is engine work for a later batch -- this type is the
-    contract only."""
-    calendar_id: str
-    calendar_hash: str
-
-    source: str  # CalendarSource
-    calendar_identifier: str  # human-assigned name, e.g. "NYSE_NASDAQ_COMPOSITE"
-    calendar_version: str
-    market: str  # e.g. "US_EQUITIES", mirrors StrategyDefinition.market (Spec #004)
-    timezone: str  # e.g. "America/New_York"
-
-    coverage_start: str
-    coverage_end: str
-
-    session_dates: tuple[str, ...]  # sorted, deduplicated ISO dates
-    session_open_time: str  # e.g. "09:30"
-    session_close_time: str  # e.g. "16:00"
-    early_close_dates: tuple[tuple[str, str], ...] = field(default_factory=tuple)  # (date, close_time)
-
-    verified_by: Optional[str] = None
-    verified_at: Optional[str] = None
-
-
-def calendar_fingerprint(
-    source: str, calendar_identifier: str, calendar_version: str, market: str, timezone: str,
-    coverage_start: str, coverage_end: str, session_dates: tuple[str, ...],
-    session_open_time: str, session_close_time: str, early_close_dates: tuple[tuple[str, str], ...],
-) -> str:
-    """`source` is part of the fingerprint on purpose (same discipline as
-    Spec #004 PATCH #004-A's `HorizonCandidateSet.parameter_source`): a
-    synthetic fixture with the exact same dates as a real calendar must
-    still be a DIFFERENT calendar identity, never interchangeable with
-    it. `verified_by`/`verified_at` are excluded -- administrative
-    provenance, not economic identity, same convention as
-    `hypothesis_fingerprint()` excluding `approved_by`/`approved_at`."""
-    payload = {
-        "source": source,
-        "calendar_identifier": calendar_identifier,
-        "calendar_version": calendar_version,
-        "market": market,
-        "timezone": timezone,
-        "coverage_start": coverage_start,
-        "coverage_end": coverage_end,
-        "session_dates": sorted(session_dates),
-        "session_open_time": session_open_time,
-        "session_close_time": session_close_time,
-        "early_close_dates": sorted([list(pair) for pair in early_close_dates]),
-    }
-    return canonical_json(payload)
-
-
-def build_calendar_id(fingerprint: str) -> tuple[str, str]:
-    digest = hashlib.sha256(fingerprint.encode()).hexdigest()[:16]
-    return f"cal_{digest}", digest
-
-
-def verify_calendar_content_address(calendar: TradingCalendar) -> tuple[bool, tuple[str, ...]]:
-    """Recomputes the fingerprint from the calendar's OWN stored fields
-    and compares it to the stored `calendar_id`/`calendar_hash`. `frozen=
-    True` blocks in-place mutation but not construction of a
-    self-inconsistent object via `dataclasses.replace()` (e.g. dropping a
-    session date while keeping the old id) -- same bug class PATCH
-    #004-B already fixed once for StrategyHypothesis/StrategyVariant."""
-    fp = calendar_fingerprint(
-        calendar.source, calendar.calendar_identifier, calendar.calendar_version, calendar.market,
-        calendar.timezone, calendar.coverage_start, calendar.coverage_end, calendar.session_dates,
-        calendar.session_open_time, calendar.session_close_time, calendar.early_close_dates,
-    )
-    expected_id, expected_hash = build_calendar_id(fp)
-    if calendar.calendar_id != expected_id or calendar.calendar_hash != expected_hash:
-        return False, (
-            f"calendar content-address mismatch: stored calendar_id={calendar.calendar_id!r}/"
-            f"calendar_hash={calendar.calendar_hash!r} does not match the id/hash recomputed from "
-            f"the calendar's own fields ({expected_id!r}/{expected_hash!r}) -- the object was "
-            f"modified after construction (e.g. via dataclasses.replace())",
-        )
-    return True, ()
-
-
-def verify_calendar_structure(calendar: TradingCalendar) -> tuple[bool, tuple[str, ...]]:
-    """Validates the calendar's declared SHAPE, independent of its
-    content address: `timezone` must be a real IANA zone;
-    `session_open_time`/`session_close_time` must be genuine `HH:MM`
-    times with open before close; `coverage_start`/`coverage_end` and
-    every session/early-close date must be genuine ISO dates (see
-    `parse_iso_date()`), coverage must not be reversed, every
-    `session_date` must fall within the declared coverage with no
-    duplicates; and every `early_close_dates` entry must name an actual
-    session date (never a non-session day), have a close_time strictly
-    between `session_open_time` and `session_close_time`, and appear at
-    most once (no contradictory early closes for the same date)."""
-    errors: list[str] = []
-
-    if not _is_valid_timezone(calendar.timezone):
-        errors.append(f"timezone is not a recognized IANA timezone: {calendar.timezone!r}")
-
-    open_time = _parse_hh_mm(calendar.session_open_time)
-    close_time = _parse_hh_mm(calendar.session_close_time)
-    if open_time is None:
-        errors.append(f"session_open_time is not a valid HH:MM time: {calendar.session_open_time!r}")
-    if close_time is None:
-        errors.append(f"session_close_time is not a valid HH:MM time: {calendar.session_close_time!r}")
-    if open_time is not None and close_time is not None and not (open_time < close_time):
-        errors.append(f"session_open_time={calendar.session_open_time!r} must be before session_close_time={calendar.session_close_time!r}")
-
-    coverage_start_date = parse_iso_date(calendar.coverage_start)
-    coverage_end_date = parse_iso_date(calendar.coverage_end)
-    if coverage_start_date is None:
-        errors.append(f"coverage_start is not a valid ISO date: {calendar.coverage_start!r}")
-    if coverage_end_date is None:
-        errors.append(f"coverage_end is not a valid ISO date: {calendar.coverage_end!r}")
-    coverage_known = coverage_start_date is not None and coverage_end_date is not None and coverage_start_date <= coverage_end_date
-    if coverage_start_date is not None and coverage_end_date is not None and not coverage_known:
-        errors.append(f"coverage_start={calendar.coverage_start!r} is after coverage_end={calendar.coverage_end!r}")
-
-    if len(calendar.session_dates) != len(set(calendar.session_dates)):
-        errors.append("session_dates contains duplicate entries")
-
-    for d in calendar.session_dates:
-        d_date = parse_iso_date(d)
-        if d_date is None:
-            errors.append(f"session_dates contains a non-ISO-date value: {d!r}")
-        elif coverage_known and not (coverage_start_date <= d_date <= coverage_end_date):
-            errors.append(f"session_date {d!r} falls outside declared coverage [{calendar.coverage_start!r}, {calendar.coverage_end!r}]")
-
-    seen_early_close_dates: set[str] = set()
-    for entry_date, entry_close_time in calendar.early_close_dates:
-        entry_date_parsed = parse_iso_date(entry_date)
-        if entry_date_parsed is None:
-            errors.append(f"early_close_dates contains a non-ISO-date value: {entry_date!r}")
-        else:
-            if coverage_known and not (coverage_start_date <= entry_date_parsed <= coverage_end_date):
-                errors.append(f"early_close_date {entry_date!r} falls outside declared coverage [{calendar.coverage_start!r}, {calendar.coverage_end!r}]")
-            if entry_date not in calendar.session_dates:
-                errors.append(f"early_close_date {entry_date!r} is not one of the calendar's session_dates -- an early close cannot apply to a non-session day")
-            if entry_date in seen_early_close_dates:
-                errors.append(f"early_close_date {entry_date!r} appears more than once in early_close_dates (contradictory early closes)")
-            seen_early_close_dates.add(entry_date)
-
-        entry_close_time_parsed = _parse_hh_mm(entry_close_time)
-        if entry_close_time_parsed is None:
-            errors.append(f"early_close_dates close_time is not a valid HH:MM time: {entry_close_time!r}")
-        else:
-            if close_time is not None and not (entry_close_time_parsed < close_time):
-                errors.append(f"early_close_date {entry_date!r} close_time={entry_close_time!r} must be earlier than session_close_time={calendar.session_close_time!r}")
-            if open_time is not None and not (open_time < entry_close_time_parsed):
-                errors.append(f"early_close_date {entry_date!r} close_time={entry_close_time!r} must be later than session_open_time={calendar.session_open_time!r} -- a session cannot close at or before it opens")
-
-    return (not errors, tuple(errors))
-
-
-class CalendarNotVerifiedError(ValueError):
-    pass
-
-
-class CalendarCoverageIncompleteError(ValueError):
-    pass
 
 
 # --------------------------------------------------------------------------

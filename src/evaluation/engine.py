@@ -32,6 +32,11 @@ from __future__ import annotations
 from dataclasses import replace
 from typing import Optional
 
+from data_foundation.calendar.contract import (
+    require_calendar_covers_window,
+    require_verified_calendar_for_formal_run,
+)
+from data_foundation.calendar.registry import CalendarRegistry
 from data_foundation.pit import access as pit
 
 from discovery.config.loader import DiscoveryConfig
@@ -67,10 +72,41 @@ EVALUATION_ENGINE_VERSION = "v1.0.0"
 OUTCOME_TYPE = "relative_return"
 _ZERO_SCALE_EPS = 1e-12
 
+# Joint remediation design 003+004, S2/I1 (decision registry I1,
+# revision 5-6; authorized 2026-10-06, Stage 2). `build_run_id()`'s
+# fingerprint gained new fields this round (the resolved calendar's own
+# identity, security_ids, benchmark_security_id, data_as_of, horizons)
+# -- this marker moves together with that first change, so two runs computed under
+# different fingerprint schemes can never collide on one
+# evaluation_run_id. Known, flagged consequence (out of Stage 2's own
+# scope to fix): `backtest/provenance/evaluation_run.py`'s
+# LEGACY_RUN_ID_FIELDS/recompute_legacy_evaluation_run_id() recomputes
+# against the OLD 8-field set only -- it will no longer match an
+# evaluation_run_id genuinely produced by this engine from this version
+# onward. No existing #005 test exercises that recompute against a
+# real run_evaluation() output (confirmed by inspection), so nothing
+# breaks today; a future real #003->#005 integration must account for
+# this before relying on that cross-check.
+RUN_ID_SCHEME_VERSION = "v2"
+
 
 def _resolve_session_dates(conn, benchmark_security_id, development_start, development_end, data_as_of):
     bench_bars = pit.get_price_series_as_of(conn, benchmark_security_id, data_as_of)
     dates = [b.date for b in bench_bars if b.date >= development_start]
+    if development_end is not None:
+        dates = [d for d in dates if d <= development_end]
+    return dates, bench_bars
+
+
+def _resolve_session_dates_from_calendar(conn, benchmark_security_id, development_start, development_end, data_as_of, calendar):
+    """Joint remediation design 003+004, section 2's own consistency
+    requirement: once a verified calendar snapshot exists, session-date
+    resolution consumes THAT snapshot -- never a parallel, benchmark-
+    bar-derived list for the same computation. Benchmark bars are still
+    fetched (needed downstream by attach_benchmark_return()); only the
+    SESSION LIST now comes from the calendar."""
+    bench_bars = pit.get_price_series_as_of(conn, benchmark_security_id, data_as_of)
+    dates = [d for d in calendar.session_dates if d >= development_start]
     if development_end is not None:
         dates = [d for d in dates if d <= development_end]
     return dates, bench_bars
@@ -296,10 +332,28 @@ def run_evaluation(
     discovery_config: DiscoveryConfig,
     evaluation_config: EvaluationConfig,
     data_as_of: Optional[str] = None,
+    *,
+    calendar_registry: Optional[CalendarRegistry] = None,
+    calendar_id: Optional[str] = None,
 ) -> tuple[list[EvidenceProfile], EvaluationRunRegistry]:
     """THE single entry point. Returns every (signature x horizon)
     EvidenceProfile plus this run's reproducibility metadata (Spec #003
-    SS59-60)."""
+    SS59-60).
+
+    `calendar_registry`/`calendar_id` are NEW, OPTIONAL, and MUST be
+    supplied TOGETHER (joint remediation design 003+004, section 2;
+    decision registry B1, revision 5-6; authorized 2026-10-06, Stage
+    2). Omitted (the default): behavior is completely unchanged --
+    session dates are still derived from the benchmark's own PIT bars
+    via `_resolve_session_dates()`, exactly as before. Supplied: the
+    calendar is resolved EXCLUSIVELY by identity from the registry
+    (never a bare object -- `CalendarRegistry.resolve()` itself refuses
+    one with no linked `CalendarVerificationRecord`); in
+    FORMAL_DEVELOPMENT mode it must additionally be `OFFICIAL_VERIFIED`
+    (`require_verified_calendar_for_formal_run()`); its own declared
+    coverage must contain this run's actual window; its `session_dates`
+    then replace the benchmark-bar-derived list; and its own identity
+    feeds into this run's `evaluation_run_id` fingerprint."""
     ev_data = evaluation_config.data
     mode = ev_data["evaluation_mode"]
     timeframe = ev_data["timeframe"]
@@ -350,9 +404,27 @@ def run_evaluation(
     if data_as_of is None:
         raise ValueError("data_as_of is required when development_end is not set (SS13)")
 
-    session_dates, benchmark_bars = _resolve_session_dates(
-        conn, benchmark_security_id, development_start, development_end, data_as_of,
-    )
+    if (calendar_registry is None) != (calendar_id is None):
+        raise ValueError(
+            "calendar_registry and calendar_id must be supplied TOGETHER or not at all "
+            "(Spec #003+#004 joint remediation design, section 2, Stage 2) -- a single one "
+            "supplied alone is never enough to resolve a trusted calendar"
+        )
+
+    calendar = None
+    if calendar_registry is not None and calendar_id is not None:
+        calendar = calendar_registry.resolve(calendar_id)  # CalendarNotVerifiedError if unregistered
+        if mode == "FORMAL_DEVELOPMENT":
+            require_verified_calendar_for_formal_run(calendar)
+        window_end = development_end if development_end is not None else data_as_of
+        require_calendar_covers_window(calendar, development_start, window_end)
+        session_dates, benchmark_bars = _resolve_session_dates_from_calendar(
+            conn, benchmark_security_id, development_start, development_end, data_as_of, calendar,
+        )
+    else:
+        session_dates, benchmark_bars = _resolve_session_dates(
+            conn, benchmark_security_id, development_start, development_end, data_as_of,
+        )
     all_obs = _collect_observations(conn, security_ids, session_dates, benchmark_security_id, discovery_config)
 
     involved_security_ids = sorted({o.security_id for o in all_obs})
@@ -373,6 +445,10 @@ def run_evaluation(
         discovery_config_version=discovery_config.config_version,
         evaluation_config_version=evaluation_config.config_version,
         bootstrap_seed=ev_data["bootstrap"]["seed"], comparison_seed=ev_data["comparison"]["seed"],
+        security_ids=tuple(sorted(security_ids)), benchmark_security_id=benchmark_security_id,
+        data_as_of=data_as_of, horizons=tuple(sorted(horizons)),
+        calendar_id=(calendar.calendar_id if calendar is not None else None),
+        run_id_scheme_version=RUN_ID_SCHEME_VERSION,
     )
 
     profiles: list[EvidenceProfile] = []
