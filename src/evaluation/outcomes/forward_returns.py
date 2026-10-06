@@ -18,12 +18,20 @@ sid, as_of=<data_as_of>) call, never a per-observation query.
 from __future__ import annotations
 
 import bisect
+import math
 from dataclasses import replace
 from typing import Optional
 
 from evaluation.models.entities import ForwardOutcome, OutcomeStatus
 
 OUTCOME_ENGINE_VERSION = "v1.0.0"
+
+
+def _is_finite_positive(price: float) -> bool:
+    """Spec #003 S1 (GPT review finding, Top Finding 16) -- a price
+    that is present (not `None`) but zero, negative, `NaN`, or infinite
+    must never reach the division below as if it were a real price."""
+    return math.isfinite(price) and price > 0
 
 
 def _exact_entry_index(dates: list[str], as_of: str) -> Optional[int]:
@@ -77,6 +85,8 @@ def compute_forward_outcome(
     entry_bar = bars[entry_idx]
     if entry_bar.split_adjusted_close is None:
         return _invalid(OutcomeStatus.INVALID_INPUT)
+    if not _is_finite_positive(entry_bar.split_adjusted_close):
+        return _invalid(OutcomeStatus.INVALID_INPUT)
 
     exit_idx = entry_idx + horizon_bars
     if exit_idx >= len(bars):
@@ -90,6 +100,8 @@ def compute_forward_outcome(
 
     if exit_bar.split_adjusted_close is None:
         return _invalid(OutcomeStatus.INSUFFICIENT_FUTURE_DATA)
+    if not _is_finite_positive(exit_bar.split_adjusted_close):
+        return _invalid(OutcomeStatus.INVALID_INPUT)
 
     forward_return = exit_bar.split_adjusted_close / entry_bar.split_adjusted_close - 1.0
 

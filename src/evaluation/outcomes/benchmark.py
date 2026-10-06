@@ -13,6 +13,7 @@ from dataclasses import replace
 from typing import Optional
 
 from evaluation.models.entities import ForwardOutcome, OutcomeStatus
+from evaluation.outcomes.forward_returns import _is_finite_positive
 
 
 def _exact_date_index(dates: list[str], date: Optional[str]) -> Optional[int]:
@@ -42,6 +43,8 @@ def attach_benchmark_return(outcome: ForwardOutcome, benchmark_bars) -> ForwardO
     exit_close = benchmark_bars[exit_idx].split_adjusted_close
     if entry_close is None or exit_close is None:
         return replace(outcome, outcome_status=OutcomeStatus.MISSING_BENCHMARK.value)
+    if not _is_finite_positive(entry_close) or not _is_finite_positive(exit_close):
+        return replace(outcome, outcome_status=OutcomeStatus.INVALID_INPUT.value)
 
     benchmark_return = exit_close / entry_close - 1.0
     relative_return = outcome.forward_return - benchmark_return
