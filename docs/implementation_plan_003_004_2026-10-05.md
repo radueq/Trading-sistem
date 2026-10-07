@@ -1,14 +1,30 @@
-# Implementation Plan -- Spec #003 + Spec #004 remediation (2026-10-05/06, revision 6)
+# Implementation Plan -- Spec #003 + Spec #004 remediation (2026-10-05/06, revision 7)
 
 **Status: Stage 1 IMPLEMENTED and ACCEPTED. Stage 2 IMPLEMENTED WITH
-TWO ROUNDS OF CORRECTIONS, awaiting GPT's re-review -- NOT yet
+THREE ROUNDS OF CORRECTIONS, awaiting GPT's re-review -- NOT yet
 accepted. Stage 3 onward: NOT AUTHORIZED.** Built from `docs/joint_
 remediation_design_003_004_2026-10-04.md` (revision 11, closed
 calendar contract included) and `docs/decision_sheet_003_004_2026-10-
-05.md` (revision 9, the Technical Decision Registry). **Precedence:
+05.md` (revision 10, the Technical Decision Registry). **Precedence:
 the registry's own decisions replace revision 11's open alternatives;
 this plan only sequences already-made decisions, it does not re-decide
 anything.**
+
+**Revision 7 records GPT's own THIRD CHANGES REQUIRED verdict, on
+Stage 2's twice-corrected delivery (`0574171`/`0bdabe5`), and the
+correction applied at `fd992db` -- it does not re-sequence or
+re-decide anything.** GPT independently confirmed revision 6's
+`effective_as_of` fix is correct and CLOSED (repeated the reproduction,
+both the direct read and Discovery-triggered reads stay at the same
+vantage point). One further defect was found, reproduced through the
+public API alone: `AdmissionRegistry` keyed its entries by
+`artifact_digest` alone, so two LEGITIMATE admissions of the identical
+text under different metadata (different source, operator, coverage)
+collided -- the second silently overwrote the first's retained
+snapshot. Fixed by separating `admission_id` (the admission DECISION's
+own identity, binding the digest to the full metadata) from
+`artifact_digest` (the raw text's own hash) -- see Stage 2's own
+section below for the corrected acceptance criteria and exact tests.
 
 **Revision 6 records GPT's own SECOND CHANGES REQUIRED verdict, on
 Stage 2's first-corrected delivery (`af7b938`/`8877551`), and the
@@ -21,10 +37,12 @@ admission gates) as long as it was internally self-consistent; and
 list by `development_end` only, never by `effective_as_of`, letting
 Discovery-triggered PIT reads (via `_collect_observations()`) go past
 the run's own declared vantage point even though direct bar fetches
-were already correctly bounded. Both are now fixed -- see Stage 2's
-own section below for the corrected acceptance criteria and exact
-tests. GPT also reconfirmed, by code inspection, that all seven of
-revision 5's own corrections remain valid.
+were already correctly bounded. Both are now fixed (the `effective_
+as_of` fix was independently reconfirmed and closed by GPT in revision
+7, above) -- see Stage 2's own section below for the corrected
+acceptance criteria and exact tests. GPT also reconfirmed, by code
+inspection, that all seven of revision 5's own corrections remain
+valid.
 
 **Revision 5 records GPT's own CHANGES REQUIRED verdict on Stage 2's
 first delivery (`7fcf78d`) and the corrections applied at `8877551` --
@@ -159,13 +177,15 @@ verdict text.
 
 ## Stage 2 -- Calendar foundation AND the run-identity fingerprint change (#003, Spec #005 boundary)
 
-**IMPLEMENTED WITH TWO ROUNDS OF CORRECTIONS, awaiting GPT's re-review
+**IMPLEMENTED WITH THREE ROUNDS OF CORRECTIONS, awaiting GPT's re-review
 -- NOT yet accepted. Radu's explicit authorization, 2026-10-06, Stage
 2 only. First delivery: commit `7fcf78d`. GPT's own verdict: CHANGES
 REQUIRED (seven defects, listed below). First corrections: commit
 `8877551`. GPT's own verdict on THAT delivery: STILL CHANGES REQUIRED
 (two further defects, listed below). Second corrections: commit
-`0bdabe5`. All on `claude/spec004-audit`.**
+`0bdabe5`. GPT's own verdict on THAT delivery: the `effective_as_of`
+fix ACCEPTED and CLOSED; one further admission-identity defect found.
+Third corrections: commit `fd992db`. All on `claude/spec004-audit`.**
 
 **Seven corrections applied this round, per GPT's own changes-required
 review -- none of these are new decisions, all are fixes to already-
@@ -234,10 +254,33 @@ mechanics, not new decisions:**
    reached classification is never truncated by this bound -- only the
    observation-dates list is.
 
-See registry revision 9 (`docs/decision_sheet_003_004_2026-10-05.md`)
-for the full finding-by-finding detail on both rounds. The text below
-this point describes the stage as authorized and as first delivered;
-corrections are layered on top, not a rewrite of the original scope.
+**One further correction applied this round, per GPT's own THIRD
+changes-required review -- again, a fix to already-authorized Stage 2
+mechanics, not a new decision (the `effective_as_of` fix above was
+independently reconfirmed and CLOSED by GPT this same round):**
+1. `AdmissionRegistry` no longer keys its entries by `artifact_digest`
+   alone -- GPT reproduced, through the public API alone, two
+   LEGITIMATE admissions of the identical raw text under different
+   metadata (admission A: source A, coverage to 2024-01-31; admission
+   B: the same text, source B, coverage to 2024-12-31) both
+   succeeding, with the second silently overwriting the first's
+   retained snapshot (resolving A's own original identity returned B's
+   metadata instead). `AdmittedCalendarSource` now carries a separate
+   `admission_id` field, computed by binding the artifact's digest to
+   every field that distinguishes one admission DECISION from another
+   (source, method, version, publication, coverage, market, timezone,
+   attestation); `AdmissionRegistry` keys and resolves by
+   `admission_id`, never the bare digest. Two admissions of the same
+   text with different metadata now get different ids, BOTH retained;
+   the identical admission repeated is idempotent.
+   `CalendarVerificationRecord` gained an `admission_id` field, pinning
+   the EXACT admission decision used, not merely the shared raw text.
+
+See registry revision 10 (`docs/decision_sheet_003_004_2026-10-05.md`)
+for the full finding-by-finding detail across all three rounds. The
+text below this point describes the stage as authorized and as first
+delivered; corrections are layered on top, not a rewrite of the
+original scope.
 
 **Independent of Stage 1.** **Corrected this round: I1's `run_id_
 scheme_version` marker is delivered TOGETHER WITH this stage, not in
@@ -272,23 +315,28 @@ schemes could collide on one `evaluation_run_id`.**
   `src/backtest/` -- a pure, behavior-preserving move, independently
   parallelizable with the rest of this stage.
 
-**Acceptance criteria -- met, after both correction rounds.** The
+**Acceptance criteria -- met, after all three correction rounds.** The
 admission/registry regressions (direct construction without a record
 refused; an admitted source tampered with after admission rejected;
 coverage incompatible with the admitted source rejected; a genuine
 session discrepancy rejected before registration; blank verifier/
 timestamp rejected; a failed registration leaves no partial state AND
 preserves a pre-existing entry; a valid case resolves from registry;
-NOW ALSO: a directly-constructed `AdmittedCalendarSource` for an
-unapproved provider refused; a nonexistent `admission_id` refused;
-content+digest changed together after admission cannot replace the
-admitted snapshot) -- run against FIXTURE artifacts per B3's current,
-still-blocked real-source status, through the TWICE-CORRECTED
-`register_verified()` gate, which now resolves its admitted source
-EXCLUSIVELY via `AdmissionRegistry`/`admission_id`, never a directly-
-supplied object; a FORMAL_DEVELOPMENT run with the calendar OMITTED
-now REFUSES before any data access, with exactly one argument supplied
-also refused, and an unregistered id also refused; a `SYNTHETIC_TEST_
+a directly-constructed `AdmittedCalendarSource` for an unapproved
+provider refused; a nonexistent `admission_id` refused; content+digest
+changed together after admission cannot replace the admitted
+snapshot; NOW ALSO: the SAME text admitted twice under DIFFERENT
+metadata gets distinct identities, both snapshots retained, with the
+calendar's own record tied to the one actually used; the identical
+admission(+registration) repeated is idempotent) -- run against
+FIXTURE artifacts per B3's current, still-blocked real-source status,
+through the THREE-TIMES-CORRECTED `register_verified()` gate, which
+resolves its admitted source EXCLUSIVELY via `AdmissionRegistry`/
+`admission_id` (now the admission DECISION's own identity, distinct
+from the raw text's `artifact_digest`), never a directly-supplied
+object; a FORMAL_DEVELOPMENT run with the calendar OMITTED now REFUSES
+before any data access, with exactly one argument supplied also
+refused, and an unregistered id also refused; a `SYNTHETIC_TEST_
 FIXTURE` calendar refused and an `OFFICIAL_VERIFIED` one accepted;
 B2's DATA_GAP test, including a real end-to-end engine regression
 proving DATA_GAP is counted in the reconciliation; target-session
@@ -299,43 +347,48 @@ version` each produce different `evaluation_run_id`s (five
 independent-axis checks, not one); B4's byte-identical relocation
 regression plus the `evaluation` -> `backtest` import-direction guard
 test; a real `run_evaluation()` output confirmed to actually fail
-#005's own legacy identity recompute; NOW ALSO: a real `run_
-evaluation()` call with `data_as_of < development_end` proving EVERY
-PIT read this run performs -- direct AND Discovery-triggered alike --
-never requests a date past `effective_as_of`, while CROSSES_LOCKED_OOS/
-INSUFFICIENT_FUTURE_DATA classification (which depends on the full,
-untruncated calendar) still works correctly.
+#005's own legacy identity recompute; a real `run_evaluation()` call
+with `data_as_of < development_end` proving EVERY PIT read this run
+performs -- direct AND Discovery-triggered alike -- never requests a
+date past `effective_as_of` (independently reconfirmed by GPT and
+CLOSED this round), while CROSSES_LOCKED_OOS/INSUFFICIENT_FUTURE_DATA
+classification (which depends on the full, untruncated calendar)
+still works correctly.
 
-**Verified: `tests/data_foundation/` (30 tests: admission incl. the
-V1-always-rejects-even-a-plausible-identifier case AND the new
-`AdmissionRegistry`-mediated admit->record->resolve contract, source
-verification, the corrected atomic registry's own regressions incl.
-the three new admission-bypass regressions, relocation-identity +
-`evaluation`->`backtest` import guard); `tests/spec003/test_42_
-calendar_aware_target_session_resolution.py` (11 tests, unchanged by
-either round's corrections); `tests/spec003/test_43_run_identity_
-fingerprint_s2.py` (5 tests, run through the mandatory-calendar path);
-`tests/spec003/test_44_formal_development_calendar_strictness.py` (5
-tests: both arguments omitted, one supplied alone, an unregistered id,
-SYNTHETIC_TEST_FIXTURE refused, OFFICIAL_VERIFIED accepted);
-`tests/spec003/test_45_data_gap_missingness_reconciliation.py` (1
-test: a real two-security universe with a genuine DATA_GAP, reconciled
-through run_evaluation()); `tests/spec003/test_46_v2_run_id_
-incompatible_with_005_legacy_recompute.py` (1 test: a real v2 registry
-fails #005's own recompute, concretely); `tests/spec003/test_47_
-effective_as_of_bounds_discovery_triggered_pit_reads.py` (1 test, new
-this round: intercepts the shared `data_foundation.pit.access` module
-object that both `evaluation.engine` and `discovery.engine` call
-through, asserting zero PIT reads past `effective_as_of` while
-confirming OOS classification correctness -- verified as a genuine
-regression by deliberately reverting the fix and observing the test
-fail with concrete offending dates, then restoring it). Every
-pre-existing FORMAL_DEVELOPMENT test in `tests/spec003/` and every
-pre-existing admission call site in `tests/` updated to the new
-`AdmissionRegistry`-mediated pattern. `tests/spec005/` re-run
-unchanged: 419 passed. Full project suite (`pytest tests/`): 802
-passed, 1 skipped (pre-existing, unrelated) -- zero regression from
-either correction round's own baseline (789 -> 798 -> 802).**
+**Verified: `tests/data_foundation/` (34 tests: admission incl. the
+V1-always-rejects-even-a-plausible-identifier case, the `Admission
+Registry`-mediated admit->record->resolve contract, AND the same-text-
+different-metadata/idempotent-repeat regressions; source verification;
+the corrected atomic registry's own regressions incl. the admission-
+bypass regressions and the same-text-different-metadata/idempotent-
+repeat pair run through the full admit->verify->register chain;
+relocation-identity + `evaluation`->`backtest` import guard);
+`tests/spec003/test_42_calendar_aware_target_session_resolution.py`
+(11 tests, unchanged by any round's corrections); `tests/spec003/
+test_43_run_identity_fingerprint_s2.py` (5 tests, run through the
+mandatory-calendar path); `tests/spec003/test_44_formal_development_
+calendar_strictness.py` (5 tests: both arguments omitted, one supplied
+alone, an unregistered id, SYNTHETIC_TEST_FIXTURE refused, OFFICIAL_
+VERIFIED accepted); `tests/spec003/test_45_data_gap_missingness_
+reconciliation.py` (1 test: a real two-security universe with a
+genuine DATA_GAP, reconciled through run_evaluation()); `tests/spec003/
+test_46_v2_run_id_incompatible_with_005_legacy_recompute.py` (1 test:
+a real v2 registry fails #005's own recompute, concretely);
+`tests/spec003/test_47_effective_as_of_bounds_discovery_triggered_
+pit_reads.py` (1 test: intercepts the shared `data_foundation.pit.
+access` module object that both `evaluation.engine` and `discovery.
+engine` call through, asserting zero PIT reads past `effective_as_of`
+while confirming OOS classification correctness -- verified as a
+genuine regression by deliberately reverting the fix and observing
+the test fail with concrete offending dates, then restoring it; GPT
+independently repeated this reproduction and confirmed it CLOSED).
+Every pre-existing FORMAL_DEVELOPMENT test in `tests/spec003/` and
+every pre-existing admission call site in `tests/` updated to the new
+`AdmissionRegistry`-mediated, `admission_id`-keyed pattern.
+`tests/spec005/` re-run unchanged: 419 passed. Full project suite
+(`pytest tests/`): 806 passed, 1 skipped (pre-existing, unrelated) --
+zero regression across all three correction rounds' own baselines
+(789 -> 798 -> 802 -> 806).**
 
 **Explicitly NOT done this stage, carried forward as-is:** `#005`'s own
 adoption of `CalendarRegistry` (B5, separate, not authorized); a real,

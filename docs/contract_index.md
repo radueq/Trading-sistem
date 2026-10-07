@@ -815,6 +815,44 @@ is not itself the audit.
      from the `8877551` baseline of 798; `tests/spec005/` unchanged at
      419 passed. #005 code itself untouched; no other stage begun; the
      Spec #005/Batch 3 pause is unchanged.
+
+     **GPT's own review of THAT corrected delivery: the `effective_
+     as_of`/Discovery-read fix (above) is ACCEPTED and CLOSED -- GPT
+     independently repeated the reproduction and confirmed both the
+     direct read and the Discovery-triggered reads stay at the same
+     vantage point, with the full calendar left untouched. Stage 2
+     remains CHANGES REQUIRED for one further admission-registry
+     identity defect, reproduced through the public API alone.
+     CORRECTED, commit `fd992db` -- awaiting GPT's re-review, NOT yet
+     accepted.** `AdmissionRegistry` keyed its entries by `artifact_
+     digest` alone -- reproduced: two LEGITIMATE admissions of the
+     IDENTICAL raw text under different metadata (admission A: source
+     A, coverage to 2024-01-31; admission B: the same text, source B,
+     coverage to 2024-12-31) both succeeded, but the second silently
+     overwrote the first's retained snapshot -- resolving A's own
+     original identity returned B's metadata instead. Not a
+     cryptographic collision (the same text correctly produces the
+     same digest); the bug was using that digest, alone, as the
+     identity of the whole admission DECISION. Fixed: `AdmittedCalendar
+     Source` gains a new `admission_id` field, distinct from `artifact_
+     digest`, computed by binding the digest to every field that
+     distinguishes one admission from another (source, method,
+     version, publication, coverage, market, timezone, attestation);
+     `AdmissionRegistry` now keys and resolves by `admission_id`, never
+     the bare digest -- two admissions of the same text with different
+     metadata get different ids, BOTH retained, while the identical
+     admission repeated is idempotent; `CalendarVerificationRecord`
+     gains an `admission_id` field, pinning the EXACT admission
+     decision used, not merely the shared raw text. No new cryptography
+     or external service. 4 new tests (`tests/data_foundation/test_01`/
+     `test_03`: same text with different metadata gets distinct ids
+     with both snapshots retained, confirmed through the full
+     admit->verify->register chain too; the identical admission(+
+     registration) repeated is idempotent). Full project suite: 806
+     passed, 1 skipped (pre-existing, unrelated) -- zero regression
+     from the `0bdabe5` baseline of 802; `tests/spec005/` unchanged at
+     419 passed. #005 code itself untouched; no other stage begun; the
+     Spec #005/Batch 3 pause is unchanged.
    - **Spec #004: two rounds done (2026-10-04).** Round 1 (Claude
      alone): a fresh, high-effort independent re-verification pass,
      requested by Radu specifically to finish before the joint F1-F6
