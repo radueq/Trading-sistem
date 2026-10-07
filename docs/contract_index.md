@@ -777,6 +777,44 @@ is not itself the audit.
      Stage 2 remains unauthorized; findings reconciliation stays
      closed, the calendar admission/trust contract stays closed, and
      the Spec #005/Batch 3 pause is unchanged.
+
+     **GPT's own review of THAT corrected delivery: Stage 2 -- STILL
+     CHANGES REQUIRED (two further defects, both reproduced directly).
+     CORRECTED, commit `0bdabe5` -- awaiting GPT's re-review, NOT yet
+     accepted.** (1) `register_verified()` still accepted a directly-
+     constructed `AdmittedCalendarSource` -- reproduced: a hand-built
+     object (`admission_method="APPROVED_PROVIDER"`, a source NOT on
+     the allow-list) passed every self-consistency check and was
+     accepted, since those checks only prove the object agrees with
+     itself, never that it actually passed Step 0's own admission
+     rules; now a new `AdmissionRegistry` (`admission.py`) is the ONLY
+     place an `AdmittedCalendarSource` can come from -- `admit_source_
+     via_approved_provider()`/`admit_source_via_operator_attestation()`
+     write into it internally, and `register_verified()` takes
+     `(calendar, admission_registry, admission_id)` instead of a raw
+     object. (2) `effective_as_of` did not bound Discovery-triggered
+     PIT reads -- `_resolve_session_dates_from_calendar()` filtered its
+     returned session list by `development_end` only, never by
+     `effective_as_of`; whenever `data_as_of < development_end`,
+     `_collect_observations()` could still call Discovery for dates
+     past the run's own declared vantage point, and Discovery performs
+     its own PIT reads as of each one -- reproduced with extracted
+     functions and observed call arguments; now the returned list is
+     ALSO filtered by `effective_as_of` (the FULL calendar used for
+     target-session resolution and OOS classification stays
+     untruncated). 5 new tests (`tests/data_foundation/test_01`+1,
+     `test_03`+3, `tests/spec003/test_47` new: a real `run_evaluation()`
+     with `data_as_of < development_end`, intercepting the shared
+     `data_foundation.pit.access` module both `evaluation.engine` and
+     `discovery.engine` call through, confirming zero PIT reads past
+     `effective_as_of` while CROSSES_LOCKED_OOS/INSUFFICIENT_FUTURE_DATA
+     classification still works -- verified as a genuine regression by
+     temporarily reverting the fix and observing it fail with concrete
+     offending dates, then restoring it). Full project suite: 802
+     passed, 1 skipped (pre-existing, unrelated) -- zero regression
+     from the `8877551` baseline of 798; `tests/spec005/` unchanged at
+     419 passed. #005 code itself untouched; no other stage begun; the
+     Spec #005/Batch 3 pause is unchanged.
    - **Spec #004: two rounds done (2026-10-04).** Round 1 (Claude
      alone): a fresh, high-effort independent re-verification pass,
      requested by Radu specifically to finish before the joint F1-F6

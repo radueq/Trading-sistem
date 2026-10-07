@@ -1,7 +1,7 @@
 """TEST 47 -- `effective_as_of` bounds EVERY PIT read this run performs,
 including the ones Discovery triggers indirectly through
 `_collect_observations()` (joint remediation design 003+004, section
-1.3; decision registry B1; GPT review, Stage 2 THIRD changes-required
+1.3; decision registry B1; GPT review, Stage 2 second changes-required
 round).
 
 GPT's own reproduction: `_resolve_session_dates_from_calendar()`
