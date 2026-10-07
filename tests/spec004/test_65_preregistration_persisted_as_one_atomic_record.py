@@ -46,7 +46,7 @@ def _commit(tmp_path, entry_definition, horizon_candidates, evidence_provenance,
     frozen = persistent.preregister(
         draft, variants, proposal=proposal, proposal_validation=ProposalValidationResult(True, "OK", (), proposal.proposal_id),
         consensus=compute_consensus(proposal.proposal_id, (), human_decision=approved_human_decision(at="t")),
-        run_registry=run_registry, hypothesis_config=hypothesis_config.data,
+        run_registry=run_registry, hypothesis_config=hypothesis_config,
     )
     return log_path, frozen, variants
 

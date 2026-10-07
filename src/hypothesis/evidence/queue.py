@@ -33,6 +33,10 @@ same reference horizon for every signature uniformly.
 """
 from __future__ import annotations
 
+from typing import Optional
+
+from config_identity.registry import ConfigRegistry
+
 from hypothesis.config.loader import HypothesisConfig
 from hypothesis.models.entities import EvidencePacket, ResearchQueueEntry
 
@@ -89,13 +93,32 @@ def compute_review_priority(packet: EvidencePacket) -> tuple[float, float, float
 
 
 def build_research_queue(
-    packets: list[EvidencePacket], config: HypothesisConfig,
+    packets: list[EvidencePacket], config: HypothesisConfig, *, config_registry: Optional[ConfigRegistry] = None,
 ) -> tuple[ResearchQueueEntry, ...]:
     """ONE entry per `EvidencePacket` (i.e. per signature) -- never per
     horizon. All packets must share the same `reference_horizon_bars`
     (they will, if all were built under the same `hypothesis_config`,
     since that's where the reference horizon comes from -- checked here
-    defensively regardless)."""
+    defensively regardless).
+
+    `config_registry` (Stage 3 -- config identity infrastructure,
+    authorized 2026-10-07; optional, default `None` -- every
+    pre-Stage-3 call site, including the deliberately-different-
+    config test in TEST 50, is unaffected). When supplied: the FIRST
+    call for the "hypothesis" domain within it registers `config` as
+    this operation's own pinned baseline; a SUBSEQUENT call sharing
+    the same registry verifies its candidate against that SAME
+    baseline (label + structurally-normalized content), raising
+    BEFORE any of the eligibility/priority computation below on a
+    mismatch -- never an unguarded, unverified `config` silently
+    driving this operation. The operation then reads `eligibility_
+    config`/`reference_horizon_bars`/`config_version` EXCLUSIVELY from
+    the recursively-frozen, verified snapshot, never the caller's own,
+    independently-mutable `config.data`."""
+    if config_registry is not None:
+        registered = config_registry.register_or_verify("hypothesis", config.config_version, config.data)
+        config = HypothesisConfig(data=registered.content, config_version=config.config_version)
+
     eligibility_config = config.data["research_queue_eligibility"]
     reference_horizon_bars = config.data["evidence_reference"]["reference_horizon_bars"]
 

@@ -119,7 +119,7 @@ def _build_and_preregister(raw_proposal: dict, registry: HypothesisRegistry, run
     try:
         hyp = preregister_hypothesis(
             draft, variants, proposal=proposal, proposal_validation=validation, consensus=consensus,
-            registry=registry, run_registry=run_reg, hypothesis_config=HCFG.data,
+            registry=registry, run_registry=run_reg, hypothesis_config=HCFG,
         )
     except PreregistrationError as exc:
         registry.mark_proposal_rejected(proposal.proposal_id)

@@ -55,7 +55,7 @@ def test_consistent_binding_succeeds(entry_definition, horizon_candidates, evide
     consensus = compute_consensus("prop_1", (), human_decision=approved_human_decision())
     frozen = preregister_hypothesis(
         draft, variants, proposal=proposal, proposal_validation=ProposalValidationResult(True, "OK", (), "prop_1"),
-        consensus=consensus, registry=HypothesisRegistry(), run_registry=run_registry, hypothesis_config=hypothesis_config.data,
+        consensus=consensus, registry=HypothesisRegistry(), run_registry=run_registry, hypothesis_config=hypothesis_config,
     )
     assert frozen.status == HypothesisStatus.PREREGISTERED.value
 
@@ -68,7 +68,7 @@ def test_proposal_validation_for_a_different_proposal_is_rejected(entry_definiti
         preregister_hypothesis(
             draft, variants, proposal=proposal,
             proposal_validation=ProposalValidationResult(True, "OK", (), "prop_DIFFERENT"),
-            consensus=consensus, registry=HypothesisRegistry(), run_registry=run_registry, hypothesis_config=hypothesis_config.data,
+            consensus=consensus, registry=HypothesisRegistry(), run_registry=run_registry, hypothesis_config=hypothesis_config,
         )
 
 
@@ -79,7 +79,7 @@ def test_consensus_for_a_different_proposal_is_rejected(entry_definition, horizo
     with pytest.raises(PreregistrationError, match="consensus.proposal_id"):
         preregister_hypothesis(
             draft, variants, proposal=proposal, proposal_validation=ProposalValidationResult(True, "OK", (), "prop_1"),
-            consensus=consensus_for_other_proposal, registry=HypothesisRegistry(), run_registry=run_registry, hypothesis_config=hypothesis_config.data,
+            consensus=consensus_for_other_proposal, registry=HypothesisRegistry(), run_registry=run_registry, hypothesis_config=hypothesis_config,
         )
 
 
@@ -93,7 +93,7 @@ def test_draft_naming_a_different_proposal_than_the_one_supplied_is_rejected(ent
     with pytest.raises(PreregistrationError, match="hypothesis_provenance.proposal_id"):
         preregister_hypothesis(
             draft, variants, proposal=proposal, proposal_validation=ProposalValidationResult(True, "OK", (), "prop_1"),
-            consensus=consensus, registry=HypothesisRegistry(), run_registry=run_registry, hypothesis_config=hypothesis_config.data,
+            consensus=consensus, registry=HypothesisRegistry(), run_registry=run_registry, hypothesis_config=hypothesis_config,
         )
 
 
@@ -104,7 +104,7 @@ def test_approved_by_disagreeing_with_the_human_decision_is_rejected(entry_defin
     with pytest.raises(PreregistrationError, match="approved_by"):
         preregister_hypothesis(
             draft, variants, proposal=proposal, proposal_validation=ProposalValidationResult(True, "OK", (), "prop_1"),
-            consensus=consensus, registry=HypothesisRegistry(), run_registry=run_registry, hypothesis_config=hypothesis_config.data,
+            consensus=consensus, registry=HypothesisRegistry(), run_registry=run_registry, hypothesis_config=hypothesis_config,
         )
 
 
@@ -118,5 +118,5 @@ def test_approved_at_disagreeing_with_the_human_decision_is_rejected(entry_defin
     with pytest.raises(PreregistrationError, match="approved_at"):
         preregister_hypothesis(
             draft, variants, proposal=proposal, proposal_validation=ProposalValidationResult(True, "OK", (), "prop_1"),
-            consensus=consensus, registry=HypothesisRegistry(), run_registry=run_registry, hypothesis_config=hypothesis_config.data,
+            consensus=consensus, registry=HypothesisRegistry(), run_registry=run_registry, hypothesis_config=hypothesis_config,
         )

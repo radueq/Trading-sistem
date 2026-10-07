@@ -20,10 +20,13 @@ from __future__ import annotations
 import dataclasses
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
+
+from config_identity.registry import ConfigRegistry
 
 from evaluation.models.entities import EvaluationRunRegistry
 
+from hypothesis.config.loader import HypothesisConfig
 from hypothesis.consensus.consensus import can_preregister
 from hypothesis.models.entities import (
     ConsensusRecord,
@@ -178,7 +181,8 @@ class PersistentHypothesisRegistry:
         proposal_validation: ProposalValidationResult,
         consensus: ConsensusRecord,
         run_registry: EvaluationRunRegistry,
-        hypothesis_config: dict,
+        hypothesis_config: HypothesisConfig,
+        config_registry: Optional[ConfigRegistry] = None,
     ) -> StrategyHypothesis:
         """Runs the exact same atomic gate as `registry.preregistration.
         preregister_hypothesis()` (against `self.registry`), then appends
@@ -198,6 +202,7 @@ class PersistentHypothesisRegistry:
         frozen = preregister_hypothesis(
             draft, variants, proposal=proposal, proposal_validation=proposal_validation, consensus=consensus,
             registry=self.registry, run_registry=run_registry, hypothesis_config=hypothesis_config,
+            config_registry=config_registry,
         )
         self.audit_log.append("preregistration_committed", {"hypothesis": frozen, "variants": list(variants)})
         return frozen

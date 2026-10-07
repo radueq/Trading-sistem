@@ -66,7 +66,7 @@ def test_preregistered_hypothesis_and_variants_survive_a_fresh_replay(tmp_path, 
     frozen = persistent.preregister(
         draft, variants, proposal=proposal, proposal_validation=ProposalValidationResult(True, "OK", (), proposal.proposal_id),
         consensus=compute_consensus(proposal.proposal_id, (), human_decision=approved_human_decision(at="t")),
-        run_registry=run_registry, hypothesis_config=hypothesis_config.data,
+        run_registry=run_registry, hypothesis_config=hypothesis_config,
     )
 
     replayed = JsonlAuditLog(log_path).replay()

@@ -14,8 +14,13 @@ path that can produce one.
 """
 from __future__ import annotations
 
+from typing import Optional
+
+from config_identity.registry import ConfigIdentityError, ConfigRegistry, register_config_version
+
 from evaluation.models.entities import EvaluationRunRegistry
 
+from hypothesis.config.loader import HypothesisConfig, load_config as load_hypothesis_config
 from hypothesis.consensus.consensus import can_preregister
 from hypothesis.models.entities import ConsensusRecord, HypothesisProposal, HypothesisStatus, StrategyHypothesis, StrategyVariant
 from hypothesis.proposals.validator import ProposalValidationResult
@@ -36,13 +41,35 @@ def preregister_hypothesis(
     consensus: ConsensusRecord,
     registry: HypothesisRegistry,
     run_registry: EvaluationRunRegistry,
-    hypothesis_config: dict,
+    hypothesis_config: HypothesisConfig,
+    config_registry: Optional[ConfigRegistry] = None,
 ) -> StrategyHypothesis:
     """The ONLY function that may produce a PREREGISTERED
     StrategyHypothesis. Enforces, in order, and raises
     `PreregistrationError` (never proceeds partially) on the first
     failing group:
 
+    -1. Config identity (Stage 3 -- config identity infrastructure,
+        decision registry, Stage 3; authorized 2026-10-07; the
+        "mandatory live re-read" gate, decision registry C1). Every
+        call -- unconditionally, not opt-in -- re-reads
+        `hypothesis.yaml` FRESH, right now, and verifies the CALLER-
+        SUPPLIED `hypothesis_config` against that fresh read: its
+        declared `config_version` (label) and its actual `.data`
+        (content), checked SEPARATELY, both normalized to the same
+        representation before the content comparison. A `hypothesis_
+        config` whose label is wrong, whose content is wrong, or both,
+        is refused here, before any of the checks below ever run.
+        `validate_for_preregistration()` below then consumes
+        EXCLUSIVELY this freshly-verified, recursively-frozen
+        snapshot -- never the caller's own, independently-mutable
+        `hypothesis_config.data`. If `config_registry` is ALSO
+        supplied: this fresh read is additionally registered-or-
+        verified against it, catching a config that changed on disk
+        between an EARLIER registration in this same workflow (e.g.
+        at proposal-validation time, sharing the same `ConfigRegistry`
+        instance) and this gate running now -- never merely comparing
+        two in-memory copies taken at the same moment.
     0. `proposal`, `proposal_validation`, `consensus`, and
        `draft.hypothesis_provenance` all name the SAME proposal, and the
        recorded approver/approval-time on `draft` match the human
@@ -81,6 +108,31 @@ def preregister_hypothesis(
     instead of calling this function directly against a bare in-memory
     `HypothesisRegistry`."""
     errors: list[str] = []
+
+    # Step -1 (Stage 3 -- config identity infrastructure, authorized
+    # 2026-10-07): mandatory live re-read, BEFORE anything else. A
+    # fresh load_config() call, every single time -- never cached,
+    # never skipped.
+    fresh_hypothesis_config = load_hypothesis_config()
+    fresh_registered = register_config_version(
+        "hypothesis", fresh_hypothesis_config.config_version, fresh_hypothesis_config.data,
+    )
+    if config_registry is not None:
+        try:
+            config_registry.register_or_verify(
+                "hypothesis", fresh_hypothesis_config.config_version, fresh_hypothesis_config.data,
+            )
+        except ConfigIdentityError as exc:
+            errors.append(
+                f"hypothesis.yaml changed since it was registered earlier in this operation "
+                f"(Stage 3 mandatory live re-read): {exc}"
+            )
+    candidate_ok, candidate_errors = fresh_registered.verify(hypothesis_config.config_version, hypothesis_config.data)
+    if not candidate_ok:
+        errors.append(
+            "hypothesis_config supplied to preregister_hypothesis() does not match the current, "
+            f"freshly-read hypothesis.yaml (Stage 3 mandatory live re-read): {'; '.join(candidate_errors)}"
+        )
 
     if proposal.proposal_id != proposal_validation.proposal_id:
         errors.append(
@@ -136,7 +188,9 @@ def preregister_hypothesis(
 
     frozen = draft.__class__(**{**draft.__dict__, "status": HypothesisStatus.PREREGISTERED.value})
 
-    gate_ok, gate_errors = validate_for_preregistration(frozen, variants, registry, hypothesis_config, run_registry)
+    # Consumes EXCLUSIVELY the freshly-verified, recursively-frozen
+    # snapshot (Stage 3) -- never the caller's own hypothesis_config.data.
+    gate_ok, gate_errors = validate_for_preregistration(frozen, variants, registry, fresh_registered.content, run_registry)
     if not gate_ok:
         raise PreregistrationError("; ".join(gate_errors))
 

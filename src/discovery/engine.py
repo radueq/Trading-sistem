@@ -38,6 +38,7 @@ import pandas as pd
 
 from data_foundation.pit import access as pit
 
+from config_identity.registry import ConfigRegistry
 from discovery.candidate.convergence import (
     active_lanes_for, build_descriptive_metrics, compute_extremeness, reason_codes_for,
 )
@@ -195,9 +196,42 @@ def _observation_to_candidate(obs: DiscoveryObservation) -> DiscoveryCandidate:
     )
 
 
+def _register_or_verify_discovery_config(config: DiscoveryConfig, config_registry: Optional[ConfigRegistry]) -> DiscoveryConfig:
+    """Stage 3 -- config identity infrastructure (decision registry,
+    Stage 3; authorized 2026-10-07). When `config_registry` is
+    supplied: the FIRST call for the "discovery" domain registers
+    `config` as this operation's own pinned baseline; every SUBSEQUENT
+    call verifies its candidate against that SAME baseline (label +
+    structurally-normalized content, both checked), raising
+    `ConfigIdentityError` on a mismatch BEFORE any computation runs --
+    never silently proceeding on a config that changed under the
+    operation's feet. Returns a `DiscoveryConfig` whose four fields are
+    the RECURSIVELY FROZEN snapshot (never the original, independently
+    mutable dicts) -- the operation reads config content EXCLUSIVELY
+    from this returned object from here on. `config_version` itself is
+    carried forward verbatim, never recomputed (Discovery's own
+    multi-source `sha256("".join(raw_texts))[:12]` combination rule,
+    preserved byte-for-byte in `discovery/config/loader.py`, unchanged).
+    When `config_registry` is `None` (the default -- every pre-Stage-3
+    call site), this is a no-op passthrough of `config` unchanged."""
+    if config_registry is None:
+        return config
+    content = {
+        "features": config.features, "states": config.states,
+        "discovery": config.discovery, "eligibility": config.eligibility,
+    }
+    registered = config_registry.register_or_verify("discovery", config.config_version, content)
+    frozen = registered.content
+    return DiscoveryConfig(
+        features=frozen["features"], states=frozen["states"],
+        discovery=frozen["discovery"], eligibility=frozen["eligibility"],
+        config_version=config.config_version,
+    )
+
+
 def compute_discovery_observations(
     conn, security_ids: list[str], as_of: str, benchmark_security_id: str,
-    config: Optional[DiscoveryConfig] = None,
+    config: Optional[DiscoveryConfig] = None, *, config_registry: Optional[ConfigRegistry] = None,
 ) -> list[DiscoveryObservation]:
     """The pre-budget layer (PATCH #002-B, Radu's decision, 2026-09-25,
     approving Spec #003's IMPLEMENTATION BLOCKER §74A): every ELIGIBLE
@@ -206,8 +240,14 @@ def compute_discovery_observations(
     never `run_discovery()`'s post-budget output, and never affected by
     `config.discovery["candidate_budget"]["max_candidates"]` (TEST 33,
     Spec #003; tests/spec002/test_24_pre_budget_observation_isolation.py).
-    `run_discovery()` is a thin wrapper around this function -- see below."""
+    `run_discovery()` is a thin wrapper around this function -- see below.
+
+    `config_registry` (Stage 3, optional, default `None` -- see
+    `_register_or_verify_discovery_config()`): when supplied, registers
+    or verifies `config` against the SAME shared registry's "discovery"
+    domain, and consumes exclusively the frozen result."""
     config = config or load_config()
+    config = _register_or_verify_discovery_config(config, config_registry)
     states_config = config.states
 
     benchmark_bars = pit.get_price_series_as_of(conn, benchmark_security_id, as_of)
@@ -313,15 +353,23 @@ def compute_discovery_observations(
 
 def run_discovery(
     conn, security_ids: list[str], as_of: str, benchmark_security_id: str,
-    config: Optional[DiscoveryConfig] = None,
+    config: Optional[DiscoveryConfig] = None, *, config_registry: Optional[ConfigRegistry] = None,
 ) -> list[DiscoveryCandidate]:
     """THE single entry point for operational (post-budget) output. PIT-only,
     outcome-blind, zero LLM calls. A thin wrapper: compute every eligible
     observation, convert to the operational type, then apply Candidate
     Budget/diversity -- `config.discovery["candidate_budget"]` affects only
     this function's return value, never `compute_discovery_observations()`'s
-    (PATCH #002-B, Spec #003 IMPLEMENTATION BLOCKER §74A)."""
+    (PATCH #002-B, Spec #003 IMPLEMENTATION BLOCKER §74A).
+
+    `config_registry` (Stage 3, optional, default `None`): forwarded
+    to `compute_discovery_observations()`'s own register-or-verify
+    step; the SAME frozen `config` it returns is reused here for
+    `select_candidates()`, so both halves of this wrapper consume the
+    identical, verified snapshot -- never two independently-resolved
+    copies."""
     config = config or load_config()
+    config = _register_or_verify_discovery_config(config, config_registry)
     observations = compute_discovery_observations(conn, security_ids, as_of, benchmark_security_id, config)
     candidates = [_observation_to_candidate(obs) for obs in observations]
     return select_candidates(candidates, config.discovery)

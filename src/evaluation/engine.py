@@ -32,6 +32,8 @@ from __future__ import annotations
 from dataclasses import replace
 from typing import Optional
 
+from config_identity.registry import ConfigRegistry
+
 from data_foundation.calendar.contract import (
     require_calendar_covers_window,
     require_verified_calendar_for_formal_run,
@@ -374,6 +376,7 @@ def run_evaluation(
     *,
     calendar_registry: Optional[CalendarRegistry] = None,
     calendar_id: Optional[str] = None,
+    config_registry: Optional[ConfigRegistry] = None,
 ) -> tuple[list[EvidenceProfile], EvaluationRunRegistry]:
     """THE single entry point. Returns every (signature x horizon)
     EvidenceProfile plus this run's reproducibility metadata (Spec #003
@@ -403,6 +406,43 @@ def run_evaluation(
     regardless of calendar use -- Locked OOS is never read, not even
     the fetch itself, not only which fields of an already-fetched bar
     get used afterward."""
+    # Stage 3 -- config identity infrastructure (decision registry,
+    # Stage 3; authorized 2026-10-07; optional, default None -- every
+    # pre-Stage-3 call site is unaffected). When `config_registry` is
+    # supplied: the FIRST call for each domain within it registers
+    # `discovery_config`/`evaluation_config` as THIS operation's own
+    # pinned baseline; a SUBSEQUENT call sharing the same registry
+    # (e.g. a later run in the same workflow) verifies its candidate
+    # against that SAME baseline, raising before any computation on a
+    # mismatch. Both `discovery_config`/`evaluation_config` are then
+    # rebuilt from the recursively-frozen, verified content -- every
+    # read below (directly, and via `_collect_observations()`'s own
+    # `compute_discovery_observations()` calls, which receive this
+    # SAME already-frozen `discovery_config`) consumes exclusively
+    # this snapshot, never the caller's own independently-mutable
+    # dicts. `config_version` itself is carried forward verbatim,
+    # never recomputed.
+    if config_registry is not None:
+        discovery_content = {
+            "features": discovery_config.features, "states": discovery_config.states,
+            "discovery": discovery_config.discovery, "eligibility": discovery_config.eligibility,
+        }
+        registered_discovery = config_registry.register_or_verify(
+            "discovery", discovery_config.config_version, discovery_content,
+        )
+        frozen_discovery = registered_discovery.content
+        discovery_config = DiscoveryConfig(
+            features=frozen_discovery["features"], states=frozen_discovery["states"],
+            discovery=frozen_discovery["discovery"], eligibility=frozen_discovery["eligibility"],
+            config_version=discovery_config.config_version,
+        )
+        registered_evaluation = config_registry.register_or_verify(
+            "evaluation", evaluation_config.config_version, evaluation_config.data,
+        )
+        evaluation_config = EvaluationConfig(
+            data=registered_evaluation.content, config_version=evaluation_config.config_version,
+        )
+
     ev_data = evaluation_config.data
     mode = ev_data["evaluation_mode"]
     timeframe = ev_data["timeframe"]

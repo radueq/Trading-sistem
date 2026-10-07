@@ -72,7 +72,7 @@ def test_preregister_hypothesis_succeeds_through_the_real_gate(entry_definition,
 
     frozen = preregister_hypothesis(
         draft, variants, proposal=proposal, proposal_validation=ProposalValidationResult(True, "OK", (), proposal.proposal_id),
-        consensus=consensus, registry=reg, run_registry=run_registry, hypothesis_config=hypothesis_config.data,
+        consensus=consensus, registry=reg, run_registry=run_registry, hypothesis_config=hypothesis_config,
     )
     assert frozen.status == HypothesisStatus.PREREGISTERED.value
     assert reg.get(frozen.hypothesis_id) == frozen
@@ -93,7 +93,7 @@ def test_preregister_hypothesis_rejects_without_human_approve(entry_definition, 
         try:
             preregister_hypothesis(
                 draft, variants, proposal=proposal, proposal_validation=ProposalValidationResult(True, "OK", (), proposal.proposal_id),
-                consensus=consensus, registry=reg, run_registry=run_registry, hypothesis_config=hypothesis_config.data,
+                consensus=consensus, registry=reg, run_registry=run_registry, hypothesis_config=hypothesis_config,
             )
             assert False, "expected PreregistrationError"
         except PreregistrationError:
@@ -112,7 +112,7 @@ def test_preregister_hypothesis_rejects_an_invalid_proposal(entry_definition, ho
         preregister_hypothesis(
             draft, variants, proposal=proposal,
             proposal_validation=ProposalValidationResult(False, "HYPOTHESIS_COMPLEXITY_EXCEEDED", ("too many conditions",), proposal.proposal_id),
-            consensus=consensus, registry=reg, run_registry=run_registry, hypothesis_config=hypothesis_config.data,
+            consensus=consensus, registry=reg, run_registry=run_registry, hypothesis_config=hypothesis_config,
         )
         assert False, "expected PreregistrationError"
     except PreregistrationError as e:
@@ -129,7 +129,7 @@ def test_preregister_hypothesis_rejects_a_draft_already_claiming_preregistered(e
     try:
         preregister_hypothesis(
             already_claiming, variants, proposal=proposal, proposal_validation=ProposalValidationResult(True, "OK", (), proposal.proposal_id),
-            consensus=consensus, registry=reg, run_registry=run_registry, hypothesis_config=hypothesis_config.data,
+            consensus=consensus, registry=reg, run_registry=run_registry, hypothesis_config=hypothesis_config,
         )
         assert False, "expected PreregistrationError"
     except PreregistrationError as e:
