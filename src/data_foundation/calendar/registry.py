@@ -24,6 +24,14 @@ EXCLUSIVELY by identity, REQUIRE the linked record, never trust a bare
 `TradingCalendar` object's own claimed fields. A lookup with no linked
 record is refused, treated the same as `CALENDAR_UNVERIFIED`.
 
+Step 0 (`admission.AdmissionRegistry`) feeds Step 3: `register_verified()`
+takes an `AdmissionRegistry` and an `admission_id`, resolving the
+admitted source from THAT registry rather than accepting one directly
+(GPT review, Stage 2 second changes-required round -- a directly-
+constructed `AdmittedCalendarSource`, however internally
+self-consistent, is never evidence that it actually passed Step 0's
+own admission rules).
+
 `build_trading_calendar()` (`contract.py`) is NOT restricted by any of
 this -- it remains the free, unrestricted constructor it always was.
 All trust authority lives here, in the registry and in `resolve()`'s
@@ -34,7 +42,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 
-from data_foundation.calendar.admission import AdmittedCalendarSource, _digest
+from data_foundation.calendar.admission import AdmissionRegistry, AdmittedCalendarSource, _digest
 from data_foundation.calendar.entities import (
     CalendarNotVerifiedError,
     TradingCalendar,
@@ -140,27 +148,46 @@ class CalendarRegistry:
     it EXECUTES Steps 3-4 itself (source-tamper check, coverage check,
     `verify_calendar_against_source()`) and BUILDS the
     `CalendarVerificationRecord` internally; a caller can no longer
-    hand it an already-built record, since a caller-supplied record is
-    not evidence that verification actually happened (GPT review,
-    Stage 2 changes-required round: a hand-built record naming an
-    invented digest and blank verifier/timestamp was accepted by the
-    prior version of this method)."""
+    hand it an already-built record (GPT review, Stage 2 first
+    changes-required round: a hand-built record naming an invented
+    digest and blank verifier/timestamp was accepted by the prior
+    version of this method), NOR a directly-constructed
+    `AdmittedCalendarSource` (GPT review, Stage 2 second changes-
+    required round: digest/coverage/session self-consistency checks
+    only prove an object agrees with itself, never that it actually
+    passed Step 0's own admission rules) -- it takes an
+    `AdmissionRegistry` and an `admission_id`, resolving the admitted
+    source from THAT registry, which only `admission.admit_source_
+    via_approved_provider()`/`admit_source_via_operator_attestation()`
+    can ever write to."""
 
     def __init__(self) -> None:
         self._entries: dict[str, _RegisteredCalendar] = {}
 
     def register_verified(
-        self, calendar: TradingCalendar, admitted_source: AdmittedCalendarSource, *,
+        self, calendar: TradingCalendar, admission_registry: AdmissionRegistry, admission_id: str, *,
         verified_by: str, verified_at: str,
         verification_method_version: str = VERIFICATION_METHOD_VERSION_V1,
     ) -> None:
-        """Steps 3-5: verify `calendar` against the ADMITTED `admitted_
-        source` (never a bare caller claim) and, on success ONLY,
-        register both together atomically. On ANY failure below,
-        NOTHING is stored -- no partial state, and any PRE-EXISTING
-        entry (this `calendar_id` or any other) is left exactly as it
-        was, mirroring Finding 16/#004's own batch-safe dry-run
-        discipline."""
+        """Steps 3-5: verify `calendar` against the ADMITTED source
+        resolved from `admission_registry` by `admission_id` (GPT
+        review, Stage 2 second changes-required round: this method
+        previously took an `AdmittedCalendarSource` object directly --
+        a caller could construct one by hand, e.g. with
+        `admission_method="APPROVED_PROVIDER"` and a source NOT on the
+        allow-list, bypassing Step 0 entirely, since digest/coverage/
+        session checks only prove the OBJECT is self-consistent, never
+        that it actually passed admission. Resolving by `admission_id`
+        from a registry that ONLY `admit_source_via_approved_provider()`/
+        `admit_source_via_operator_attestation()` can write to closes
+        this -- there is no longer any path to a trusted source except
+        through Step 0's own rules). On success ONLY, register both
+        together atomically. On ANY failure below, NOTHING is stored --
+        no partial state, and any PRE-EXISTING entry (this
+        `calendar_id` or any other) is left exactly as it was,
+        mirroring Finding 16/#004's own batch-safe dry-run discipline."""
+        admitted_source = admission_registry.resolve(admission_id)  # CalendarSourceNotAdmittedError if unknown
+
         if not verified_by or not verified_by.strip():
             raise CalendarRegistrationError(
                 "register_verified() requires a non-blank verified_by -- the named human or "

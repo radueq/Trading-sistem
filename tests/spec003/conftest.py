@@ -4,7 +4,7 @@ from dataclasses import replace
 import pytest
 
 from data_foundation.adapters.yfinance_adapter import YFinanceAdapter, utc_now_iso
-from data_foundation.calendar.admission import admit_source_via_operator_attestation
+from data_foundation.calendar.admission import AdmissionRegistry, admit_source_via_operator_attestation
 from data_foundation.calendar.contract import build_trading_calendar
 from data_foundation.calendar.entities import CalendarSource
 from data_foundation.calendar.registry import CalendarRegistry
@@ -106,15 +106,18 @@ def formal_calendar():
 
 @pytest.fixture
 def formal_calendar_registry(formal_calendar):
+    admission_registry = AdmissionRegistry()
     raw = json.dumps({"session_dates": list(formal_calendar.session_dates), "early_close_dates": []})
     admitted = admit_source_via_operator_attestation(
-        source_identifier="SPEC003_TEST_FIXTURE_FEED", operator_name="radu", attested_at="2026-10-06T00:00:00Z",
+        registry=admission_registry, source_identifier="SPEC003_TEST_FIXTURE_FEED", operator_name="radu", attested_at="2026-10-06T00:00:00Z",
         version="v1", publication_date=DATES[0], coverage_start=formal_calendar.coverage_start,
         coverage_end=formal_calendar.coverage_end, market=formal_calendar.market, timezone=formal_calendar.timezone,
         raw_content=raw,
     )
     registry = CalendarRegistry()
-    registry.register_verified(formal_calendar, admitted, verified_by="radu", verified_at="2026-10-06T00:00:00Z")
+    registry.register_verified(
+        formal_calendar, admission_registry, admitted.artifact_digest, verified_by="radu", verified_at="2026-10-06T00:00:00Z",
+    )
     return registry
 
 

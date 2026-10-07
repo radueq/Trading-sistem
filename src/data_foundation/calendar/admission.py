@@ -71,8 +71,55 @@ def _digest(raw_content: str) -> str:
     return hashlib.sha256(raw_content.encode()).hexdigest()
 
 
+class AdmissionRegistry:
+    """Step 0's own atomic gate (GPT review, Stage 2 second
+    changes-required round): the ONLY place `registry.
+    CalendarRegistry.register_verified()` may obtain an
+    `AdmittedCalendarSource` from. A caller can no longer hand
+    `register_verified()` a directly-constructed `AdmittedCalendarSource`
+    object (GPT's own reproduction: a hand-built object with
+    `admission_method="APPROVED_PROVIDER"` and a source NOT on the
+    allow-list, never passed through either admit_* function, was
+    accepted and later resolved through the calendar gate -- digest
+    self-consistency proves the OBJECT agrees with itself, never that
+    it was actually admitted).
+
+    Written to ONLY by `admit_source_via_approved_provider()`/
+    `admit_source_via_operator_attestation()` below, each of which
+    enforces its own admission rule BEFORE the artifact is ever
+    retained here. Resolved by `admission_id` (the artifact's own
+    `sha256` digest -- content-addressed, same discipline as every
+    other identity in this project): a `register_verified()` caller
+    supplies an `admission_id`, never the raw object, so there is no
+    path into the calendar gate for an artifact that did not actually
+    pass through admission."""
+
+    def __init__(self) -> None:
+        self._entries: dict[str, AdmittedCalendarSource] = {}
+
+    def resolve(self, admission_id: str) -> AdmittedCalendarSource:
+        entry = self._entries.get(admission_id)
+        if entry is None:
+            raise CalendarSourceNotAdmittedError(
+                f"admission_id={admission_id!r} has no linked admission in this registry -- an "
+                f"AdmittedCalendarSource is never trusted unless it was actually produced by "
+                f"admit_source_via_approved_provider()/admit_source_via_operator_attestation(), "
+                f"never by direct construction"
+            )
+        return entry
+
+    def _record(self, admitted: AdmittedCalendarSource) -> str:
+        """Internal -- called only by the two admit_* functions below,
+        each of which has already enforced its own admission rule by
+        the time this runs. Never call this directly with a
+        hand-built `AdmittedCalendarSource`; doing so is exactly the
+        bypass this registry exists to close."""
+        self._entries[admitted.artifact_digest] = admitted
+        return admitted.artifact_digest
+
+
 def admit_source_via_approved_provider(
-    *, source_identifier: str, version: str,
+    *, registry: AdmissionRegistry, source_identifier: str, version: str,
     publication_date: str, coverage_start: str, coverage_end: str,
     market: str, timezone: str, raw_content: str,
 ) -> AdmittedCalendarSource:
@@ -93,17 +140,19 @@ def admit_source_via_approved_provider(
             f"source_identifier={source_identifier!r} is not on the approved-provider allow-list "
             f"-- admission refused before any session-date comparison is attempted"
         )
-    return AdmittedCalendarSource(
+    admitted = AdmittedCalendarSource(
         source_identifier=source_identifier, admission_method=ADMISSION_METHOD_APPROVED_PROVIDER,
         version=version, publication_date=publication_date,
         coverage_start=coverage_start, coverage_end=coverage_end,
         market=market, timezone=timezone, raw_content=raw_content, artifact_digest=_digest(raw_content),
         attested_by=None, attested_at=None,
     )
+    registry._record(admitted)
+    return admitted
 
 
 def admit_source_via_operator_attestation(
-    *, source_identifier: str, operator_name: str, attested_at: str, version: str,
+    *, registry: AdmissionRegistry, source_identifier: str, operator_name: str, attested_at: str, version: str,
     publication_date: str, coverage_start: str, coverage_end: str,
     market: str, timezone: str, raw_content: str,
 ) -> AdmittedCalendarSource:
@@ -120,10 +169,12 @@ def admit_source_via_operator_attestation(
         raise CalendarSourceNotAdmittedError(
             "operator attestation requires an explicit attestation timestamp -- admission refused"
         )
-    return AdmittedCalendarSource(
+    admitted = AdmittedCalendarSource(
         source_identifier=source_identifier, admission_method=ADMISSION_METHOD_OPERATOR_ATTESTATION,
         version=version, publication_date=publication_date,
         coverage_start=coverage_start, coverage_end=coverage_end,
         market=market, timezone=timezone, raw_content=raw_content, artifact_digest=_digest(raw_content),
         attested_by=operator_name, attested_at=attested_at,
     )
+    registry._record(admitted)
+    return admitted

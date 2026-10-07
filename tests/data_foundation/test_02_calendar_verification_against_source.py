@@ -8,7 +8,7 @@ always start from an already-admitted source.
 """
 import json
 
-from data_foundation.calendar.admission import admit_source_via_operator_attestation
+from data_foundation.calendar.admission import AdmissionRegistry, admit_source_via_operator_attestation
 from data_foundation.calendar.registry import verify_calendar_against_source
 
 _SESSIONS = ("2024-01-02", "2024-01-03", "2024-01-04")
@@ -18,7 +18,7 @@ _CLOSES = (("2024-01-03", "13:00"),)
 def _admitted(session_dates=_SESSIONS, early_close_dates=_CLOSES, market="US_EQUITIES", timezone="America/New_York"):
     raw = json.dumps({"session_dates": list(session_dates), "early_close_dates": [list(p) for p in early_close_dates]})
     return admit_source_via_operator_attestation(
-        source_identifier="X", operator_name="radu", attested_at="2026-10-06T00:00:00Z",
+        registry=AdmissionRegistry(), source_identifier="X", operator_name="radu", attested_at="2026-10-06T00:00:00Z",
         version="v1", publication_date="2024-01-01", coverage_start="2024-01-01", coverage_end="2024-01-31",
         market=market, timezone=timezone, raw_content=raw,
     )

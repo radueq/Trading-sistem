@@ -99,17 +99,33 @@ def _resolve_session_dates(conn, benchmark_security_id, development_start, devel
     return dates, bench_bars
 
 
-def _resolve_session_dates_from_calendar(conn, benchmark_security_id, development_start, development_end, data_as_of, calendar):
+def _resolve_session_dates_from_calendar(conn, benchmark_security_id, development_start, development_end, effective_as_of, calendar):
     """Joint remediation design 003+004, section 2's own consistency
     requirement: once a verified calendar snapshot exists, session-date
     resolution consumes THAT snapshot -- never a parallel, benchmark-
     bar-derived list for the same computation. Benchmark bars are still
     fetched (needed downstream by attach_benchmark_return()); only the
-    SESSION LIST now comes from the calendar."""
-    bench_bars = pit.get_price_series_as_of(conn, benchmark_security_id, data_as_of)
+    SESSION LIST now comes from the calendar.
+
+    GPT review, Stage 2 second changes-required round: this list feeds
+    `_collect_observations()`, which calls Discovery once PER DATE in
+    it -- Discovery then performs its OWN PIT reads as of that date.
+    Bounding only by `development_end` let this list include calendar
+    sessions AFTER the caller's own `effective_as_of` whenever
+    `effective_as_of < development_end` (a historical run with
+    `data_as_of` short of the full Development window) -- Discovery
+    would then read data past the caller's own declared vantage point,
+    even though every DIRECT bar fetch in this module was already
+    correctly bounded. The FULL calendar object itself (used separately
+    for target-session resolution and OOS/not-yet-reached
+    classification, via the untouched `calendar` parameter threaded
+    into `compute_forward_outcome()`) is never truncated here -- only
+    this OBSERVATION-dates list is."""
+    bench_bars = pit.get_price_series_as_of(conn, benchmark_security_id, effective_as_of)
     dates = [d for d in calendar.session_dates if d >= development_start]
     if development_end is not None:
         dates = [d for d in dates if d <= development_end]
+    dates = [d for d in dates if d <= effective_as_of]
     return dates, bench_bars
 
 

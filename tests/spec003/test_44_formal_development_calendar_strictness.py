@@ -21,7 +21,7 @@ import json
 
 import pytest
 
-from data_foundation.calendar.admission import admit_source_via_operator_attestation
+from data_foundation.calendar.admission import AdmissionRegistry, admit_source_via_operator_attestation
 from data_foundation.calendar.contract import build_trading_calendar
 from data_foundation.calendar.entities import CalendarNotVerifiedError, CalendarSource
 from data_foundation.calendar.registry import CalendarRegistry
@@ -56,13 +56,16 @@ def _calendar(source, calendar_identifier="SPEC003_TEST_FIXTURE"):
 
 
 def _admit_and_register(registry, calendar):
+    admission_registry = AdmissionRegistry()
     raw = json.dumps({"session_dates": list(calendar.session_dates), "early_close_dates": []})
     admitted = admit_source_via_operator_attestation(
-        source_identifier="X", operator_name="radu", attested_at="2026-10-06T00:00:00Z",
+        registry=admission_registry, source_identifier="X", operator_name="radu", attested_at="2026-10-06T00:00:00Z",
         version="v1", publication_date=DATES[0], coverage_start=calendar.coverage_start,
         coverage_end=calendar.coverage_end, market=calendar.market, timezone=calendar.timezone, raw_content=raw,
     )
-    registry.register_verified(calendar, admitted, verified_by="radu", verified_at="2026-10-06T00:00:00Z")
+    registry.register_verified(
+        calendar, admission_registry, admitted.artifact_digest, verified_by="radu", verified_at="2026-10-06T00:00:00Z",
+    )
 
 
 def test_formal_development_requires_a_calendar_both_arguments_omitted(
