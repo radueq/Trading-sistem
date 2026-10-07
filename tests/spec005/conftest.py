@@ -50,6 +50,16 @@ _LEGACY_HASH_DEFAULTS = dict(
     evaluation_config_version=EVALUATION_CONFIG_VERSION, bootstrap_seed=1, comparison_seed=2,
 )
 
+# Minimal #003 v2 -> #005 compatibility delta (joint remediation design
+# 003+004 section 12; decision registry I1; authorized 2026-10-07) --
+# the 8 legacy fields above PLUS registry I1's own S2 field set.
+_V2_HASH_DEFAULTS = dict(
+    _LEGACY_HASH_DEFAULTS,
+    security_ids=("SEC_A", "SEC_B"), benchmark_security_id=BENCHMARK_SECURITY_ID,
+    data_as_of="2024-01-01", horizons=(1, 2, 3, 5, 10), calendar_id="cal_fixture_v2",
+    run_id_scheme_version="v2",
+)
+
 
 def build_run_registry(**overrides) -> EvaluationRunRegistry:
     """A genuinely self-consistent EvaluationRunRegistry: `evaluation_run_id`
@@ -76,6 +86,45 @@ def build_run_registry(**overrides) -> EvaluationRunRegistry:
         bootstrap_seed=hash_fields["bootstrap_seed"], bootstrap_iterations=overrides.get("bootstrap_iterations", 200),
         comparison_seed=hash_fields["comparison_seed"], comparison_iterations=overrides.get("comparison_iterations", 200),
         multiple_testing_method=overrides.get("multiple_testing_method", "BH"),
+    )
+
+
+def build_v2_run_registry(**overrides) -> EvaluationRunRegistry:
+    """A genuinely self-consistent v2 `EvaluationRunRegistry` (registry
+    I1's own field set): `evaluation_run_id` is always the REAL
+    `build_run_id()` output for the 14 v2-hash fields actually stored
+    on the object, with `security_ids`/`horizons` SORTED before
+    hashing -- mirroring `evaluation/engine.py`'s own `run_evaluation()`
+    exactly (it sorts both before passing them to `build_run_id()`,
+    while `security_ids` is ALSO stored pre-sorted on the registry,
+    same as production; `horizons` is stored in whatever order
+    `overrides` gives it, same as production's own unsorted retention).
+    Pass `evaluation_run_id=...` explicitly, or a field value that
+    deliberately breaks self-consistency (e.g. `security_ids=()`), to
+    construct a TAMPERED/malformed object for a negative test."""
+    hash_fields = dict(_V2_HASH_DEFAULTS)
+    hash_fields.update({k: v for k, v in overrides.items() if k in hash_fields})
+    id_fields = dict(hash_fields)
+    id_fields["security_ids"] = tuple(sorted(id_fields["security_ids"]))
+    id_fields["horizons"] = tuple(sorted(id_fields["horizons"]))
+    run_id = overrides.get("evaluation_run_id") or build_run_id(**id_fields)
+    return EvaluationRunRegistry(
+        evaluation_run_id=run_id,
+        created_at=overrides.get("created_at", "2026-09-26T00:00:00Z"),
+        mode=overrides.get("mode", "FORMAL_DEVELOPMENT"),
+        development_start=hash_fields["development_start"], development_end=hash_fields["development_end"],
+        timeframe=hash_fields["timeframe"], horizons=hash_fields["horizons"],
+        benchmark_security_id=hash_fields["benchmark_security_id"],
+        discovery_engine_version=overrides.get("discovery_engine_version", "v1.0.0"),
+        discovery_config_version=hash_fields["discovery_config_version"],
+        evaluation_engine_version=overrides.get("evaluation_engine_version", "v1.0.0"),
+        evaluation_config_version=hash_fields["evaluation_config_version"],
+        signature_set_id=hash_fields["signature_set_id"],
+        bootstrap_seed=hash_fields["bootstrap_seed"], bootstrap_iterations=overrides.get("bootstrap_iterations", 200),
+        comparison_seed=hash_fields["comparison_seed"], comparison_iterations=overrides.get("comparison_iterations", 200),
+        multiple_testing_method=overrides.get("multiple_testing_method", "BH"),
+        security_ids=tuple(sorted(hash_fields["security_ids"])), data_as_of=hash_fields["data_as_of"],
+        calendar_id=hash_fields["calendar_id"], run_id_scheme_version=hash_fields["run_id_scheme_version"],
     )
 
 

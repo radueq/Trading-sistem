@@ -180,3 +180,31 @@ def test_repeating_the_identical_admission_is_idempotent(registry):
     assert admitted_first.admission_id == admitted_second.admission_id
     assert admitted_first == admitted_second
     assert registry.resolve(admitted_first.admission_id) == admitted_first
+
+
+def test_admission_id_does_not_collide_across_a_field_boundary_shifted_by_an_embedded_separator(registry):
+    """GPT review, Stage 2 non-blocking follow-up on `fd992db`: the
+    prior `_compute_admission_id()` joined fields with a bare `"\\x1f"`
+    separator -- a field VALUE containing that same character could
+    shift the apparent boundary between fields, so two genuinely
+    DIFFERENT (version, publication_date) pairs produced the SAME
+    preimage. GPT's own reproduction: `version="v1\\x1fextra",
+    publication_date="2024-01-01"` vs. `version="v1",
+    publication_date="extra\\x1f2024-01-01"`. Not an sha256 collision --
+    a serialization ambiguity, now closed by canonical-JSON
+    serialization (each field gets its own escaped, delimited slot)."""
+    admitted_a = admit_source_via_operator_attestation(
+        registry=registry, source_identifier="X", operator_name="radu", attested_at="2026-10-06T00:00:00Z",
+        version="v1\x1fextra", publication_date="2024-01-01", coverage_start="2024-01-01", coverage_end="2024-01-31",
+        market="US_EQUITIES", timezone="America/New_York", raw_content=_RAW_FIXTURE,
+    )
+    admitted_b = admit_source_via_operator_attestation(
+        registry=registry, source_identifier="X", operator_name="radu", attested_at="2026-10-06T00:00:00Z",
+        version="v1", publication_date="extra\x1f2024-01-01", coverage_start="2024-01-01", coverage_end="2024-01-31",
+        market="US_EQUITIES", timezone="America/New_York", raw_content=_RAW_FIXTURE,
+    )
+    assert admitted_a.admission_id != admitted_b.admission_id
+    assert registry.resolve(admitted_a.admission_id) is admitted_a
+    assert registry.resolve(admitted_b.admission_id) is admitted_b
+    assert registry.resolve(admitted_a.admission_id).version == "v1\x1fextra"
+    assert registry.resolve(admitted_b.admission_id).version == "v1"

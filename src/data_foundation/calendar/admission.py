@@ -47,6 +47,7 @@ piece of work.
 from __future__ import annotations
 
 import hashlib
+import json
 from dataclasses import dataclass
 from typing import Optional
 
@@ -111,11 +112,46 @@ def _compute_admission_id(
     the same way every other identity in this project is (content-
     addressed, never caller-supplied), so the exact same admission
     repeated is idempotent (same inputs -> same id), while a different
-    admission of the same text is a different id."""
-    canonical = "\x1f".join([
-        artifact_digest, source_identifier, admission_method, version, publication_date,
-        coverage_start, coverage_end, market, timezone, attested_by or "", attested_at or "",
-    ])
+    admission of the same text is a different id.
+
+    Serialized as CANONICAL JSON (sorted keys, no extra whitespace) --
+    never raw string concatenation (GPT review, Stage 2 non-blocking
+    follow-up on commit `fd992db`, fixed under the separately-authorized
+    #003 v2 -> #005 compatibility delta): a plain `"\\x1f".join()` of
+    the same fields let a value CONTAINING that separator produce the
+    SAME preimage for two DIFFERENT field splits (reproduced:
+    `version="v1\\x1fextra", publication_date="2024-01-01"` vs.
+    `version="v1", publication_date="extra\\x1f2024-01-01"`) -- not an
+    sha256 collision, a serialization ambiguity. `AdmissionRegistry.
+    _record()`'s own equality check already refused to let the second
+    admission silently overwrite the first when this happened, so it
+    was never a live bypass -- but the prior claim that any id conflict
+    would require an sha256 collision was too strong, and is corrected
+    by this fix, not merely restated. JSON with sorted keys gives each
+    field its own delimited, escaped slot, so no field's own content
+    can be mistaken for a boundary between fields.
+
+    `attested_by`/`attested_at` serialize as JSON `null` when `None`,
+    never the string `""` -- distinguishing "no attestation" from "an
+    empty attestation" (the prior `\\x1f`-join scheme conflated the
+    two, via `attested_by or ""`).
+
+    Effect on existing identities, declared explicitly, not silently
+    reinterpreted: EVERY `admission_id` this function computes changes
+    value versus the prior `\\x1f`-join scheme, for every input, not
+    only the colliding ones -- the preimage format itself changed.
+    `AdmissionRegistry` is in-memory, per-run only, never persisted
+    anywhere outside a single process's lifetime, so no existing,
+    stored `admission_id` anywhere is invalidated by this change."""
+    canonical = json.dumps(
+        {
+            "artifact_digest": artifact_digest, "source_identifier": source_identifier,
+            "admission_method": admission_method, "version": version, "publication_date": publication_date,
+            "coverage_start": coverage_start, "coverage_end": coverage_end, "market": market,
+            "timezone": timezone, "attested_by": attested_by, "attested_at": attested_at,
+        },
+        sort_keys=True, separators=(",", ":"),
+    )
     return hashlib.sha256(canonical.encode()).hexdigest()
 
 

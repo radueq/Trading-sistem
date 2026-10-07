@@ -3,16 +3,34 @@
 Three independent checks compose the full guard for one (hypothesis,
 EvaluationRunRegistry) pair:
 
-1. Legacy content-address consistency: recompute `evaluation.registry.
-   runs.build_run_id()` from EXACTLY the 8 fields `evaluation/engine.py`
-   itself uses (confirmed at commit cfa0809, engine.py:370-376) and
-   compare to the supplied registry's own `evaluation_run_id`. SS4 is
-   explicit about what this does and does NOT prove: "Hash recomputation
-   verifies only that the supplied fields produce the supplied ID. It
-   does not authenticate the object, prove that a historical run
-   occurred, establish that data were unseen, or detect coordinated
-   replacement of both fields and ID. It is not an anti-forgery
-   certificate."
+1. Content-address consistency: recompute `evaluation.registry.runs.
+   build_run_id()` and compare to the supplied registry's own
+   `evaluation_run_id` -- dispatched by the registry's own `run_id_
+   scheme_version` (minimal #003 v2 -> #005 compatibility delta,
+   joint remediation design 003+004 section 12, decision registry I1,
+   authorized 2026-10-07):
+   - `None` (every registry predating Spec #003's S2 fingerprint
+     change): the ORIGINAL 8-field legacy recipe (confirmed at commit
+     cfa0809, engine.py:370-376), UNCHANGED by this delta -- every
+     historical identity verifies exactly as before.
+   - `"v2"` (registry I1's own field set): the 14-field v2 recipe --
+     the 8 legacy fields PLUS `security_ids`, `benchmark_security_id`,
+     `data_as_of`, `horizons`, `calendar_id`, `run_id_scheme_version`,
+     reconstructed EXACTLY as `evaluation/engine.py`'s `run_evaluation()`
+     itself feeds `build_run_id()`. A registry claiming `"v2"` with a
+     required v2 field still left at its pre-Stage-2 backward-compat
+     default (`security_ids=()`, `data_as_of=None`) is refused BEFORE
+     any hash comparison -- it was never produced by a genuine v2 run.
+   - anything else: refused outright, with NO fallback to the legacy
+     recipe -- an unrecognized scheme is never silently treated as if
+     it were historical, and a v2 claim that fails its own v2 check is
+     never re-tried against the legacy one either.
+   SS4 is explicit about what this does and does NOT prove, under
+   EITHER recipe: "Hash recomputation verifies only that the supplied
+   fields produce the supplied ID. It does not authenticate the
+   object, prove that a historical run occurred, establish that data
+   were unseen, or detect coordinated replacement of both fields and
+   ID. It is not an anti-forgery certificate."
 2. Cross-object linkage: reuse `hypothesis.validation.provenance.
    check_provenance_matches_run()` UNCHANGED -- it already compares
    `evaluation_run_id`, `evaluation_engine_version`,
@@ -44,11 +62,32 @@ from backtest.models.entities import EvaluationRunCrossCheckResult
 # The EXACT 8 keyword arguments evaluation/engine.py:370-376 passes to
 # build_run_id() -- never all 15 EvaluationRunRegistry fields, which
 # would silently produce a DIFFERENT identity than the one #003 itself
-# computed (Spec #005 SS4).
+# computed (Spec #005 SS4). UNCHANGED by the v2 delta below -- every
+# historical (pre-Stage-2) identity recomputes exactly as it always
+# did.
 LEGACY_RUN_ID_FIELDS = (
     "development_start", "development_end", "timeframe", "signature_set_id",
     "discovery_config_version", "evaluation_config_version", "bootstrap_seed", "comparison_seed",
 )
+
+# The EXACT 14 keyword arguments evaluation/engine.py's run_evaluation()
+# passes to build_run_id() once `run_id_scheme_version == "v2"`
+# (engine.py:518-528, registry I1's own S2 field set) -- the 8 legacy
+# fields above PLUS these 6.
+_V2_ADDITIONAL_RUN_ID_FIELDS = (
+    "security_ids", "benchmark_security_id", "data_as_of", "horizons", "calendar_id", "run_id_scheme_version",
+)
+V2_RUN_ID_FIELDS = LEGACY_RUN_ID_FIELDS + _V2_ADDITIONAL_RUN_ID_FIELDS
+
+# Fields a GENUINE v2 run_evaluation() output always carries, never
+# left at their pre-Stage-2 backward-compat default. `calendar_id` is
+# deliberately EXCLUDED: a real v2 run legitimately carries
+# `calendar_id=None` whenever no calendar was resolved (e.g.
+# EXPLORATORY mode without calendar_registry/calendar_id), so its
+# absence is never evidence of a malformed v2 claim.
+_V2_REQUIRED_FIELDS = ("security_ids", "benchmark_security_id", "data_as_of")
+
+KNOWN_RUN_ID_SCHEME_VERSIONS = (None, "v2")
 
 
 def recompute_legacy_evaluation_run_id(run_registry: EvaluationRunRegistry) -> str:
@@ -56,18 +95,68 @@ def recompute_legacy_evaluation_run_id(run_registry: EvaluationRunRegistry) -> s
     return build_run_id(**fields)
 
 
+def recompute_v2_evaluation_run_id(run_registry: EvaluationRunRegistry) -> str:
+    """Reconstructs the v2 fingerprint from EXACTLY the fields
+    `run_evaluation()` feeds `build_run_id()` under `run_id_scheme_
+    version == "v2"` -- including the producer's own `horizons=tuple(
+    sorted(horizons))` normalization (engine.py:525), which
+    `EvaluationRunRegistry.horizons` itself retains in the run's
+    ORIGINAL (possibly unsorted) input order (engine.py:570). Recomputing
+    from the registry's raw, unsorted `horizons` would silently produce
+    the WRONG hash for any run whose caller passed horizons out of
+    sorted order -- sorting again here is what makes this a genuine
+    reconstruction of what the producer actually hashed, not an
+    approximation of it."""
+    fields = {name: getattr(run_registry, name) for name in V2_RUN_ID_FIELDS}
+    fields["horizons"] = tuple(sorted(fields["horizons"]))
+    return build_run_id(**fields)
+
+
 def verify_evaluation_run_identity(run_registry: EvaluationRunRegistry) -> tuple[bool, tuple[str, ...]]:
-    """See module docstring, point 1 -- this is a CONSISTENCY check, not
-    an authenticity or historical-execution proof (Spec #005 SS4)."""
-    recomputed = recompute_legacy_evaluation_run_id(run_registry)
-    if recomputed != run_registry.evaluation_run_id:
-        return False, (
-            f"evaluation_run_id={run_registry.evaluation_run_id!r} does not match the recomputed "
-            f"legacy hash {recomputed!r} for the supplied 8-field recipe -- this EvaluationRunRegistry "
-            f"was not produced by evaluation.engine.run_evaluation() with these exact field values "
-            f"(Spec #005 SS4)",
-        )
-    return True, ()
+    """See module docstring, point 1 -- dispatches by `run_registry.
+    run_id_scheme_version`; this remains a CONSISTENCY check, never an
+    authenticity or historical-execution proof (Spec #005 SS4), under
+    either recipe."""
+    scheme = run_registry.run_id_scheme_version
+
+    if scheme is None:
+        recomputed = recompute_legacy_evaluation_run_id(run_registry)
+        if recomputed != run_registry.evaluation_run_id:
+            return False, (
+                f"evaluation_run_id={run_registry.evaluation_run_id!r} does not match the recomputed "
+                f"legacy hash {recomputed!r} for the supplied 8-field recipe -- this EvaluationRunRegistry "
+                f"was not produced by evaluation.engine.run_evaluation() with these exact field values "
+                f"(Spec #005 SS4)",
+            )
+        return True, ()
+
+    if scheme == "v2":
+        missing = tuple(name for name in _V2_REQUIRED_FIELDS if not getattr(run_registry, name))
+        if missing:
+            return False, (
+                f"run_id_scheme_version='v2' but required field(s) {missing!r} are still at their "
+                f"pre-Stage-2 backward-compat default -- this EvaluationRunRegistry was never produced "
+                f"by a genuine v2 run_evaluation() output (Spec #005 SS4)",
+            )
+        recomputed = recompute_v2_evaluation_run_id(run_registry)
+        if recomputed != run_registry.evaluation_run_id:
+            return False, (
+                f"evaluation_run_id={run_registry.evaluation_run_id!r} does not match the recomputed "
+                f"v2 hash {recomputed!r} for the supplied 14-field recipe -- this EvaluationRunRegistry "
+                f"was not produced by evaluation.engine.run_evaluation() with these exact field values "
+                f"(Spec #005 SS4)",
+            )
+        return True, ()
+
+    # Unrecognized scheme -- refused outright, NEVER falls back to the
+    # legacy recipe (a v2-shaped claim that fails its own check is not
+    # re-tried against the 8-field one either, since that branch above
+    # already returned).
+    return False, (
+        f"run_id_scheme_version={scheme!r} is not a recognized scheme {KNOWN_RUN_ID_SCHEME_VERSIONS!r} -- "
+        f"refusing to verify under any scheme, never falling back to the legacy recipe for an "
+        f"unrecognized one (Spec #005 SS4)",
+    )
 
 
 def verify_mode_is_formal_development(run_registry: EvaluationRunRegistry) -> tuple[bool, tuple[str, ...]]:
