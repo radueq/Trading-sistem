@@ -27,13 +27,20 @@ def test_crosses_locked_oos_never_populates_exit_price():
     assert o.forward_return is None
 
 
-def test_no_valid_outcome_exits_after_development_end(conn, tiny_universe, reduced_discovery_config, fast_evaluation_config):
+def test_no_valid_outcome_exits_after_development_end(
+    conn, tiny_universe, reduced_discovery_config, fast_evaluation_config, formal_calendar_registry, formal_calendar_id,
+):
     # dev_end sits INSIDE COMPQ's EXTREME_COMPRESSION run (verified
     # against DATES[33..40]) so several observations near the wall need
     # a horizon that reaches past it; data_as_of extends further (real
     # data DOES exist beyond the wall, e.g. because time has since
     # passed) so the wall is actually tested, not just "no data
-    # available at all" (see outcomes/forward_returns.py).
+    # available at all" (see outcomes/forward_returns.py). CROSSES_
+    # LOCKED_OOS is classified from the CALENDAR's own session_dates
+    # (pure date arithmetic), never from an over-fetched bar -- the
+    # engine's own PIT reads stay bounded to effective_as_of =
+    # min(data_as_of, development_end) regardless (GPT review, Stage 2
+    # changes-required round).
     dev_start, dev_end = DATES[30], DATES[36]
     sig = EvaluationSignatureDefinition(
         signature_id="VOLATILITY_EXTREME_COMPRESSION", lane_conditions=(LaneStateCondition("volatility", "EXTREME_COMPRESSION"),),
@@ -46,8 +53,9 @@ def test_no_valid_outcome_exits_after_development_end(conn, tiny_universe, reduc
         conn, tiny_universe["non_benchmark_ids"], tiny_universe["benchmark_security_id"],
         dev_start, dev_end, sigset, reduced_discovery_config, fast_evaluation_config,
         data_as_of=DATES[-1],
+        calendar_registry=formal_calendar_registry, calendar_id=formal_calendar_id,
     )
     assert any(p.missingness.crosses_locked_oos > 0 for p in profiles), "sanity: the boundary should actually bind somewhere"
     assert any(p.missingness.valid_outcomes > 0 for p in profiles)
     for p in profiles:
-        assert p.missingness.crosses_locked_oos + p.missingness.valid_outcomes + p.missingness.insufficient_future_data + p.missingness.missing_benchmark + p.missingness.invalid_input == p.missingness.episodes
+        assert p.missingness.crosses_locked_oos + p.missingness.valid_outcomes + p.missingness.insufficient_future_data + p.missingness.missing_benchmark + p.missingness.invalid_input + p.missingness.data_gap == p.missingness.episodes

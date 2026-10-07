@@ -36,6 +36,7 @@ from data_foundation.calendar.contract import (
     require_calendar_covers_window,
     require_verified_calendar_for_formal_run,
 )
+from data_foundation.calendar.entities import CalendarNotVerifiedError
 from data_foundation.calendar.registry import CalendarRegistry
 from data_foundation.pit import access as pit
 
@@ -119,20 +120,29 @@ def _collect_observations(conn, security_ids, observation_dates, benchmark_secur
     return all_obs
 
 
-def _fetch_bars_by_security(conn, security_ids, data_as_of):
-    return {sid: pit.get_price_series_as_of(conn, sid, data_as_of) for sid in security_ids}
+def _fetch_bars_by_security(conn, security_ids, effective_as_of):
+    return {sid: pit.get_price_series_as_of(conn, sid, effective_as_of) for sid in security_ids}
 
 
-def _build_baseline_pool(all_obs, bars_by_security, benchmark_bars, timeframe, horizons, development_end, config_version):
+def _build_baseline_pool(
+    all_obs, bars_by_security, benchmark_bars, timeframe, horizons, development_end, config_version,
+    *, calendar=None, effective_as_of=None,
+):
     """{horizon_bars: [(security_id, as_of, ForwardOutcome)]} for EVERY
     eligible observation, regardless of signature (Spec #003 SS33-34) --
-    computed once, reused by every signature's baseline comparison."""
+    computed once, reused by every signature's baseline comparison.
+    `calendar`/`effective_as_of` are threaded straight through to
+    `compute_forward_outcome()` -- a resolved calendar must drive EVERY
+    forward-return computation this run performs, not just the ones
+    used for session-date/bin resolution (GPT review, Stage 2
+    changes-required round)."""
     pool: dict[int, list] = {h: [] for h in horizons}
     for obs in all_obs:
         bars = bars_by_security.get(obs.security_id, [])
         for h in horizons:
             outcome = compute_forward_outcome(
                 obs.security_id, bars, obs.as_of, timeframe, h, development_end, config_version,
+                calendar=calendar, data_as_of=effective_as_of,
             )
             outcome = attach_benchmark_return(outcome, benchmark_bars)
             pool[h].append((obs.security_id, obs.as_of, outcome))
@@ -150,6 +160,7 @@ def _missingness_from_outcomes(raw_n: int, outcomes: list) -> MissingnessReport:
         crosses_locked_oos=counts[OutcomeStatus.CROSSES_LOCKED_OOS],
         missing_benchmark=counts[OutcomeStatus.MISSING_BENCHMARK],
         invalid_input=counts[OutcomeStatus.INVALID_INPUT],
+        data_gap=counts[OutcomeStatus.DATA_GAP],
     )
 
 
@@ -162,10 +173,21 @@ def _standardized_effect(median_difference: Optional[float], baseline_iqr: Optio
 def _evaluate_signature_horizon(
     *, signature, horizon_bars, timeframe, raw_matches_by_security, bars_by_security,
     benchmark_bars, development_end, config_version, baseline_pool_h, bins, session_dates,
-    ev_config, run_id, mode,
+    ev_config, run_id, mode, calendar=None, effective_as_of=None,
 ) -> EvidenceProfile:
     episode_cfg = ev_config.data["episode"]
     episodes = []
+    # Verified, deliberately UNCHANGED this round (GPT review, Stage 2
+    # changes-required round, asked this be checked): `bar_dates` stays
+    # the security's OWN bar-date series, not the resolved calendar's
+    # session_dates. build_episodes()'s own module docstring already
+    # documents this as an explicit, separate Level 1 convention ("Gap
+    # is measured in the security's own bar-INDEX positions, never
+    # calendar days"), independent of calendar-driven TARGET-session
+    # resolution above. Switching this to calendar-index gap would be
+    # a genuine, separate statistical-convention change -- not named
+    # anywhere in Stage 2's own authorized scope -- so it is flagged
+    # here, not silently changed or silently left unexamined.
     for sid, as_ofs in raw_matches_by_security.items():
         bar_dates = [b.date for b in bars_by_security.get(sid, [])]
         episodes.extend(build_episodes(
@@ -180,6 +202,7 @@ def _evaluate_signature_horizon(
         bars = bars_by_security.get(ep.security_id, [])
         outcome = compute_forward_outcome(
             ep.security_id, bars, ep.representative_as_of, timeframe, horizon_bars, development_end, config_version,
+            calendar=calendar, data_as_of=effective_as_of,
         )
         outcome = attach_benchmark_return(outcome, benchmark_bars)
         episode_outcomes.append((ep, outcome))
@@ -340,26 +363,46 @@ def run_evaluation(
     EvidenceProfile plus this run's reproducibility metadata (Spec #003
     SS59-60).
 
-    `calendar_registry`/`calendar_id` are NEW, OPTIONAL, and MUST be
-    supplied TOGETHER (joint remediation design 003+004, section 2;
-    decision registry B1, revision 5-6; authorized 2026-10-06, Stage
-    2). Omitted (the default): behavior is completely unchanged --
-    session dates are still derived from the benchmark's own PIT bars
-    via `_resolve_session_dates()`, exactly as before. Supplied: the
-    calendar is resolved EXCLUSIVELY by identity from the registry
-    (never a bare object -- `CalendarRegistry.resolve()` itself refuses
-    one with no linked `CalendarVerificationRecord`); in
+    `calendar_registry`/`calendar_id` MUST be supplied TOGETHER (joint
+    remediation design 003+004, section 2; decision registry B1,
+    revision 5-6; authorized 2026-10-06, Stage 2; CORRECTED this round
+    per GPT's own changes-required review). **MANDATORY whenever `mode
+    == "FORMAL_DEVELOPMENT"`** -- a formal run can never silently fall
+    back to the legacy, benchmark-bar-derived session resolution; both
+    omitted raises `CalendarNotVerifiedError` before any PIT/Discovery
+    access. Optional in EXPLORATORY mode, where omitting both keeps the
+    original, unchanged bar-position behavior. Whenever supplied (in
+    EITHER mode): the calendar is resolved EXCLUSIVELY by identity from
+    the registry (never a bare object -- `CalendarRegistry.resolve()`
+    itself refuses one with no linked `CalendarVerificationRecord`); in
     FORMAL_DEVELOPMENT mode it must additionally be `OFFICIAL_VERIFIED`
     (`require_verified_calendar_for_formal_run()`); its own declared
     coverage must contain this run's actual window; its `session_dates`
-    then replace the benchmark-bar-derived list; and its own identity
-    feeds into this run's `evaluation_run_id` fingerprint."""
+    then replace the benchmark-bar-derived list; it is threaded into
+    EVERY `compute_forward_outcome()` call this run makes (baseline
+    pool AND every signature's own episodes), not only session-date
+    resolution; and its own identity feeds into this run's
+    `evaluation_run_id` fingerprint. All PIT bar reads in this function
+    are bounded to `effective_as_of = min(data_as_of, development_end)`
+    regardless of calendar use -- Locked OOS is never read, not even
+    the fetch itself, not only which fields of an already-fetched bar
+    get used afterward."""
     ev_data = evaluation_config.data
     mode = ev_data["evaluation_mode"]
     timeframe = ev_data["timeframe"]
     horizons = list(ev_data["horizons"]["values"])
     if ev_data["horizons"]["unit"] != "BARS":
         raise ValueError("Spec #003 SS3-4: horizons.unit must be BARS")
+
+    # Checked before anything mode-specific: a single calendar argument
+    # supplied alone is always a caller error, in EITHER mode -- never
+    # a silent fallback to the legacy (non-calendar) path.
+    if (calendar_registry is None) != (calendar_id is None):
+        raise ValueError(
+            "calendar_registry and calendar_id must be supplied TOGETHER or not at all "
+            "(Spec #003+#004 joint remediation design, section 2, Stage 2) -- a single one "
+            "supplied alone is never enough to resolve a trusted calendar"
+        )
 
     if mode == "FORMAL_DEVELOPMENT":
         # GPT Review #003 Round 1, mandatory finding #3: a frozen
@@ -400,16 +443,33 @@ def run_evaluation(
                     f"passed to this run is {discovery_config.config_version!r}"
                 )
 
+        # GPT review, Stage 2 changes-required round: a FORMAL_
+        # DEVELOPMENT run must never silently fall back to the legacy,
+        # benchmark-bar-derived session resolution just because the
+        # caller omitted calendar_registry/calendar_id -- that bypasses
+        # B1's own OFFICIAL_VERIFIED-only strictness entirely. Checked
+        # here, BEFORE any PIT/Discovery data access, alongside every
+        # other FORMAL_DEVELOPMENT-only guard above. (The TOGETHER
+        # check above already guarantees both are None or both are set
+        # by this point, so checking one is enough.)
+        if calendar_registry is None:
+            raise CalendarNotVerifiedError(
+                "CALENDAR_UNVERIFIED: FORMAL_DEVELOPMENT requires calendar_registry and calendar_id "
+                "together -- a formal run can never resolve its session calendar from benchmark bars "
+                "alone (Spec #003+#004 joint remediation design, section 2; decision registry B1)"
+            )
+
     data_as_of = data_as_of or development_end
     if data_as_of is None:
         raise ValueError("data_as_of is required when development_end is not set (SS13)")
 
-    if (calendar_registry is None) != (calendar_id is None):
-        raise ValueError(
-            "calendar_registry and calendar_id must be supplied TOGETHER or not at all "
-            "(Spec #003+#004 joint remediation design, section 2, Stage 2) -- a single one "
-            "supplied alone is never enough to resolve a trusted calendar"
-        )
+    # GPT review, Stage 2 changes-required round: Locked OOS is never
+    # read for ANYTHING beyond development_end (this module's own
+    # stated invariant) -- that includes the PIT FETCH itself, not only
+    # which fields of an already-fetched bar get read afterward. Every
+    # PIT read below uses effective_as_of, never the caller's raw
+    # data_as_of, whenever development_end is set.
+    effective_as_of = data_as_of if development_end is None else min(data_as_of, development_end)
 
     calendar = None
     if calendar_registry is not None and calendar_id is not None:
@@ -419,20 +479,20 @@ def run_evaluation(
         window_end = development_end if development_end is not None else data_as_of
         require_calendar_covers_window(calendar, development_start, window_end)
         session_dates, benchmark_bars = _resolve_session_dates_from_calendar(
-            conn, benchmark_security_id, development_start, development_end, data_as_of, calendar,
+            conn, benchmark_security_id, development_start, development_end, effective_as_of, calendar,
         )
     else:
         session_dates, benchmark_bars = _resolve_session_dates(
-            conn, benchmark_security_id, development_start, development_end, data_as_of,
+            conn, benchmark_security_id, development_start, development_end, effective_as_of,
         )
     all_obs = _collect_observations(conn, security_ids, session_dates, benchmark_security_id, discovery_config)
 
     involved_security_ids = sorted({o.security_id for o in all_obs})
-    bars_by_security = _fetch_bars_by_security(conn, involved_security_ids, data_as_of)
+    bars_by_security = _fetch_bars_by_security(conn, involved_security_ids, effective_as_of)
 
     baseline_pool = _build_baseline_pool(
         all_obs, bars_by_security, benchmark_bars, timeframe, horizons, development_end,
-        evaluation_config.config_version,
+        evaluation_config.config_version, calendar=calendar, effective_as_of=effective_as_of,
     )
 
     bin_end = development_end or (session_dates[-1] if session_dates else development_start)
@@ -465,7 +525,7 @@ def run_evaluation(
                 benchmark_bars=benchmark_bars, development_end=development_end,
                 config_version=evaluation_config.config_version, baseline_pool_h=baseline_pool[h],
                 bins=bins, session_dates=session_dates, ev_config=evaluation_config,
-                run_id=run_id, mode=mode,
+                run_id=run_id, mode=mode, calendar=calendar, effective_as_of=effective_as_of,
             ))
 
     if mode == "FORMAL_DEVELOPMENT":
@@ -499,6 +559,13 @@ def run_evaluation(
         bootstrap_seed=ev_data["bootstrap"]["seed"], bootstrap_iterations=ev_data["bootstrap"]["iterations"],
         comparison_seed=ev_data["comparison"]["seed"], comparison_iterations=ev_data["comparison"]["iterations"],
         multiple_testing_method=ev_data["multiple_testing"]["method"],
+        # Retained so a v2 evaluation_run_id can actually be
+        # RECOMPUTED and re-verified later (GPT review, Stage 2
+        # changes-required round) -- the exact field set build_run_id()
+        # itself hashed above, not re-derived or approximated.
+        security_ids=tuple(sorted(security_ids)), data_as_of=data_as_of,
+        calendar_id=(calendar.calendar_id if calendar is not None else None),
+        run_id_scheme_version=RUN_ID_SCHEME_VERSION,
     )
     return profiles, registry
 

@@ -212,6 +212,15 @@ class MissingnessReport:
     crosses_locked_oos: int
     missing_benchmark: int
     invalid_input: int
+    # Joint remediation design 003+004, section 1.3; decision registry
+    # B2; authorized 2026-10-06, Stage 2; ADDED this round per GPT's own
+    # changes-required review -- DATA_GAP outcomes were silently absent
+    # from this report's own reconciliation (missing_outcomes.episodes
+    # == sum(every OTHER field) would have failed to hold the moment
+    # DATA_GAP-producing outcomes reached this report). Defaults to 0 so
+    # every pre-Stage-2 construction site (which never produces
+    # DATA_GAP) is unaffected.
+    data_gap: int = 0
 
 
 @dataclass(frozen=True)
@@ -289,3 +298,19 @@ class EvaluationRunRegistry:
     comparison_iterations: int
 
     multiple_testing_method: str
+
+    # Joint remediation design 003+004, section 12; decision registry
+    # I1; authorized 2026-10-06, Stage 2; ADDED this round per GPT's own
+    # changes-required review -- the registry must retain the full set
+    # of fields build_run_id()'s own v2 fingerprint now hashes, so a
+    # v2 evaluation_run_id can actually be RECOMPUTED and re-verified
+    # later (the prior version computed the id but never stored the
+    # inputs needed to check it again). All four default to a value
+    # meaning "not part of this run's own fingerprint" so every
+    # pre-Stage-2 construction site is unaffected. `security_ids` is
+    # the run's own FULL input universe (sorted), matching the field
+    # build_run_id() hashes -- never the observed subset.
+    security_ids: tuple[str, ...] = ()
+    data_as_of: Optional[str] = None
+    calendar_id: Optional[str] = None
+    run_id_scheme_version: Optional[str] = None

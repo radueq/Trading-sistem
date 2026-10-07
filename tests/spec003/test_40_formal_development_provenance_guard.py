@@ -61,11 +61,14 @@ def test_timeframe_mismatch_is_rejected(conn, tiny_universe, reduced_discovery_c
         )
 
 
-def test_matching_provenance_is_accepted(conn, tiny_universe, reduced_discovery_config, fast_evaluation_config):
+def test_matching_provenance_is_accepted(
+    conn, tiny_universe, reduced_discovery_config, fast_evaluation_config, formal_calendar_registry, formal_calendar_id,
+):
     sig = _base_sig(discovery_config_version=reduced_discovery_config.config_version)
     sigset = freeze_signature_set([sig])
     profiles, _ = run_evaluation(
         conn, tiny_universe["non_benchmark_ids"], tiny_universe["benchmark_security_id"],
         COMPRESSION_WINDOW_START, COMPRESSION_WINDOW_END, sigset, reduced_discovery_config, fast_evaluation_config,
+        calendar_registry=formal_calendar_registry, calendar_id=formal_calendar_id,
     )
     assert profiles

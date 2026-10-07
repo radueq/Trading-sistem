@@ -12,7 +12,9 @@ from evaluation.registry.signatures import freeze_signature_set
 from spec003.conftest import COMPRESSION_WINDOW_END, COMPRESSION_WINDOW_START
 
 
-def test_support_insufficient_when_unique_securities_below_threshold(conn, tiny_universe, reduced_discovery_config, fast_evaluation_config):
+def test_support_insufficient_when_unique_securities_below_threshold(
+    conn, tiny_universe, reduced_discovery_config, fast_evaluation_config, formal_calendar_registry, formal_calendar_id,
+):
     sig = EvaluationSignatureDefinition(
         signature_id="VOLATILITY_COMPRESSION", lane_conditions=(LaneStateCondition("volatility", "COMPRESSION"),),
         reason_code_conditions=(), timeframe="1D", discovery_engine_version="v1.0.0",
@@ -26,6 +28,7 @@ def test_support_insufficient_when_unique_securities_below_threshold(conn, tiny_
     profiles, _ = run_evaluation(
         conn, tiny_universe["non_benchmark_ids"], tiny_universe["benchmark_security_id"],
         COMPRESSION_WINDOW_START, COMPRESSION_WINDOW_END, sigset, reduced_discovery_config, high_security_threshold_cfg,
+        calendar_registry=formal_calendar_registry, calendar_id=formal_calendar_id,
     )
     # tiny_universe has only 3 non-benchmark securities -- can never reach 999
     assert all(p.support.support_status == SupportStatus.INSUFFICIENT.value for p in profiles)

@@ -15,7 +15,9 @@ from evaluation.registry.signatures import freeze_signature_set
 from spec003.conftest import COMPRESSION_WINDOW_END, COMPRESSION_WINDOW_START
 
 
-def test_post_hoc_signature_raises_in_formal_development(conn, tiny_universe, reduced_discovery_config, fast_evaluation_config):
+def test_post_hoc_signature_raises_in_formal_development(
+    conn, tiny_universe, reduced_discovery_config, fast_evaluation_config, formal_calendar_registry, formal_calendar_id,
+):
     post_hoc_sig = EvaluationSignatureDefinition(
         signature_id="POST_HOC_SIG", lane_conditions=(LaneStateCondition("volatility", "COMPRESSION"),),
         reason_code_conditions=(), timeframe="1D", discovery_engine_version="v1.0.0",
@@ -25,15 +27,20 @@ def test_post_hoc_signature_raises_in_formal_development(conn, tiny_universe, re
     sigset = freeze_signature_set([post_hoc_sig])
     assert fast_evaluation_config.data["evaluation_mode"] == "FORMAL_DEVELOPMENT"
 
+    # Signature-validity errors are checked BEFORE the mandatory-
+    # calendar check (both are pure in-memory checks, no PIT access),
+    # so this must still raise for the POST_HOC reason even though a
+    # valid calendar is supplied here too.
     with pytest.raises(ValueError, match="PRE_REGISTERED"):
         run_evaluation(
             conn, tiny_universe["non_benchmark_ids"], tiny_universe["benchmark_security_id"],
             COMPRESSION_WINDOW_START, COMPRESSION_WINDOW_END, sigset, reduced_discovery_config, fast_evaluation_config,
+            calendar_registry=formal_calendar_registry, calendar_id=formal_calendar_id,
         )
 
 
 def test_pre_registered_but_not_marked_created_before_outcome_evaluation_also_rejected(
-    conn, tiny_universe, reduced_discovery_config, fast_evaluation_config,
+    conn, tiny_universe, reduced_discovery_config, fast_evaluation_config, formal_calendar_registry, formal_calendar_id,
 ):
     inconsistent_sig = EvaluationSignatureDefinition(
         signature_id="INCONSISTENT_SIG", lane_conditions=(LaneStateCondition("volatility", "COMPRESSION"),),
@@ -46,4 +53,5 @@ def test_pre_registered_but_not_marked_created_before_outcome_evaluation_also_re
         run_evaluation(
             conn, tiny_universe["non_benchmark_ids"], tiny_universe["benchmark_security_id"],
             COMPRESSION_WINDOW_START, COMPRESSION_WINDOW_END, sigset, reduced_discovery_config, fast_evaluation_config,
+            calendar_registry=formal_calendar_registry, calendar_id=formal_calendar_id,
         )

@@ -28,52 +28,63 @@ def _signature(discovery_config_version):
     )
 
 
-def _run_id(conn, security_ids, benchmark_security_id, reduced_discovery_config, evaluation_config, data_as_of=None):
+def _run_id(
+    conn, security_ids, benchmark_security_id, reduced_discovery_config, evaluation_config,
+    calendar_registry, calendar_id, data_as_of=None,
+):
     sigset = freeze_signature_set([_signature(reduced_discovery_config.config_version)])
     _, registry = run_evaluation(
         conn, security_ids, benchmark_security_id,
         COMPRESSION_WINDOW_START, COMPRESSION_WINDOW_END, sigset, reduced_discovery_config, evaluation_config,
-        data_as_of=data_as_of,
+        data_as_of=data_as_of, calendar_registry=calendar_registry, calendar_id=calendar_id,
     )
     return registry.evaluation_run_id
 
 
-def test_different_security_ids_produce_different_run_ids(conn, tiny_universe, reduced_discovery_config, fast_evaluation_config):
+def test_different_security_ids_produce_different_run_ids(
+    conn, tiny_universe, reduced_discovery_config, fast_evaluation_config, formal_calendar_registry, formal_calendar_id,
+):
     full = tiny_universe["non_benchmark_ids"]
     subset = full[:-1]
     assert len(subset) < len(full)  # otherwise this axis isn't actually exercised
-    id_full = _run_id(conn, full, tiny_universe["benchmark_security_id"], reduced_discovery_config, fast_evaluation_config)
-    id_subset = _run_id(conn, subset, tiny_universe["benchmark_security_id"], reduced_discovery_config, fast_evaluation_config)
+    id_full = _run_id(conn, full, tiny_universe["benchmark_security_id"], reduced_discovery_config, fast_evaluation_config, formal_calendar_registry, formal_calendar_id)
+    id_subset = _run_id(conn, subset, tiny_universe["benchmark_security_id"], reduced_discovery_config, fast_evaluation_config, formal_calendar_registry, formal_calendar_id)
     assert id_full != id_subset
 
 
-def test_different_benchmark_security_id_produces_different_run_id(conn, tiny_universe, reduced_discovery_config, fast_evaluation_config):
+def test_different_benchmark_security_id_produces_different_run_id(
+    conn, tiny_universe, reduced_discovery_config, fast_evaluation_config, formal_calendar_registry, formal_calendar_id,
+):
     security_ids = tiny_universe["non_benchmark_ids"]
     real_benchmark = tiny_universe["benchmark_security_id"]
     swapped_benchmark = security_ids[0]
-    id_real = _run_id(conn, security_ids, real_benchmark, reduced_discovery_config, fast_evaluation_config)
-    id_swapped = _run_id(conn, security_ids, swapped_benchmark, reduced_discovery_config, fast_evaluation_config)
+    id_real = _run_id(conn, security_ids, real_benchmark, reduced_discovery_config, fast_evaluation_config, formal_calendar_registry, formal_calendar_id)
+    id_swapped = _run_id(conn, security_ids, swapped_benchmark, reduced_discovery_config, fast_evaluation_config, formal_calendar_registry, formal_calendar_id)
     assert id_real != id_swapped
 
 
-def test_different_data_as_of_produces_different_run_id(conn, tiny_universe, reduced_discovery_config, fast_evaluation_config):
+def test_different_data_as_of_produces_different_run_id(
+    conn, tiny_universe, reduced_discovery_config, fast_evaluation_config, formal_calendar_registry, formal_calendar_id,
+):
     security_ids = tiny_universe["non_benchmark_ids"]
     benchmark = tiny_universe["benchmark_security_id"]
-    id_a = _run_id(conn, security_ids, benchmark, reduced_discovery_config, fast_evaluation_config, data_as_of=COMPRESSION_WINDOW_END)
+    id_a = _run_id(conn, security_ids, benchmark, reduced_discovery_config, fast_evaluation_config, formal_calendar_registry, formal_calendar_id, data_as_of=COMPRESSION_WINDOW_END)
     earlier_as_of = COMPRESSION_WINDOW_START
-    id_b = _run_id(conn, security_ids, benchmark, reduced_discovery_config, fast_evaluation_config, data_as_of=earlier_as_of)
+    id_b = _run_id(conn, security_ids, benchmark, reduced_discovery_config, fast_evaluation_config, formal_calendar_registry, formal_calendar_id, data_as_of=earlier_as_of)
     assert id_a != id_b
 
 
-def test_different_horizons_produce_different_run_id(conn, tiny_universe, reduced_discovery_config, fast_evaluation_config):
+def test_different_horizons_produce_different_run_id(
+    conn, tiny_universe, reduced_discovery_config, fast_evaluation_config, formal_calendar_registry, formal_calendar_id,
+):
     security_ids = tiny_universe["non_benchmark_ids"]
     benchmark = tiny_universe["benchmark_security_id"]
     other_cfg = replace(fast_evaluation_config, data={
         **fast_evaluation_config.data,
         "horizons": {"unit": "BARS", "values": [1, 2]},
     })
-    id_a = _run_id(conn, security_ids, benchmark, reduced_discovery_config, fast_evaluation_config)
-    id_b = _run_id(conn, security_ids, benchmark, reduced_discovery_config, other_cfg)
+    id_a = _run_id(conn, security_ids, benchmark, reduced_discovery_config, fast_evaluation_config, formal_calendar_registry, formal_calendar_id)
+    id_b = _run_id(conn, security_ids, benchmark, reduced_discovery_config, other_cfg, formal_calendar_registry, formal_calendar_id)
     assert id_a != id_b
 
 

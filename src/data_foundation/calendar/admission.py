@@ -72,17 +72,23 @@ def _digest(raw_content: str) -> str:
 
 
 def admit_source_via_approved_provider(
-    *, source_identifier: str, approved_providers: frozenset[str], version: str,
+    *, source_identifier: str, version: str,
     publication_date: str, coverage_start: str, coverage_end: str,
     market: str, timezone: str, raw_content: str,
 ) -> AdmittedCalendarSource:
-    """`approved_providers` is passed explicitly by the caller (never
-    read from a hidden global) so a test can supply its own allow-list
-    without touching `APPROVED_PROVIDERS_V1`. Rejects outright, before
-    any comparison, if `source_identifier` is not on that list --
-    admission failure is its own, separate rejection reason from a later
-    verification mismatch."""
-    if source_identifier not in approved_providers:
+    """Checked ONLY against the module-level `APPROVED_PROVIDERS_V1`
+    constant -- NEVER a caller-supplied allow-list (GPT review, Stage 2
+    changes-required round: a trust-config value a caller can freely
+    pass in is candidate DATA, not admission AUTHORITY; a test wanting
+    to exercise the success path monkeypatches `APPROVED_PROVIDERS_V1`
+    itself, which is an explicit, visible override of the mechanism's
+    own trust config, never a parameter an ordinary caller controls).
+    Rejects outright, before any comparison, if `source_identifier` is
+    not on that list -- admission failure is its own, separate
+    rejection reason from a later verification mismatch. In V1,
+    `APPROVED_PROVIDERS_V1` is deliberately empty, so this path always
+    rejects until a real deployment populates it."""
+    if source_identifier not in APPROVED_PROVIDERS_V1:
         raise CalendarSourceNotAdmittedError(
             f"source_identifier={source_identifier!r} is not on the approved-provider allow-list "
             f"-- admission refused before any session-date comparison is attempted"

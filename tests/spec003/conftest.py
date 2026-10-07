@@ -1,8 +1,13 @@
+import json
 from dataclasses import replace
 
 import pytest
 
 from data_foundation.adapters.yfinance_adapter import YFinanceAdapter, utc_now_iso
+from data_foundation.calendar.admission import admit_source_via_operator_attestation
+from data_foundation.calendar.contract import build_trading_calendar
+from data_foundation.calendar.entities import CalendarSource
+from data_foundation.calendar.registry import CalendarRegistry
 from data_foundation.model import ingestion as ing
 from data_foundation.storage.db import connect_and_init
 from fixtures.fake_yfinance import make_ticker_factory
@@ -77,3 +82,42 @@ def fast_evaluation_config():
     data["comparison"] = {**base.data["comparison"], "iterations": 200}
     data["stability"] = {"temporal_bins": 3}
     return replace(base, data=data)
+
+
+# FORMAL_DEVELOPMENT now REQUIRES a registry-resolved, OFFICIAL_VERIFIED
+# calendar (decision registry B1; GPT review, Stage 2 changes-required
+# round) -- `fast_evaluation_config`'s own evaluation_mode is
+# FORMAL_DEVELOPMENT (unchanged from evaluation.yaml's default), so every
+# existing test calling run_evaluation() with it must now also supply
+# this registered calendar. Session_dates == the tiny_universe's own
+# DATES, so target-session resolution matches every existing bar-position
+# expectation exactly (no behavior shift beyond what Stage 2 itself
+# authorizes).
+@pytest.fixture
+def formal_calendar():
+    return build_trading_calendar(
+        source=CalendarSource.OFFICIAL_VERIFIED.value, calendar_identifier="SPEC003_TINY_UNIVERSE_FIXTURE",
+        calendar_version="v1", market="US_EQUITIES", timezone="America/New_York",
+        coverage_start=DATES[0], coverage_end=DATES[-1], session_dates=tuple(DATES),
+        session_open_time="09:30", session_close_time="16:00",
+        verified_by="radu", verified_at="2026-10-06T00:00:00Z",
+    )
+
+
+@pytest.fixture
+def formal_calendar_registry(formal_calendar):
+    raw = json.dumps({"session_dates": list(formal_calendar.session_dates), "early_close_dates": []})
+    admitted = admit_source_via_operator_attestation(
+        source_identifier="SPEC003_TEST_FIXTURE_FEED", operator_name="radu", attested_at="2026-10-06T00:00:00Z",
+        version="v1", publication_date=DATES[0], coverage_start=formal_calendar.coverage_start,
+        coverage_end=formal_calendar.coverage_end, market=formal_calendar.market, timezone=formal_calendar.timezone,
+        raw_content=raw,
+    )
+    registry = CalendarRegistry()
+    registry.register_verified(formal_calendar, admitted, verified_by="radu", verified_at="2026-10-06T00:00:00Z")
+    return registry
+
+
+@pytest.fixture
+def formal_calendar_id(formal_calendar):
+    return formal_calendar.calendar_id

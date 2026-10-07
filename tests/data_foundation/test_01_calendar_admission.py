@@ -10,6 +10,7 @@ import json
 
 import pytest
 
+import data_foundation.calendar.admission as admission_module
 from data_foundation.calendar.admission import (
     ADMISSION_METHOD_APPROVED_PROVIDER,
     ADMISSION_METHOD_OPERATOR_ATTESTATION,
@@ -24,9 +25,15 @@ _RAW_FIXTURE = json.dumps({
 })
 
 
-def test_approved_provider_admission_succeeds_when_on_the_allow_list():
+def test_approved_provider_admission_succeeds_when_on_the_allow_list(monkeypatch):
+    """`APPROVED_PROVIDERS_V1` is the mechanism's OWN trust config, not
+    a caller-supplied parameter (GPT review, Stage 2 changes-required
+    round) -- exercising the success path means overriding that
+    module-level constant explicitly via monkeypatch, never passing an
+    ad-hoc allow-list through the public function."""
+    monkeypatch.setattr(admission_module, "APPROVED_PROVIDERS_V1", frozenset({"FIXTURE_EXCHANGE_FEED"}))
     admitted = admit_source_via_approved_provider(
-        source_identifier="FIXTURE_EXCHANGE_FEED", approved_providers=frozenset({"FIXTURE_EXCHANGE_FEED"}),
+        source_identifier="FIXTURE_EXCHANGE_FEED",
         version="v1", publication_date="2024-01-01", coverage_start="2024-01-01", coverage_end="2024-01-31",
         market="US_EQUITIES", timezone="America/New_York", raw_content=_RAW_FIXTURE,
     )
@@ -39,7 +46,21 @@ def test_approved_provider_admission_succeeds_when_on_the_allow_list():
 def test_approved_provider_admission_rejected_when_not_on_the_allow_list():
     with pytest.raises(CalendarSourceNotAdmittedError, match="not on the approved-provider allow-list"):
         admit_source_via_approved_provider(
-            source_identifier="UNKNOWN_FEED", approved_providers=frozenset({"FIXTURE_EXCHANGE_FEED"}),
+            source_identifier="UNKNOWN_FEED",
+            version="v1", publication_date="2024-01-01", coverage_start="2024-01-01", coverage_end="2024-01-31",
+            market="US_EQUITIES", timezone="America/New_York", raw_content=_RAW_FIXTURE,
+        )
+
+
+def test_approved_provider_admission_rejected_in_v1_even_for_a_plausible_identifier():
+    """V1's own allow-list is deliberately empty (decision registry
+    B3) -- no caller-supplied frozenset can make this path succeed
+    without an explicit monkeypatch of the mechanism's own trust
+    config."""
+    assert admission_module.APPROVED_PROVIDERS_V1 == frozenset()
+    with pytest.raises(CalendarSourceNotAdmittedError, match="not on the approved-provider allow-list"):
+        admit_source_via_approved_provider(
+            source_identifier="ANY_PLAUSIBLE_REAL_SOUNDING_FEED",
             version="v1", publication_date="2024-01-01", coverage_start="2024-01-01", coverage_end="2024-01-31",
             market="US_EQUITIES", timezone="America/New_York", raw_content=_RAW_FIXTURE,
         )

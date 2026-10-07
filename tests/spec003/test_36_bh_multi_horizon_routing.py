@@ -16,7 +16,9 @@ from evaluation.registry.signatures import freeze_signature_set
 from spec003.conftest import COMPRESSION_WINDOW_END, COMPRESSION_WINDOW_START
 
 
-def test_each_horizon_gets_its_own_family_id_and_adjusted_p(conn, tiny_universe, reduced_discovery_config, fast_evaluation_config):
+def test_each_horizon_gets_its_own_family_id_and_adjusted_p(
+    conn, tiny_universe, reduced_discovery_config, fast_evaluation_config, formal_calendar_registry, formal_calendar_id,
+):
     sig = EvaluationSignatureDefinition(
         signature_id="VOLATILITY_COMPRESSION", lane_conditions=(LaneStateCondition("volatility", "COMPRESSION"),),
         reason_code_conditions=(), timeframe="1D", discovery_engine_version="v1.0.0",
@@ -27,6 +29,7 @@ def test_each_horizon_gets_its_own_family_id_and_adjusted_p(conn, tiny_universe,
     profiles, registry = run_evaluation(
         conn, tiny_universe["non_benchmark_ids"], tiny_universe["benchmark_security_id"],
         COMPRESSION_WINDOW_START, COMPRESSION_WINDOW_END, sigset, reduced_discovery_config, fast_evaluation_config,
+        calendar_registry=formal_calendar_registry, calendar_id=formal_calendar_id,
     )
     assert registry.mode == "FORMAL_DEVELOPMENT"
     horizons_seen = {p.horizon_bars for p in profiles}

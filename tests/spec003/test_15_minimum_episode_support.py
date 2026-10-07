@@ -21,7 +21,9 @@ def _signature(discovery_config_version):
     )
 
 
-def test_support_insufficient_when_episode_count_below_threshold(conn, tiny_universe, reduced_discovery_config, fast_evaluation_config):
+def test_support_insufficient_when_episode_count_below_threshold(
+    conn, tiny_universe, reduced_discovery_config, fast_evaluation_config, formal_calendar_registry, formal_calendar_id,
+):
     sigset = freeze_signature_set([_signature(reduced_discovery_config.config_version)])
     high_threshold_cfg = replace(fast_evaluation_config, data={
         **fast_evaluation_config.data, "support": {"minimum_episode_count": 999, "minimum_unique_securities": 1},
@@ -29,14 +31,18 @@ def test_support_insufficient_when_episode_count_below_threshold(conn, tiny_univ
     profiles, _ = run_evaluation(
         conn, tiny_universe["non_benchmark_ids"], tiny_universe["benchmark_security_id"],
         COMPRESSION_WINDOW_START, COMPRESSION_WINDOW_END, sigset, reduced_discovery_config, high_threshold_cfg,
+        calendar_registry=formal_calendar_registry, calendar_id=formal_calendar_id,
     )
     assert all(p.support.support_status == SupportStatus.INSUFFICIENT.value for p in profiles)
 
 
-def test_support_sufficient_when_episode_count_meets_threshold(conn, tiny_universe, reduced_discovery_config, fast_evaluation_config):
+def test_support_sufficient_when_episode_count_meets_threshold(
+    conn, tiny_universe, reduced_discovery_config, fast_evaluation_config, formal_calendar_registry, formal_calendar_id,
+):
     sigset = freeze_signature_set([_signature(reduced_discovery_config.config_version)])
     profiles, _ = run_evaluation(
         conn, tiny_universe["non_benchmark_ids"], tiny_universe["benchmark_security_id"],
         COMPRESSION_WINDOW_START, COMPRESSION_WINDOW_END, sigset, reduced_discovery_config, fast_evaluation_config,
+        calendar_registry=formal_calendar_registry, calendar_id=formal_calendar_id,
     )
     assert any(p.support.support_status == SupportStatus.SUFFICIENT.value for p in profiles)

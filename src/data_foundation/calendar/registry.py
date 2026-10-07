@@ -34,10 +34,11 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 
-from data_foundation.calendar.admission import AdmittedCalendarSource
+from data_foundation.calendar.admission import AdmittedCalendarSource, _digest
 from data_foundation.calendar.entities import (
     CalendarNotVerifiedError,
     TradingCalendar,
+    parse_iso_date,
     verify_calendar_content_address,
     verify_calendar_structure,
 )
@@ -115,27 +116,61 @@ class CalendarRegistrationError(ValueError):
     pass
 
 
+@dataclass(frozen=True)
+class _RegisteredCalendar:
+    """One indivisible registry entry -- `calendar` and `record` are
+    stored and read TOGETHER, never as two independently-settable
+    dict slots (GPT review, Stage 2 changes-required round: two
+    successive dict writes are not atomic -- an exception between them
+    left a calendar with zero records). Holding both fields inside ONE
+    object means the single `self._entries[calendar_id] = ...`
+    assignment below either fully happens or does not happen at all;
+    there is no intermediate state to observe."""
+    calendar: TradingCalendar
+    record: "CalendarVerificationRecord"
+
+
 class CalendarRegistry:
-    """Steps 5-6. An in-memory registry, mirroring this project's own
+    """Steps 3-6. An in-memory registry, mirroring this project's own
     established atomic-gate pattern (`hypothesis.registry.preregistration.
     preregister_hypothesis()`): one write path, atomic, and a resolve
-    path that refuses anything not registered through it."""
+    path that refuses anything not registered through it.
+
+    `register_verified()` is the ONLY path to a registered calendar --
+    it EXECUTES Steps 3-4 itself (source-tamper check, coverage check,
+    `verify_calendar_against_source()`) and BUILDS the
+    `CalendarVerificationRecord` internally; a caller can no longer
+    hand it an already-built record, since a caller-supplied record is
+    not evidence that verification actually happened (GPT review,
+    Stage 2 changes-required round: a hand-built record naming an
+    invented digest and blank verifier/timestamp was accepted by the
+    prior version of this method)."""
 
     def __init__(self) -> None:
-        self._calendars: dict[str, TradingCalendar] = {}
-        self._records: dict[str, CalendarVerificationRecord] = {}
+        self._entries: dict[str, _RegisteredCalendar] = {}
 
-    def register_verified(self, calendar: TradingCalendar, record: CalendarVerificationRecord) -> None:
-        """Step 5: register `calendar` and `record` TOGETHER. On any
-        failure below, NOTHING is stored -- no partial state, mirroring
-        Finding 16/#004's own batch-safe dry-run discipline."""
-        if record.calendar_id != calendar.calendar_id or record.calendar_hash != calendar.calendar_hash:
+    def register_verified(
+        self, calendar: TradingCalendar, admitted_source: AdmittedCalendarSource, *,
+        verified_by: str, verified_at: str,
+        verification_method_version: str = VERIFICATION_METHOD_VERSION_V1,
+    ) -> None:
+        """Steps 3-5: verify `calendar` against the ADMITTED `admitted_
+        source` (never a bare caller claim) and, on success ONLY,
+        register both together atomically. On ANY failure below,
+        NOTHING is stored -- no partial state, and any PRE-EXISTING
+        entry (this `calendar_id` or any other) is left exactly as it
+        was, mirroring Finding 16/#004's own batch-safe dry-run
+        discipline."""
+        if not verified_by or not verified_by.strip():
             raise CalendarRegistrationError(
-                f"CalendarVerificationRecord names calendar_id={record.calendar_id!r}/"
-                f"calendar_hash={record.calendar_hash!r}, which does not match the calendar being "
-                f"registered (calendar_id={calendar.calendar_id!r}/calendar_hash={calendar.calendar_hash!r}) "
-                f"-- refusing to register a record linked to a different calendar"
+                "register_verified() requires a non-blank verified_by -- the named human or "
+                "process vouching for this verification is never optional"
             )
+        if not verified_at or not verified_at.strip():
+            raise CalendarRegistrationError(
+                "register_verified() requires a non-blank verified_at timestamp"
+            )
+
         address_ok, address_errors = verify_calendar_content_address(calendar)
         if not address_ok:
             raise CalendarRegistrationError(
@@ -148,26 +183,71 @@ class CalendarRegistry:
                 f"calendar structural validation failed, refusing registration: "
                 f"{'; '.join(structure_errors)}"
             )
-        self._calendars[calendar.calendar_id] = calendar
-        self._records[calendar.calendar_id] = record
+
+        # The admitted source's own digest must still match a FRESH
+        # digest of its own retained raw_content -- a
+        # dataclasses.replace()-tampered AdmittedCalendarSource (new
+        # raw_content, stale artifact_digest) must never pass as if it
+        # were the genuinely-admitted artifact.
+        fresh_digest = _digest(admitted_source.raw_content)
+        if fresh_digest != admitted_source.artifact_digest:
+            raise CalendarRegistrationError(
+                f"admitted source's artifact_digest={admitted_source.artifact_digest!r} does not "
+                f"match a fresh digest of its own raw_content ({fresh_digest!r}) -- the admitted "
+                f"source was modified after admission, refusing registration"
+            )
+
+        coverage_start = parse_iso_date(calendar.coverage_start)
+        coverage_end = parse_iso_date(calendar.coverage_end)
+        source_coverage_start = parse_iso_date(admitted_source.coverage_start)
+        source_coverage_end = parse_iso_date(admitted_source.coverage_end)
+        if None in (coverage_start, coverage_end, source_coverage_start, source_coverage_end) or not (
+            source_coverage_start <= coverage_start and coverage_end <= source_coverage_end
+        ):
+            raise CalendarRegistrationError(
+                f"calendar's own declared coverage [{calendar.coverage_start!r}, "
+                f"{calendar.coverage_end!r}] is not contained within the admitted source's own "
+                f"declared coverage [{admitted_source.coverage_start!r}, "
+                f"{admitted_source.coverage_end!r}] -- refusing registration"
+            )
+
+        verify_ok, verify_errors = verify_calendar_against_source(
+            calendar.session_dates, calendar.early_close_dates, calendar.market, calendar.timezone,
+            admitted_source,
+        )
+        if not verify_ok:
+            raise CalendarRegistrationError(
+                f"calendar does not match the admitted source, refusing registration: "
+                f"{'; '.join(verify_errors)}"
+            )
+
+        record = CalendarVerificationRecord(
+            calendar_id=calendar.calendar_id, calendar_hash=calendar.calendar_hash,
+            source_artifact_digest=admitted_source.artifact_digest,
+            verification_method_version=verification_method_version,
+            verified_by=verified_by, verified_at=verified_at,
+        )
+        self._entries[calendar.calendar_id] = _RegisteredCalendar(calendar=calendar, record=record)
 
     def resolve(self, calendar_id: str) -> TradingCalendar:
         """Step 6: Evaluation's own consumption rule -- resolve
         EXCLUSIVELY by identity, REQUIRE the linked record. A lookup
         with no linked record (never registered, or registration
         failed) is refused, treated the same as `CALENDAR_UNVERIFIED`."""
-        if calendar_id not in self._calendars or calendar_id not in self._records:
+        entry = self._entries.get(calendar_id)
+        if entry is None:
             raise CalendarNotVerifiedError(
                 f"CALENDAR_UNVERIFIED: calendar_id={calendar_id!r} has no linked "
                 f"CalendarVerificationRecord in this registry -- a bare TradingCalendar object is "
                 f"never trusted on its own claimed fields, however correct its hash or source label"
             )
-        return self._calendars[calendar_id]
+        return entry.calendar
 
     def resolve_record(self, calendar_id: str) -> CalendarVerificationRecord:
-        if calendar_id not in self._records:
+        entry = self._entries.get(calendar_id)
+        if entry is None:
             raise CalendarNotVerifiedError(
                 f"CALENDAR_UNVERIFIED: calendar_id={calendar_id!r} has no linked "
                 f"CalendarVerificationRecord in this registry"
             )
-        return self._records[calendar_id]
+        return entry.record
