@@ -736,18 +736,47 @@ is not itself the audit.
      **Flagged, documented, not fixed:** `backtest/provenance/
      evaluation_run.py`'s `LEGACY_RUN_ID_FIELDS` cross-check now
      recomputes against the OLD 8-field set only and will not match a
-     genuinely-produced future run-id; confirmed by grep that no
-     existing #005 test exercises that recompute against a real
-     `run_evaluation()` output, so nothing breaks today. 40 new tests
-     across `tests/data_foundation/` (21) and `tests/spec003/`
-     (test_42/43/44, 19), all passing; full project suite: 789 passed,
-     1 skipped (pre-existing, unrelated) -- zero regression from the
-     pre-Stage-2 baseline of 749. #005 does NOT adopt the new registry
-     this round (not authorized); a real `OFFICIAL_VERIFIED` calendar
-     for actual formal runs remains operationally blocked, unchanged.
-     Every stage beyond Stage 2 remains unauthorized; findings
-     reconciliation stays closed, the calendar admission/trust contract
-     stays closed, and the Spec #005/Batch 3 pause is unchanged.
+     genuinely-produced future run-id.
+
+     **GPT's own review of this delivery: Stage 2 -- CHANGES REQUIRED
+     (seven defects, two reproduced directly). CORRECTED, commit
+     `8877551` -- awaiting GPT's re-review, NOT yet accepted.** (1)
+     FORMAL_DEVELOPMENT with BOTH calendar arguments omitted silently
+     used the legacy path, bypassing B1 entirely -- now MANDATORY in
+     that mode, checked before any data access. (2) The resolved
+     calendar reached session-date/bin resolution and the run-id
+     fingerprint but NOT the actual return calculation --
+     `_build_baseline_pool()`/`_evaluate_signature_horizon()` now
+     thread `calendar=`/`effective_as_of=` into every `compute_
+     forward_outcome()` call. (3) `data_as_of` reached PIT fetches
+     unbounded, reading past `development_end` before classification
+     -- a new `effective_as_of = min(data_as_of, development_end)` now
+     bounds every PIT read. (4) `register_verified()` accepted a
+     caller-built record on faith -- reproduced: an invented digest
+     and blank verifier/timestamp, no admission/verification call at
+     all, was accepted; now it takes the `AdmittedCalendarSource`
+     itself and executes admit->verify internally. (5) The registry's
+     two dict writes were not atomic -- reproduced: a failure at the
+     second write left a calendar with zero records; now one dict, one
+     indivisible entry, one assignment. (6) `DATA_GAP` was invisible to
+     `MissingnessReport`'s reconciliation -- new `data_gap` field,
+     counted; a real two-security scenario (test_45) proves it
+     end-to-end. (7) The #005 incompatibility was only a code comment's
+     claim -- test_46 now runs a REAL `run_evaluation()` output through
+     #005's own identity verifier and confirms it fails; the fix to
+     #005's own code is NOT implemented (out of scope), only specified
+     as a minimal-delta proposal. 9 new tests (`tests/spec003/
+     test_45`/`test_46` + corrected `test_44`); every pre-existing
+     FORMAL_DEVELOPMENT test in `tests/spec003/` now supplies a
+     registered calendar. Full project suite: 798 passed, 1 skipped
+     (pre-existing, unrelated) -- zero regression from the
+     pre-correction baseline of 789; `tests/spec005/` unchanged at 419
+     passed. #005 does NOT adopt the new registry this round (not
+     authorized); a real `OFFICIAL_VERIFIED` calendar for actual formal
+     runs remains operationally blocked, unchanged. Every stage beyond
+     Stage 2 remains unauthorized; findings reconciliation stays
+     closed, the calendar admission/trust contract stays closed, and
+     the Spec #005/Batch 3 pause is unchanged.
    - **Spec #004: two rounds done (2026-10-04).** Round 1 (Claude
      alone): a fresh, high-effort independent re-verification pass,
      requested by Radu specifically to finish before the joint F1-F6
