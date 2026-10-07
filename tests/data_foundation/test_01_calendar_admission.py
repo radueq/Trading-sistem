@@ -47,7 +47,7 @@ def test_approved_provider_admission_succeeds_when_on_the_allow_list(monkeypatch
     assert admitted.attested_by is None
     assert admitted.attested_at is None
     assert admitted.raw_content == _RAW_FIXTURE
-    assert registry.resolve(admitted.artifact_digest) is admitted
+    assert registry.resolve(admitted.admission_id) is admitted
 
 
 def test_approved_provider_admission_rejected_when_not_on_the_allow_list(registry):
@@ -82,7 +82,7 @@ def test_operator_attestation_admission_succeeds_with_a_named_operator(registry)
     assert admitted.admission_method == ADMISSION_METHOD_OPERATOR_ATTESTATION
     assert admitted.attested_by == "radu"
     assert admitted.attested_at == "2026-10-06T00:00:00Z"
-    assert registry.resolve(admitted.artifact_digest) is admitted
+    assert registry.resolve(admitted.admission_id) is admitted
 
 
 def test_operator_attestation_rejected_when_operator_name_is_blank(registry):
@@ -132,7 +132,51 @@ def test_direct_construction_of_admitted_source_is_never_resolvable_without_goin
         source_identifier="NEVER_ADMITTED_FEED", admission_method=ADMISSION_METHOD_APPROVED_PROVIDER,
         version="v1", publication_date="2024-01-01", coverage_start="2024-01-01", coverage_end="2024-01-31",
         market="US_EQUITIES", timezone="America/New_York", raw_content=_RAW_FIXTURE,
-        artifact_digest=_digest(_RAW_FIXTURE), attested_by=None, attested_at=None,
+        artifact_digest=_digest(_RAW_FIXTURE), admission_id="NEVER_RECORDED_ID", attested_by=None, attested_at=None,
     )
     with pytest.raises(CalendarSourceNotAdmittedError, match="has no linked admission"):
-        registry.resolve(forged.artifact_digest)
+        registry.resolve(forged.admission_id)
+
+
+def test_same_text_admitted_twice_with_different_metadata_gets_distinct_identities_both_retained(registry):
+    """GPT review, Stage 2 THIRD changes-required round, reproduced:
+    admission A (this text, source A, coverage to 2024-01-31) and
+    admission B (the SAME text, source B, coverage to 2024-12-31) both
+    succeed -- `artifact_digest` alone cannot tell them apart, so the
+    registry must key by `admission_id` (digest + metadata), never by
+    `artifact_digest` alone, or B would silently replace A."""
+    admitted_a = admit_source_via_operator_attestation(
+        registry=registry, source_identifier="SOURCE_A", operator_name="operator_a", attested_at="2026-10-06T00:00:00Z",
+        version="v1", publication_date="2024-01-01", coverage_start="2024-01-01", coverage_end="2024-01-31",
+        market="US_EQUITIES", timezone="America/New_York", raw_content=_RAW_FIXTURE,
+    )
+    admitted_b = admit_source_via_operator_attestation(
+        registry=registry, source_identifier="SOURCE_B", operator_name="operator_b", attested_at="2026-10-06T00:00:00Z",
+        version="v1", publication_date="2024-01-01", coverage_start="2024-01-01", coverage_end="2024-12-31",
+        market="US_EQUITIES", timezone="America/New_York", raw_content=_RAW_FIXTURE,
+    )
+    # Same raw text -> same artifact_digest, but DIFFERENT admission_id.
+    assert admitted_a.artifact_digest == admitted_b.artifact_digest
+    assert admitted_a.admission_id != admitted_b.admission_id
+    # BOTH snapshots are retained -- resolving A's own identity still
+    # returns A, not B, even after B was admitted.
+    assert registry.resolve(admitted_a.admission_id) is admitted_a
+    assert registry.resolve(admitted_b.admission_id) is admitted_b
+    assert registry.resolve(admitted_a.admission_id).coverage_end == "2024-01-31"
+    assert registry.resolve(admitted_b.admission_id).coverage_end == "2024-12-31"
+
+
+def test_repeating_the_identical_admission_is_idempotent(registry):
+    """The exact same admission call, repeated verbatim, must succeed
+    both times and resolve to an equal snapshot -- never raise, never
+    create a second, divergent entry."""
+    kwargs = dict(
+        registry=registry, source_identifier="SOURCE_A", operator_name="operator_a", attested_at="2026-10-06T00:00:00Z",
+        version="v1", publication_date="2024-01-01", coverage_start="2024-01-01", coverage_end="2024-01-31",
+        market="US_EQUITIES", timezone="America/New_York", raw_content=_RAW_FIXTURE,
+    )
+    admitted_first = admit_source_via_operator_attestation(**kwargs)
+    admitted_second = admit_source_via_operator_attestation(**kwargs)
+    assert admitted_first.admission_id == admitted_second.admission_id
+    assert admitted_first == admitted_second
+    assert registry.resolve(admitted_first.admission_id) == admitted_first

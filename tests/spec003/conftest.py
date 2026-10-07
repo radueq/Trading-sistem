@@ -116,7 +116,7 @@ def formal_calendar_registry(formal_calendar):
     )
     registry = CalendarRegistry()
     registry.register_verified(
-        formal_calendar, admission_registry, admitted.artifact_digest, verified_by="radu", verified_at="2026-10-06T00:00:00Z",
+        formal_calendar, admission_registry, admitted.admission_id, verified_by="radu", verified_at="2026-10-06T00:00:00Z",
     )
     return registry
 

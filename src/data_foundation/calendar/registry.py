@@ -30,7 +30,13 @@ admitted source from THAT registry rather than accepting one directly
 (GPT review, Stage 2 second changes-required round -- a directly-
 constructed `AdmittedCalendarSource`, however internally
 self-consistent, is never evidence that it actually passed Step 0's
-own admission rules).
+own admission rules). `admission_id` identifies the admission DECISION,
+not merely the raw artifact text (GPT review, Stage 2 THIRD
+changes-required round -- see `admission.py`'s own module docstring:
+`artifact_digest` alone let two differently-admitted uses of the same
+text collide in the registry). `CalendarVerificationRecord` now pins
+BOTH: `source_artifact_digest` (the text) and `admission_id` (the
+decision actually used).
 
 `build_trading_calendar()` (`contract.py`) is NOT restricted by any of
 this -- it remains the free, unrestricted constructor it always was.
@@ -111,10 +117,15 @@ class CalendarVerificationRecord:
     """The explicit link a bare `TradingCalendar` object can never carry
     on its own: WHICH calendar (by content-address), verified against
     WHICH source artifact (by digest), by WHICH method version, by WHOM,
-    WHEN."""
+    WHEN. `admission_id` additionally pins WHICH admission DECISION was
+    actually used -- not merely which raw text (GPT review, Stage 2
+    THIRD changes-required round): `source_artifact_digest` alone
+    cannot distinguish two different admissions of the identical text
+    under different metadata."""
     calendar_id: str
     calendar_hash: str
     source_artifact_digest: str
+    admission_id: str
     verification_method_version: str
     verified_by: str
     verified_at: str
@@ -251,6 +262,7 @@ class CalendarRegistry:
         record = CalendarVerificationRecord(
             calendar_id=calendar.calendar_id, calendar_hash=calendar.calendar_hash,
             source_artifact_digest=admitted_source.artifact_digest,
+            admission_id=admitted_source.admission_id,
             verification_method_version=verification_method_version,
             verified_by=verified_by, verified_at=verified_at,
         )

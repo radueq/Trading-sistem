@@ -3,6 +3,23 @@ registration contract (joint remediation design 003+004, 2026-10-04,
 section 2; decision registry B1/B3, revision 5-6; authorized 2026-10-06
 as part of Stage 2).
 
+`admission_id` vs. `artifact_digest` (GPT review, Stage 2 THIRD
+changes-required round): `artifact_digest` identifies ONLY the raw
+text. The SAME text can be legitimately admitted more than once, under
+different metadata -- a different source, operator, coverage window --
+and `artifact_digest` alone cannot tell those decisions apart. GPT's
+own reproduction: admission A (text X, source A, coverage to
+2024-01-31) and admission B (the SAME text X, source B, coverage to
+2024-12-31) both succeeded, but because `AdmissionRegistry` keyed its
+entries by `artifact_digest` alone, admission B silently overwrote
+admission A's own retained snapshot -- resolving A's own identity
+returned B's metadata instead. `admission_id` (`_compute_admission_id()`
+below) binds the digest to every field that distinguishes one admission
+DECISION from another -- source, method, version, publication,
+coverage, market, timezone, attestation -- so two admissions of the
+same text with different metadata get different identities, both
+retained, while the exact same admission repeated is idempotent.
+
 The gap this closes: comparing a calendar candidate against an artifact
 supplied by the SAME caller only proves the two agree with each other,
 never that the artifact itself is an authentic source. Before any
@@ -45,14 +62,26 @@ class CalendarSourceNotAdmittedError(ValueError):
     pass
 
 
+class AdmissionIdentityCollisionError(ValueError):
+    """Raised only if two DIFFERENT admitted payloads ever compute the
+    SAME `admission_id` (an sha256 collision across full admission
+    metadata) -- expected never to actually happen; this is a refusal
+    to silently overwrite, not a real operational path."""
+    pass
+
+
 @dataclass(frozen=True)
 class AdmittedCalendarSource:
     """The retained record of ONE admission decision: the source's own
     identifier, version/publication date, declared coverage interval,
     market/timezone, the RAW artifact content (verbatim, for later
-    audit/re-derivation), and the artifact's own content digest
-    (`sha256`, computed HERE from `raw_content`, never caller-supplied --
-    so the digest always genuinely corresponds to what was retained)."""
+    audit/re-derivation), the artifact's own content digest (`sha256`,
+    computed HERE from `raw_content`, never caller-supplied -- so the
+    digest always genuinely corresponds to what was retained), and
+    `admission_id` -- the identity of THIS admission decision, distinct
+    from `artifact_digest` (see module docstring): two admissions of
+    the identical text under different metadata get different
+    `admission_id`s."""
     source_identifier: str
     admission_method: str  # ADMISSION_METHOD_APPROVED_PROVIDER | ADMISSION_METHOD_OPERATOR_ATTESTATION
     version: str
@@ -63,12 +92,31 @@ class AdmittedCalendarSource:
     timezone: str
     raw_content: str
     artifact_digest: str
+    admission_id: str
     attested_by: Optional[str] = None
     attested_at: Optional[str] = None
 
 
 def _digest(raw_content: str) -> str:
     return hashlib.sha256(raw_content.encode()).hexdigest()
+
+
+def _compute_admission_id(
+    *, artifact_digest: str, source_identifier: str, admission_method: str, version: str,
+    publication_date: str, coverage_start: str, coverage_end: str, market: str, timezone: str,
+    attested_by: Optional[str], attested_at: Optional[str],
+) -> str:
+    """The admission DECISION's own identity -- the digest plus every
+    field that distinguishes one admission from another. Computed here,
+    the same way every other identity in this project is (content-
+    addressed, never caller-supplied), so the exact same admission
+    repeated is idempotent (same inputs -> same id), while a different
+    admission of the same text is a different id."""
+    canonical = "\x1f".join([
+        artifact_digest, source_identifier, admission_method, version, publication_date,
+        coverage_start, coverage_end, market, timezone, attested_by or "", attested_at or "",
+    ])
+    return hashlib.sha256(canonical.encode()).hexdigest()
 
 
 class AdmissionRegistry:
@@ -87,12 +135,17 @@ class AdmissionRegistry:
     Written to ONLY by `admit_source_via_approved_provider()`/
     `admit_source_via_operator_attestation()` below, each of which
     enforces its own admission rule BEFORE the artifact is ever
-    retained here. Resolved by `admission_id` (the artifact's own
-    `sha256` digest -- content-addressed, same discipline as every
-    other identity in this project): a `register_verified()` caller
-    supplies an `admission_id`, never the raw object, so there is no
-    path into the calendar gate for an artifact that did not actually
-    pass through admission."""
+    retained here. Resolved by `admission_id` -- NOT the artifact's
+    bare `sha256` digest (GPT review, Stage 2 THIRD changes-required
+    round: keying by the raw-text digest alone let a second,
+    differently-admitted use of the SAME text silently replace an
+    earlier admission's retained snapshot; see module docstring).
+    `admission_id` binds the digest to the full admission metadata, so
+    a `register_verified()` caller supplying it gets back exactly the
+    admission decision it names, never a different one that happens to
+    share the same underlying text; and there is still no path into
+    the calendar gate for an artifact that did not actually pass
+    through admission."""
 
     def __init__(self) -> None:
         self._entries: dict[str, AdmittedCalendarSource] = {}
@@ -110,12 +163,25 @@ class AdmissionRegistry:
 
     def _record(self, admitted: AdmittedCalendarSource) -> str:
         """Internal -- called only by the two admit_* functions below,
-        each of which has already enforced its own admission rule by
-        the time this runs. Never call this directly with a
-        hand-built `AdmittedCalendarSource`; doing so is exactly the
-        bypass this registry exists to close."""
-        self._entries[admitted.artifact_digest] = admitted
-        return admitted.artifact_digest
+        each of which has already enforced its own admission rule and
+        computed `admitted.admission_id` from the full admission
+        metadata, not merely the artifact's own digest. Two admissions
+        that land on the SAME `admission_id` are, by construction,
+        admissions of identical content under identical metadata --
+        recording the same one twice is a harmless no-op (idempotent).
+        Two DIFFERENT payloads landing on the same id would be an
+        sha256 collision across that full metadata, never expected in
+        practice; refused outright rather than silently overwritten,
+        since this registry's whole purpose is to never let one
+        admission's retained snapshot replace another's."""
+        existing = self._entries.get(admitted.admission_id)
+        if existing is not None and existing != admitted:
+            raise AdmissionIdentityCollisionError(
+                f"admission_id={admitted.admission_id!r} already holds a DIFFERENT admitted "
+                f"snapshot -- refusing to overwrite it"
+            )
+        self._entries[admitted.admission_id] = admitted
+        return admitted.admission_id
 
 
 def admit_source_via_approved_provider(
@@ -140,12 +206,19 @@ def admit_source_via_approved_provider(
             f"source_identifier={source_identifier!r} is not on the approved-provider allow-list "
             f"-- admission refused before any session-date comparison is attempted"
         )
+    digest = _digest(raw_content)
+    admission_id = _compute_admission_id(
+        artifact_digest=digest, source_identifier=source_identifier,
+        admission_method=ADMISSION_METHOD_APPROVED_PROVIDER, version=version,
+        publication_date=publication_date, coverage_start=coverage_start, coverage_end=coverage_end,
+        market=market, timezone=timezone, attested_by=None, attested_at=None,
+    )
     admitted = AdmittedCalendarSource(
         source_identifier=source_identifier, admission_method=ADMISSION_METHOD_APPROVED_PROVIDER,
         version=version, publication_date=publication_date,
         coverage_start=coverage_start, coverage_end=coverage_end,
-        market=market, timezone=timezone, raw_content=raw_content, artifact_digest=_digest(raw_content),
-        attested_by=None, attested_at=None,
+        market=market, timezone=timezone, raw_content=raw_content, artifact_digest=digest,
+        admission_id=admission_id, attested_by=None, attested_at=None,
     )
     registry._record(admitted)
     return admitted
@@ -169,12 +242,19 @@ def admit_source_via_operator_attestation(
         raise CalendarSourceNotAdmittedError(
             "operator attestation requires an explicit attestation timestamp -- admission refused"
         )
+    digest = _digest(raw_content)
+    admission_id = _compute_admission_id(
+        artifact_digest=digest, source_identifier=source_identifier,
+        admission_method=ADMISSION_METHOD_OPERATOR_ATTESTATION, version=version,
+        publication_date=publication_date, coverage_start=coverage_start, coverage_end=coverage_end,
+        market=market, timezone=timezone, attested_by=operator_name, attested_at=attested_at,
+    )
     admitted = AdmittedCalendarSource(
         source_identifier=source_identifier, admission_method=ADMISSION_METHOD_OPERATOR_ATTESTATION,
         version=version, publication_date=publication_date,
         coverage_start=coverage_start, coverage_end=coverage_end,
-        market=market, timezone=timezone, raw_content=raw_content, artifact_digest=_digest(raw_content),
-        attested_by=operator_name, attested_at=attested_at,
+        market=market, timezone=timezone, raw_content=raw_content, artifact_digest=digest,
+        admission_id=admission_id, attested_by=operator_name, attested_at=attested_at,
     )
     registry._record(admitted)
     return admitted

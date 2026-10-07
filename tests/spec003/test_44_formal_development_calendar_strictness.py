@@ -64,7 +64,7 @@ def _admit_and_register(registry, calendar):
         coverage_end=calendar.coverage_end, market=calendar.market, timezone=calendar.timezone, raw_content=raw,
     )
     registry.register_verified(
-        calendar, admission_registry, admitted.artifact_digest, verified_by="radu", verified_at="2026-10-06T00:00:00Z",
+        calendar, admission_registry, admitted.admission_id, verified_by="radu", verified_at="2026-10-06T00:00:00Z",
     )
 
 

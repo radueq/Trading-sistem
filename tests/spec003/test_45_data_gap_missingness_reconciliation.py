@@ -74,7 +74,7 @@ def test_data_gap_outcomes_are_counted_and_reconcile_through_the_engine(reduced_
     )
     registry = CalendarRegistry()
     registry.register_verified(
-        calendar, admission_registry, admitted.artifact_digest, verified_by="radu", verified_at="2026-10-06T00:00:00Z",
+        calendar, admission_registry, admitted.admission_id, verified_by="radu", verified_at="2026-10-06T00:00:00Z",
     )
 
     # Empty conditions -- matches EVERY Discovery observation regardless
