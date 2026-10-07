@@ -1,14 +1,35 @@
-# Implementation Plan -- Spec #003 + Spec #004 remediation (2026-10-05/06, revision 7)
+# Implementation Plan -- Spec #003 + Spec #004 remediation (2026-10-05/06/07, revision 8)
 
-**Status: Stage 1 IMPLEMENTED and ACCEPTED. Stage 2 IMPLEMENTED WITH
-THREE ROUNDS OF CORRECTIONS, awaiting GPT's re-review -- NOT yet
-accepted. Stage 3 onward: NOT AUTHORIZED.** Built from `docs/joint_
+**Status: Stage 1 IMPLEMENTED and ACCEPTED. Stage 2 (corrected
+admission/registry mechanism, calendar tested with fixtures) ACCEPTED
+in that scope. Minimal `#003` v2 -> `#005` compatibility delta
+IMPLEMENTED, delivered for GPT's next review -- NOT yet itself
+reviewed. Stage 3 onward: NOT AUTHORIZED.** Built from `docs/joint_
 remediation_design_003_004_2026-10-04.md` (revision 11, closed
 calendar contract included) and `docs/decision_sheet_003_004_2026-10-
-05.md` (revision 10, the Technical Decision Registry). **Precedence:
+05.md` (revision 11, the Technical Decision Registry). **Precedence:
 the registry's own decisions replace revision 11's open alternatives;
 this plan only sequences already-made decisions, it does not re-decide
 anything.**
+
+**Revision 8 records GPT's own ACCEPTED verdict on Stage 2's
+third-corrected delivery (`fd992db`) and the separately-authorized
+minimal `#003` v2 -> `#005` compatibility delta (Radu's own
+authorization, 2026-10-07), implemented at `483761a` -- it does not
+re-sequence or re-decide anything.** GPT independently confirmed the
+admission-identity fix (revision 7) by execution: distinct `admission_
+id`s for the same text under different metadata, both snapshots
+retained, idempotent repeats, the calendar record tied to the exact
+admission used, an unknown identity refused. Stage 2 is now ACCEPTED
+in that scope. GPT also raised a non-blocking follow-up on the same
+delivery (`_compute_admission_id()`'s separator-boundary serialization)
+and recommended the `#005` compatibility delta before any further
+stage -- both addressed in this same round: canonical-JSON
+serialization for `admission_id`, and `backtest/provenance/
+evaluation_run.py`'s `verify_evaluation_run_identity()` now dispatches
+by `run_id_scheme_version` (legacy recipe unchanged for `None`; a new
+14-field v2 recipe for `"v2"`; no fallback between them) -- see the
+new section below for exact detail.
 
 **Revision 7 records GPT's own THIRD CHANGES REQUIRED verdict, on
 Stage 2's twice-corrected delivery (`0574171`/`0bdabe5`), and the
@@ -177,15 +198,28 @@ verdict text.
 
 ## Stage 2 -- Calendar foundation AND the run-identity fingerprint change (#003, Spec #005 boundary)
 
-**IMPLEMENTED WITH THREE ROUNDS OF CORRECTIONS, awaiting GPT's re-review
--- NOT yet accepted. Radu's explicit authorization, 2026-10-06, Stage
-2 only. First delivery: commit `7fcf78d`. GPT's own verdict: CHANGES
-REQUIRED (seven defects, listed below). First corrections: commit
-`8877551`. GPT's own verdict on THAT delivery: STILL CHANGES REQUIRED
-(two further defects, listed below). Second corrections: commit
-`0bdabe5`. GPT's own verdict on THAT delivery: the `effective_as_of`
-fix ACCEPTED and CLOSED; one further admission-identity defect found.
-Third corrections: commit `fd992db`. All on `claude/spec004-audit`.**
+**ACCEPTED, in scope: the corrected admission/registry mechanism and
+the calendar mechanism tested with fixtures (GPT's own verdict on
+commit `fd992db`, relayed by Radu). Radu's explicit authorization,
+2026-10-06, Stage 2 only. First delivery: commit `7fcf78d`. GPT's own
+verdict: CHANGES REQUIRED (seven defects, listed below). First
+corrections: commit `8877551`. GPT's own verdict on THAT delivery:
+STILL CHANGES REQUIRED (two further defects, listed below). Second
+corrections: commit `0bdabe5`. GPT's own verdict on THAT delivery: the
+`effective_as_of` fix ACCEPTED and CLOSED; one further admission-
+identity defect found. Third corrections: commit `fd992db`. **GPT's
+own verdict on THAT delivery: ACCEPTED**, confirmed by independent
+execution (same artifact with different metadata produces distinct
+`admission_id`s; both snapshots remain accessible and unchanged;
+repeating the same admission is idempotent; `CalendarVerificationRecord.
+admission_id` points to the exact admission used; an unknown identity
+is refused). All on `claude/spec004-audit`. A non-blocking follow-up
+GPT raised on this same delivery -- `_compute_admission_id()`'s
+serialization -- is fixed under the separate delta below, not a
+reopening of this acceptance. **What ACCEPTED does NOT cover:** `#003`
+v2 output's compatibility with `#005`'s own identity verifier (stayed
+OPEN until the delta below); a real, genuinely-attested calendar for
+actual formal runs (B3, still operationally blocked); any other stage.**
 
 **Seven corrections applied this round, per GPT's own changes-required
 review -- none of these are new decisions, all are fixes to already-
@@ -403,18 +437,98 @@ listed as not done, now IS done):** the calendar-aware `compute_
 forward_outcome()` path now DOES drive every forward-return
 computation `run_evaluation()` performs when a calendar is resolved
 (fix #2 above) -- this is no longer a gap. **The `backtest/provenance/
-evaluation_run.py` `LEGACY_RUN_ID_FIELDS` consequence (registry I1) is
-now demonstrated by a real test (fix #7), but the fix itself is still
-NOT implemented** -- the minimal delta: a `LEGACY_RUN_ID_FIELDS_V2`
-constant (the current 8 fields plus `security_ids`, `benchmark_
-security_id`, `data_as_of`, `horizons`, `calendar_id`, `run_id_scheme_
-version`) and a version-dispatching `recompute_legacy_evaluation_
-run_id()` (historical registries via the old recipe, `run_id_scheme_
-version == "v2"` via the new one, anything else an explicit error),
-plus #005-side regressions for each case. This delta does not require
-#005 to adopt `CalendarRegistry` and does not reopen Batch 3; it needs
-its own separate authorization before any code in `src/backtest/`
-changes.
+evaluation_run.py` `LEGACY_RUN_ID_FIELDS` consequence (registry I1),
+previously demonstrated by a real test (fix #7) but left unfixed, is
+NOW IMPLEMENTED -- see the `#003` v2 -> `#005` compatibility delta
+section below, separately authorized 2026-10-07 and delivered at
+`483761a`.** This delta did not require `#005` to adopt
+`CalendarRegistry` and did not reopen Batch 3 -- both remain exactly
+as stated above.
+
+---
+
+## Minimal `#003` v2 -> `#005` compatibility delta
+
+**IMPLEMENTED, commit `483761a` on `claude/spec004-audit`, delivered
+for GPT's next review -- NOT yet itself reviewed. Radu's explicit
+authorization, 2026-10-07, scoped to EXACTLY this delta: does NOT
+resume Batch 3, does NOT adopt `CalendarRegistry` into `#005`, does NOT
+authorize any other stage.**
+
+- `backtest/provenance/evaluation_run.py`'s `verify_evaluation_run_
+  identity()` now dispatches by the registry's own `run_id_scheme_
+  version`, rather than recomputing only the legacy 8-field recipe:
+  - `None` (every registry predating the S2 fingerprint change): the
+    ORIGINAL 8-field legacy recipe (`LEGACY_RUN_ID_FIELDS`), UNCHANGED
+    -- every historical identity verifies exactly as before, declared
+    explicitly per Radu's own instruction, not silently reinterpreted.
+  - `"v2"` (registry I1's own field set): a NEW 14-field recipe
+    (`V2_RUN_ID_FIELDS` = the 8 legacy fields plus `security_ids`,
+    `benchmark_security_id`, `data_as_of`, `horizons`, `calendar_id`,
+    `run_id_scheme_version`), reconstructed by `recompute_v2_
+    evaluation_run_id()` EXACTLY as `run_evaluation()` itself feeds
+    `build_run_id()` -- including re-sorting `horizons`, which the
+    registry retains in its original, possibly-unsorted input order
+    (`EvaluationRunRegistry.horizons` vs. the sorted tuple actually
+    hashed). A registry claiming `"v2"` with a required field
+    (`security_ids`, `benchmark_security_id`, `data_as_of`) still at
+    its pre-Stage-2 backward-compat default is refused BEFORE any hash
+    comparison, with an explicit "required field" error -- `calendar_
+    id=None` is deliberately NOT treated as missing, since a genuine
+    v2 run legitimately carries it (EXPLORATORY mode without a
+    resolved calendar).
+  - anything else: refused outright, with NO fallback to the legacy
+    recipe -- a v2 claim that fails its own check is never re-tried
+    against the 8-field one (proven by a dedicated regression: a v2-
+    scheme registry whose id happens to match the LEGACY recipe is
+    still refused).
+- `data_foundation/calendar/admission.py`'s `_compute_admission_id()`
+  now serializes as canonical JSON (sorted keys, no whitespace)
+  instead of `"\x1f".join()` -- a non-blocking follow-up GPT raised on
+  commit `fd992db`: a field value containing the `\x1f` separator could
+  shift the apparent field boundary, producing the SAME preimage for
+  two DIFFERENT field splits (not an sha256 collision -- a
+  serialization ambiguity; `AdmissionRegistry._record()`'s own equality
+  check already refused to let this overwrite an existing entry, so it
+  was never a live bypass). **Effect on existing identities, declared
+  explicitly:** every `admission_id` value changes versus the prior
+  scheme, for every input, not only the colliding ones -- the preimage
+  format itself changed. `AdmissionRegistry` is in-memory, per-run
+  only, never persisted anywhere, so nothing stored is invalidated.
+
+**Acceptance criteria -- met.** A REAL `run_evaluation()` v2 output is
+accepted by `#005`'s own identity check (`tests/spec003/test_46_v2_
+run_id_accepted_by_005_identity_check.py`, rewritten from its prior
+form, which by design asserted the opposite before this
+authorization); every historical identity still verifies unchanged
+(`tests/spec005/test_01_legacy_hash_recompute.py`, untouched, still
+passing); the exact separator-collision case GPT reproduced now
+produces distinct `admission_id`s (`tests/data_foundation/test_01`'s
+own new regression).
+
+**Verified: `tests/spec005/test_41_v2_evaluation_run_identity.py` (11
+new tests: genuine v2 registry accepted; tamper detection on
+`security_ids`/`calendar_id`; only-the-14-fields-affect-the-hash;
+horizons-sorted-before-hashing, with a naive-unsorted-recompute proof
+that the sort step is load-bearing; `calendar_id=None` accepted as
+legitimate; missing `security_ids`/`data_as_of` each refused before
+any hash check; an unknown `run_id_scheme_version` refused outright;
+a v2-scheme registry whose id matches the legacy recipe still refused,
+proving no silent fallback). `tests/spec003/test_46_...py` (rewritten,
+1 test: a real `run_evaluation()` v2 output now accepted).
+`tests/data_foundation/test_01_calendar_admission.py` (+1: the exact
+separator-collision case, now resolved). Full project suite (`pytest
+tests/`): 818 passed, 1 skipped (pre-existing, unrelated) -- zero
+regression from the pre-delta baseline of 806. `tests/spec005/` now
+430 passed (was 419 -- the +11 are this delta's own authorized
+`#005`-side tests).
+
+**Explicitly NOT done by this delta:** `#005`'s own adoption of
+`CalendarRegistry` (B5, separate, still not authorized); Batch 3
+(unaffected, not reopened); a real, genuinely-attested `OFFICIAL_
+VERIFIED` calendar for actual formal runs (B3's real-source gap,
+unchanged); the G2 out-of-sample confirmation protocol (unscoped,
+unchanged); any stage beyond what is already authorized above.
 
 ---
 

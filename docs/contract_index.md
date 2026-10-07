@@ -853,6 +853,65 @@ is not itself the audit.
      from the `0bdabe5` baseline of 802; `tests/spec005/` unchanged at
      419 passed. #005 code itself untouched; no other stage begun; the
      Spec #005/Batch 3 pause is unchanged.
+
+     **GPT's own review of THAT corrected delivery: ACCEPTED, confirmed
+     by independent execution** (same artifact with different metadata
+     produces distinct `admission_id`s; both snapshots remain
+     accessible and unchanged; repeating the same admission is
+     idempotent; `CalendarVerificationRecord.admission_id` points to
+     the exact admission used; an unknown identity is refused). Stage
+     2's corrected admission/registry mechanism and the calendar
+     mechanism tested with fixtures are ACCEPTED in that scope.
+     `effective_as_of` stays closed. Stage 1/J1 stays ACCEPTED. `#003`
+     v2 output's compatibility with `#005`'s own identity verifier
+     stayed OPEN at this point -- Stage 2 is not a complete, functional
+     `#003`->`#005` integration by itself. GPT also raised one
+     non-blocking follow-up on the SAME delivery: `_compute_admission_
+     id()`'s `"\x1f".join()` serialization did not forbid the separator
+     inside a field, so two different field splits could produce the
+     same preimage (not an sha256 collision -- `AdmissionRegistry.
+     _record()`'s own equality check already refused to let this
+     overwrite an existing entry, so it was never a live bypass).
+
+     **Radu explicitly authorized, 2026-10-07, the minimal `#003` v2 ->
+     `#005` compatibility delta GPT recommended, scoped to EXACTLY this
+     delta -- does NOT resume Batch 3, does NOT adopt `CalendarRegistry`
+     into `#005`, does NOT authorize any other stage. Implemented at
+     commit `483761a`, delivered for GPT's next review -- NOT yet
+     itself reviewed.** `backtest/provenance/evaluation_run.py`'s
+     `verify_evaluation_run_identity()` now dispatches by the
+     registry's own `run_id_scheme_version`: `None` -> the ORIGINAL
+     8-field legacy recipe, UNCHANGED -- every historical identity
+     verifies exactly as before; `"v2"` -> a NEW 14-field recipe (the 8
+     legacy fields plus `security_ids`, `benchmark_security_id`,
+     `data_as_of`, `horizons`, `calendar_id`, `run_id_scheme_version`),
+     reconstructed EXACTLY as `run_evaluation()` itself feeds
+     `build_run_id()` (including re-sorting `horizons`, which the
+     registry retains unsorted); a required v2 field still at its
+     pre-Stage-2 default is refused before any hash comparison
+     (`calendar_id=None` is explicitly NOT treated as missing); anything
+     else -> refused outright, with NO fallback to the legacy recipe.
+     Also fixed, same delivery: `_compute_admission_id()` now serializes
+     as canonical JSON (sorted keys, no whitespace), closing the
+     separator-boundary ambiguity GPT flagged -- every `admission_id`
+     value changes versus the prior scheme, for every input, declared
+     explicitly; `AdmissionRegistry` is in-memory, per-run only, never
+     persisted, so nothing stored is invalidated. 12 new tests
+     (`tests/spec005/test_41_...py`, 11: genuine v2 registry accepted,
+     tamper detection, only-the-14-fields-affect-the-hash, horizons-
+     sorted-before-hashing, `calendar_id=None` accepted, missing
+     `security_ids`/`data_as_of` each refused, unknown scheme refused,
+     no-fallback-to-legacy proof; `tests/data_foundation/test_01`, +1:
+     GPT's exact separator-collision case, now resolved).
+     `tests/spec003/test_46_...py` rewritten: a REAL `run_evaluation()`
+     v2 output is now accepted by `#005`'s own identity check
+     (previously asserted the opposite, by design, before this
+     authorization). Full project suite: 818 passed, 1 skipped
+     (pre-existing, unrelated) -- zero regression from the `fd992db`
+     baseline of 806; `tests/spec005/` now 430 passed (was 419 -- the
+     +11 are this delta's own authorized `#005`-side tests). No other
+     stage begun; `#005`'s own adoption of `CalendarRegistry` (B5) and
+     the real-calendar gap (B3) remain unchanged.
    - **Spec #004: two rounds done (2026-10-04).** Round 1 (Claude
      alone): a fresh, high-effort independent re-verification pass,
      requested by Radu specifically to finish before the joint F1-F6
