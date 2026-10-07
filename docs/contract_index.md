@@ -912,6 +912,66 @@ is not itself the audit.
      +11 are this delta's own authorized `#005`-side tests). No other
      stage begun; `#005`'s own adoption of `CalendarRegistry` (B5) and
      the real-calendar gap (B3) remain unchanged.
+
+     **GPT's own verdict on the `483761a` delivery, deferred to the
+     next authorized update and recorded HERE: ACCEPTED**, confirmed
+     by independent execution (legacy verification unchanged; v2
+     verification correct including unsorted-horizons handling;
+     `calendar_id=None` accepted as legitimate; tampering any single
+     field with the id unchanged rejected; missing required fields and
+     an unknown scheme both refused; a v2-scheme claim with a legacy-
+     shaped id gets no fallback; the two field-splits that previously
+     shared a preimage under the separator scheme now produce distinct
+     `admission_id`s, both admissions retained). The `#003` v2/`#005`
+     identity incompatibility is now CLOSED -- scoped to the verifier
+     and the tested path, not the whole backtesting pipeline or
+     strategy performance.
+
+     **Radu explicitly authorized, 2026-10-07, Stage 3 -- config
+     identity infrastructure -- per the already-accepted plan's own
+     section 7 design, applied to Discovery, Evaluation, Hypothesis's
+     preregistration gate, AND Research Queue. Implemented at commit
+     `8650f17`, delivered for GPT's next review -- NOT yet itself
+     reviewed.** New shared module `src/config_identity/registry.py`:
+     `freeze()`/`normalize_for_comparison()` (full recursive freeze --
+     `dict` -> `MappingProxyType` of recursively-frozen values,
+     `list`/`tuple` -> `tuple` of recursively-frozen elements, never
+     `MappingProxyType` alone); `RegisteredConfigVersion.verify()` (two
+     SEPARATE checks -- label, structural-equality content, both sides
+     normalized identically -- neither substitutes for the other);
+     `ConfigRegistry.register_or_verify()` (first call for a domain
+     registers it as the operation's own pinned baseline; a later call
+     sharing the registry verifies its candidate against THAT
+     baseline, raising before any computation on a mismatch).
+     `config_version` itself is never recomputed -- always the
+     unchanged loader's own output, Discovery's own multi-source
+     combination rule preserved byte-for-byte. Wiring, each via a NEW
+     optional `config_registry` parameter defaulting to `None` (every
+     pre-Stage-3 call site unaffected): `compute_discovery_
+     observations()`/`run_discovery()` register-or-verify the
+     "discovery" domain; `run_evaluation()` registers-or-verifies BOTH
+     "discovery" and "evaluation" once at the top, reused by its own
+     Discovery calls; `preregister_hypothesis()` now performs a
+     MANDATORY (unconditional) live re-read of `hypothesis.yaml` on
+     EVERY call -- decision registry C1 -- verifying the caller's
+     `hypothesis_config` against it before any other check (its own
+     type changed `dict` -> `HypothesisConfig`, `persistence.py` and 5
+     test call sites updated, zero behavior change since every one
+     already supplied a genuine config); `build_research_queue()`
+     registers-or-verifies the "hypothesis" domain when
+     `config_registry` is supplied, leaving its own TEST 50's
+     deliberately-different-config scenario (no `config_registry`)
+     unaffected. 31 new tests across `tests/config_identity/test_01`
+     (12, the shared mechanism itself), `tests/spec002/test_25` (5,
+     real Discovery consumer), `tests/spec003/test_48` (4, real
+     Evaluation consumer), `tests/spec004/test_74` (6, real
+     preregistration-gate consumer incl. the mandatory-live-re-read
+     case) and `tests/spec004/test_75` (4, real Research Queue
+     consumer). Full project suite: 849 passed, 1 skipped
+     (pre-existing, unrelated) -- zero regression from the `483761a`
+     baseline of 818. No other stage begun; `#005`'s own adoption of
+     `CalendarRegistry` (B5), the real-calendar gap (B3), and the Spec
+     #005/Batch 3 pause remain unchanged.
    - **Spec #004: two rounds done (2026-10-04).** Round 1 (Claude
      alone): a fresh, high-effort independent re-verification pass,
      requested by Radu specifically to finish before the joint F1-F6

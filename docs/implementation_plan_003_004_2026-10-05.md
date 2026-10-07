@@ -1,16 +1,36 @@
-# Implementation Plan -- Spec #003 + Spec #004 remediation (2026-10-05/06/07, revision 8)
+# Implementation Plan -- Spec #003 + Spec #004 remediation (2026-10-05/06/07, revision 9)
 
 **Status: Stage 1 IMPLEMENTED and ACCEPTED. Stage 2 (corrected
 admission/registry mechanism, calendar tested with fixtures) ACCEPTED
 in that scope. Minimal `#003` v2 -> `#005` compatibility delta
-IMPLEMENTED, delivered for GPT's next review -- NOT yet itself
-reviewed. Stage 3 onward: NOT AUTHORIZED.** Built from `docs/joint_
-remediation_design_003_004_2026-10-04.md` (revision 11, closed
-calendar contract included) and `docs/decision_sheet_003_004_2026-10-
-05.md` (revision 11, the Technical Decision Registry). **Precedence:
-the registry's own decisions replace revision 11's open alternatives;
-this plan only sequences already-made decisions, it does not re-decide
-anything.**
+ACCEPTED (verdict deferred to this revision, per GPT's own
+instruction). Stage 3 (config identity infrastructure) IMPLEMENTED,
+delivered for GPT's next review -- NOT yet itself reviewed. Stage 4
+onward: NOT AUTHORIZED.** Built from `docs/joint_remediation_design_
+003_004_2026-10-04.md` (revision 11, closed calendar contract
+included, section 7 config identity) and `docs/decision_sheet_003_
+004_2026-10-05.md` (revision 12, the Technical Decision Registry).
+**Precedence: the registry's own decisions replace revision 11's open
+alternatives; this plan only sequences already-made decisions, it does
+not re-decide anything.**
+
+**Revision 9 records the verdict GPT deferred to "the next authorized
+update" (the `#003` v2 -> `#005` compatibility delta, commit
+`483761a`: ACCEPTED, confirmed by independent execution -- legacy
+verification unchanged, v2 verification correct including unsorted-
+horizons handling, `calendar_id=None` accepted, tampering in any single
+field rejected, missing required fields and unknown schemes rejected,
+no fallback to the legacy recipe for a failed v2 claim, and the
+canonical-JSON `admission_id` serialization fix also ACCEPTED -- the
+`#003` v2/`#005` identity incompatibility is now CLOSED, scoped to the
+verifier and the tested path, not the whole backtesting pipeline or
+strategy performance), AND Stage 3's own delivery -- Radu's explicit
+authorization, 2026-10-07, on the already-accepted plan's own section
+7 design: config identity infrastructure (`RegisteredConfigVersion`),
+applied to Discovery, Evaluation, Hypothesis's preregistration gate,
+and Research Queue, implemented at commit `8650f17`. See the new Stage
+3 section below for exact detail -- this revision does not re-sequence
+or re-decide anything else.**
 
 **Revision 8 records GPT's own ACCEPTED verdict on Stage 2's
 third-corrected delivery (`fd992db`) and the separately-authorized
@@ -534,6 +554,64 @@ unchanged); any stage beyond what is already authorized above.
 
 ## Stage 3 -- Config identity infrastructure (shared #003 + #004)
 
+**IMPLEMENTED, commit `8650f17` on `claude/spec004-audit`, delivered
+for GPT's next review -- NOT yet itself reviewed. Radu's explicit
+authorization, 2026-10-07, scoped to exactly this stage per the
+already-accepted plan below: applied to Discovery, Evaluation,
+Hypothesis's preregistration gate, AND Research Queue -- does NOT
+resume Batch 3, does NOT adopt `CalendarRegistry` into `#005`, does
+NOT authorize Stage 4 or any other stage.**
+
+New shared module `src/config_identity/registry.py`: `freeze()`/
+`normalize_for_comparison()` (full recursive freeze -- `dict` ->
+`MappingProxyType` of recursively-frozen values, `list`/`tuple` ->
+`tuple` of recursively-frozen elements, never `MappingProxyType` alone,
+which leaves a nested list mutable -- and the matching normalization
+used to compare a frozen snapshot against an unfrozen candidate);
+`RegisteredConfigVersion.verify()` (the two SEPARATE checks -- label,
+structural-equality content -- exactly as designed, neither
+substituting for the other); `ConfigRegistry.register_or_verify()`
+(the first call for a domain registers it as the operation's own
+pinned baseline; a later call sharing the same registry verifies its
+candidate against THAT baseline, raising before any computation on a
+mismatch). `config_version` itself is NEVER recomputed -- always the
+unchanged loader's own output, including Discovery's own multi-source
+`sha256("".join(raw_texts))[:12]` combination rule, preserved
+byte-for-byte.
+
+Wiring, each via a NEW, optional `config_registry` parameter
+defaulting to `None` (every pre-Stage-3 call site, including test
+fixtures that deliberately differ from the real on-disk YAML, is
+completely unaffected):
+- **Discovery**: `compute_discovery_observations()`/`run_discovery()`
+  register-or-verify the "discovery" domain, then consume exclusively
+  the frozen `DiscoveryConfig` rebuilt from it.
+- **Evaluation**: `run_evaluation()` registers-or-verifies BOTH
+  "discovery" and "evaluation" domains once at the top;
+  `_collect_observations()`'s own Discovery calls reuse the SAME
+  already-frozen `discovery_config`.
+- **Hypothesis's preregistration gate**: `preregister_hypothesis()`
+  now performs a MANDATORY (unconditional, matching C1's own
+  "mandatory," not opt-in) live re-read of `hypothesis.yaml` on EVERY
+  call, verifying the caller-supplied `hypothesis_config` against that
+  fresh read before any of the existing checks run;
+  `validate_for_preregistration()` then consumes exclusively this
+  freshly-verified, frozen snapshot. `hypothesis_config`'s own type
+  changed `dict` -> `HypothesisConfig` (its `config_version` is needed
+  for the label check) -- `persistence.py`'s `PersistentHypothesis
+  Registry.preregister()` and 5 call sites in `tests/spec004/` updated
+  to pass the object, not `.data`; zero behavior change for any of
+  them, since every one already supplied a genuinely-loaded config. An
+  OPTIONAL `config_registry` additionally catches a config that
+  changed since an EARLIER registration in the same workflow (e.g. at
+  proposal-validation time, sharing one `ConfigRegistry` instance), not
+  merely two in-memory copies taken at the same moment.
+- **Research Queue**: `build_research_queue()` registers-or-verifies
+  the "hypothesis" domain when `config_registry` is supplied -- TEST
+  50's own deliberately-different, self-consistent config scenario (no
+  `config_registry`) is unaffected, exactly as the acceptance criteria
+  below require.
+
 **Independent of Stage 2.** **Corrected this round: Finding 19/11's own
 text states "one `load_config()` call PER OPERATION" generically, not
 scoped to the preregistration gate alone -- this stage must wire the
@@ -566,6 +644,48 @@ preregistration gate's own discipline. Once verified, the operation
 uses EXCLUSIVELY the frozen, registered snapshot -- never a second,
 independently-loaded config object, for `build_research_queue()` any
 more than for the preregistration gate.
+
+**Acceptance criteria -- met.** Every regression required, verified
+through REAL consumers, not only the shared helper: a legitimate
+config (accepted); a correct-content-wrong-label object (rejected by
+the label check specifically); a correct-label-wrong-content object
+(rejected by the structural-equality check specifically, both sides
+normalized before comparing); a directly-constructed, inconsistent
+object (rejected, both checks firing); a nested modification (recursive
+freeze proven two levels deep, and proven to survive a source mutation
+after freezing); a config source changed after registration (rejected,
+including through the preregistration gate's own mandatory live
+re-read, simulated with a monkeypatched, later-changed disk read
+against an earlier, explicit registration). Historical identities are
+preserved exactly as the already-accepted contract requires --
+`config_version` is never reinterpreted or recomputed anywhere in this
+stage.
+
+**Verified: 31 new tests.** `tests/config_identity/test_01_registered_
+config_version.py` (12: the shared mechanism in isolation -- legitimate
+config, wrong-label/correct-content, correct-label/wrong-content,
+directly-constructed inconsistent object, freeze depth, mutation-after-
+freeze isolation, registry idempotency/source-changed-after-
+registration/independent domains). `tests/spec002/test_25_config_
+identity_gate.py` (5: real `run_discovery()`/`compute_discovery_
+observations()` consumers, plus a `config_registry=None` passthrough
+regression). `tests/spec003/test_48_config_identity_gate.py` (4: real
+`run_evaluation()` consumer, registering/verifying both `discovery_
+config` and `evaluation_config`). `tests/spec004/test_74_config_
+identity_gate.py` (6: real `preregister_hypothesis()` consumer,
+including the mandatory-live-re-read-catches-a-later-change case via
+monkeypatch). `tests/spec004/test_75_research_queue_config_identity_
+gate.py` (4: real `build_research_queue()` consumer, plus the
+TEST-50-is-unaffected regression). Full project suite (`pytest
+tests/`): **849 passed, 1 skipped** (pre-existing, unrelated) -- zero
+regression from the pre-Stage-3 baseline of 818.
+
+**Explicitly NOT done by this stage:** `#005`'s own adoption of
+`CalendarRegistry` (B5, separate, still not authorized); Batch 3
+(unaffected, not reopened); a real, genuinely-attested `OFFICIAL_
+VERIFIED` calendar for actual formal runs (B3's real-source gap,
+unchanged); the G2 out-of-sample confirmation protocol (unscoped,
+unchanged); Stage 4 onward (not authorized).
 
 ---
 
