@@ -1038,6 +1038,49 @@ is not itself the audit.
      real-calendar gap (B3), and the Spec #005/Batch 3 pause remain
      unchanged. Stage 1/J1, Stage 2, and the `#003` v2 -> `#005` delta
      stay ACCEPTED, unaffected by this correction.
+
+     **GPT's own review of the `955f482` delivery: Stage 3 -- CHANGES
+     REQUIRED once more. The four round-2 findings confirmed FIXED by
+     GPT's own independent execution; one further defect remained,
+     reproduced through the real `preregister_hypothesis()` gate.
+     CORRECTED this round -- delivered again for GPT's next review,
+     NOT yet accepted.** A draft built under config A, preregistered
+     while BOTH the caller-supplied `hypothesis_config` AND the live
+     file itself (simulated via monkeypatch) had already moved to a
+     genuinely different, self-consistent config B, with NO `config_
+     registry` shared to catch the drift -- was wrongly ACCEPTED, the
+     resulting hypothesis carrying `strategy_config_version=cfg_
+     e5e262fa1378` (A) while the gate had actually run under `cfg_
+     421c4254456b` (B). Checks (a) (candidate vs. fresh read) and (b)
+     (fresh read vs. an explicitly shared earlier registration) each
+     only prove a different kind of "honest right now" -- neither ties
+     the gate back to the SPECIFIC snapshot the draft itself was built
+     under. **Fixed:** a third, unconditional check (c) in `preregister_
+     hypothesis()`'s own Step -1 -- `draft.strategy_config_version`
+     (recorded on the draft at construction time, no new parameter
+     needed) must equal the active, verified config's own version; a
+     mismatch is refused before any of the existing checks and before
+     any registry write. Does NOT replace check (b), per GPT's own
+     instruction -- complementary: (c) uses the draft's own self-
+     declared anchor and needs no sharing at all; (b) catches drift
+     across calls that explicitly share one registry. Verification
+     discipline applied: the new check was temporarily removed,
+     confirmed the two tests depending on it exclusively (no shared
+     registry) FAIL -- including GPT's own exact reproduction -- while
+     the shared-registry variant still passes via mechanism (b) alone,
+     then the fix was restored. 4 new regressions in `tests/spec004/
+     test_74_config_identity_gate.py` (whose `_gate()` helper gained a
+     `draft_config` parameter, separate from `hypothesis_config`, so a
+     test can build the draft under one config and call the gate with
+     another): no initial context -> rejected; initial context A
+     shared -> rejected for the active-config change; A unchanged with
+     context A -> accepted (sanity); a draft whose recorded version
+     disagrees with the active snapshot -> rejected before any write
+     (`HypothesisRegistry.all_hypotheses() == ()` confirmed). Full
+     project suite: **863 passed, 1 skipped** (pre-existing, unrelated)
+     -- zero regression from the `955f482` baseline of 859. No other
+     stage begun. Stage 1/J1, Stage 2, and the `#003` v2 -> `#005`
+     delta stay ACCEPTED, unaffected.
    - **Spec #004: two rounds done (2026-10-04).** Round 1 (Claude
      alone): a fresh, high-effort independent re-verification pass,
      requested by Radu specifically to finish before the joint F1-F6

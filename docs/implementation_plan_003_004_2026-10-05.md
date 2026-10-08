@@ -1,18 +1,33 @@
-# Implementation Plan -- Spec #003 + Spec #004 remediation (2026-10-05/06/07, revision 10)
+# Implementation Plan -- Spec #003 + Spec #004 remediation (2026-10-05/06/07, revision 11)
 
 **Status: Stage 1 IMPLEMENTED and ACCEPTED. Stage 2 (corrected
 admission/registry mechanism, calendar tested with fixtures) ACCEPTED
 in that scope. Minimal `#003` v2 -> `#005` compatibility delta
 ACCEPTED. Stage 3 (config identity infrastructure) IMPLEMENTED WITH
-ONE ROUND OF CORRECTIONS APPLIED (commit `8650f17`, then round-2 fix
-this revision), delivered for GPT's next review -- NOT yet itself
-reviewed. Stage 4 onward: NOT AUTHORIZED.** Built from `docs/joint_
-remediation_design_003_004_2026-10-04.md` (revision 11, closed
-calendar contract included, section 7 config identity) and `docs/
-decision_sheet_003_004_2026-10-05.md` (revision 13, the Technical
-Decision Registry). **Precedence: the registry's own decisions replace
-revision 11's open alternatives; this plan only sequences already-made
-decisions, it does not re-decide anything.**
+TWO ROUNDS OF CORRECTIONS APPLIED (commit `8650f17`, round-2 fix at
+`955f482`, round-3 fix this revision), delivered for GPT's next review
+-- NOT yet itself reviewed. Stage 4 onward: NOT AUTHORIZED.** Built
+from `docs/joint_remediation_design_003_004_2026-10-04.md` (revision
+11, closed calendar contract included, section 7 config identity) and
+`docs/decision_sheet_003_004_2026-10-05.md` (revision 14, the
+Technical Decision Registry). **Precedence: the registry's own
+decisions replace revision 11's open alternatives; this plan only
+sequences already-made decisions, it does not re-decide anything.**
+
+**Revision 11 records GPT's own CHANGES REQUIRED verdict on Stage 3's
+round-2 delivery (commit `955f482`): the four findings from round 2
+are confirmed FIXED (verification runs by default; a tampered object
+is rejected whether or not `config_registry` is new or omitted;
+`freeze()` closes the `MappingProxyType` alias). One further defect
+remained: nothing tied the preregistration gate back to the SPECIFIC
+config the DRAFT was built under. GPT's own reproduction through the
+real gate: a draft built under config A, preregistered while BOTH the
+caller-supplied `hypothesis_config` AND the live file itself had moved
+to a self-consistent config B, with no `config_registry` shared to
+catch the drift -- was wrongly ACCEPTED, the resulting hypothesis
+carrying `strategy_config_version=A` while the gate had actually run
+under B. Fixed this revision -- see the updated Stage 3 section below
+for exact detail.**
 
 **Revision 10 records GPT's own CHANGES REQUIRED verdict on Stage 3's
 first delivery (commit `8650f17`): the mechanism was PARTIAL, not the
@@ -576,10 +591,11 @@ unchanged); any stage beyond what is already authorized above.
 
 ## Stage 3 -- Config identity infrastructure (shared #003 + #004)
 
-**IMPLEMENTED at commit `8650f17`; CORRECTED this revision after GPT's
-own CHANGES REQUIRED verdict on exactly that commit -- delivered again
-for GPT's next review, NOT yet itself reviewed. Radu's explicit
-authorization, 2026-10-07, scoped to exactly this stage per the
+**IMPLEMENTED at commit `8650f17`; CORRECTED twice after GPT's own
+CHANGES REQUIRED verdicts on exactly that commit (round 2, `955f482`)
+and then on the round-2 delivery itself (round 3, this revision) --
+delivered again for GPT's next review, NOT yet itself reviewed. Radu's
+explicit authorization, 2026-10-07, scoped to exactly this stage per the
 already-accepted plan below: applied to Discovery, Evaluation,
 Hypothesis's preregistration gate, AND Research Queue -- does NOT
 resume Batch 3, does NOT adopt `CalendarRegistry` into `#005`, does
@@ -783,6 +799,41 @@ no-registry regression test actually FAILS against it, then the fix
 was restored. Full project suite (`pytest tests/`): **859 passed, 1
 skipped** (pre-existing, unrelated) -- zero regression from the
 round-1 baseline of 849.
+
+**Round 3 (this revision) -- GPT's own CHANGES REQUIRED verdict on the
+round-2 delivery (`955f482`): the four round-2 findings are confirmed
+fixed; one further defect remained, reproduced through the real gate.**
+A draft built under config A, preregistered while BOTH the caller-
+supplied `hypothesis_config` AND the live file itself (simulated via
+monkeypatch) had already moved to a genuinely different, self-
+consistent config B, with NO `config_registry` shared to catch the
+drift -- was wrongly ACCEPTED: checks (a) (candidate vs. fresh read)
+and (b) (fresh read vs. an EXPLICITLY shared earlier registration)
+each only prove a different kind of "honest now," neither ties the
+gate back to the SPECIFIC snapshot the draft itself was built under.
+**Fixed:** a third, unconditional check (c) -- `draft.strategy_config_
+version` (recorded on the draft at construction time, travelling with
+the object, no new parameter needed) must equal the active, verified
+config's own version; a mismatch is refused before any of the existing
+checks and before any registry write. Does NOT replace check (b), per
+GPT's own instruction -- the two are complementary: (c) uses the
+draft's own self-declared anchor and needs no sharing at all; (b)
+catches drift across calls that explicitly share one registry.
+Verification discipline applied: the new check was temporarily removed,
+confirmed the two tests that depend on it exclusively (no shared
+registry) FAIL -- including GPT's own exact reproduction -- while the
+shared-registry variant still passes via mechanism (b) alone, then the
+fix was restored. **4 new regressions** (`tests/spec004/test_74_
+config_identity_gate.py`, whose `_gate()` helper gained a `draft_
+config` parameter, separate from `hypothesis_config`, so a test can
+build the draft under one config and call the gate with another): no
+initial context -> rejected; initial context A shared -> rejected for
+the active-config change; A unchanged with context A -> accepted
+(sanity); a draft whose recorded version disagrees with the active
+snapshot -> rejected before any write (`HypothesisRegistry.all_
+hypotheses() == ()` confirmed). Full project suite (`pytest tests/`):
+**863 passed, 1 skipped** (pre-existing, unrelated) -- zero regression
+from the round-2 baseline of 859.
 
 **Explicitly NOT done by this stage:** `#005`'s own adoption of
 `CalendarRegistry` (B5, separate, still not authorized); Batch 3
