@@ -1081,6 +1081,55 @@ is not itself the audit.
      -- zero regression from the `955f482` baseline of 859. No other
      stage begun. Stage 1/J1, Stage 2, and the `#003` v2 -> `#005`
      delta stay ACCEPTED, unaffected.
+
+     **GPT's own review of the `565c306` delivery: Stage 3 -- CHANGES
+     REQUIRED once more. The `draft.strategy_config_version` check is
+     correct and confirmed working through the real gate, but
+     insufficient alone. CORRECTED this round -- delivered again for
+     GPT's next review, NOT yet accepted.** GPT's own reproduction: with
+     NO `config_registry` at all, or with a freshly-constructed EMPTY
+     one, a fully self-consistent draft/config (no drift anywhere) still
+     reached PREREGISTERED -- the gate remained free to treat its own
+     fresh read as "the reference" whenever nothing was registered yet;
+     `draft.strategy_config_version` is just a label on the draft,
+     proving self-consistency, never that an earlier step actually
+     registered the context. **Fixed:** `config_registry` is now
+     REQUIRED, specifically at the Hypothesis preregistration gate (NOT
+     at Discovery/Evaluation/Research Queue, where a local context
+     remains legitimate, per GPT's own explicit confirmation), to
+     already have the "hypothesis" domain registered by an EARLIER
+     step -- resolved via `ConfigRegistry.resolve()` (raises if nothing
+     is registered yet), never `register_or_verify()` (which could
+     register the first reference AT the gate). Once resolved, the
+     SAME three checks from the prior round (mandatory live re-read,
+     caller-supplied `hypothesis_config`, `draft.strategy_config_
+     version`) all run against this ONE resolved snapshot; `validate_
+     for_preregistration()` consumes exclusively it. No fallback to a
+     new registry anywhere -- `config_registry` threads through the
+     caller's own path and through `PersistentHypothesisRegistry.
+     preregister()` (the persistence wrapper) unchanged: 4 pre-existing
+     test files (`test_53`, `test_61`, `test_62`, `test_65`) plus
+     `generate_report_artifacts.py` updated to construct and pass an
+     already-seeded `ConfigRegistry` (new `hypothesis_config_registry`
+     fixture in `conftest.py`, simulating the real earlier step).
+     Verification discipline applied: the new requirement was
+     temporarily reverted to the prior round's own shape, confirmed the
+     two tests depending on it exclusively FAIL ("DID NOT RAISE"), the
+     other 10 in the same file unaffected, then restored. 5 regressions,
+     all through the real gate (`tests/spec004/test_74_config_identity_
+     gate.py`, now 12 tests): context omitted -> rejected before any
+     write; context present but WITHOUT the "hypothesis" domain ->
+     rejected before any write (kept SEPARATE from the previous case,
+     per GPT's own explicit instruction -- the prior delivery's single
+     combined test conflated the two); context A with source and
+     argument B -> rejected; context A with a draft of a different
+     version -> rejected before any write; context A with draft and
+     config A unchanged -> accepted, including through a dedicated NEW
+     test using `PersistentHypothesisRegistry.preregister()`
+     specifically. Full project suite: **865 passed, 1 skipped**
+     (pre-existing, unrelated) -- zero regression from the `565c306`
+     baseline of 863. No other stage begun. Stage 1/J1, Stage 2, and
+     the `#003` v2 -> `#005` delta stay ACCEPTED, unaffected.
    - **Spec #004: two rounds done (2026-10-04).** Round 1 (Claude
      alone): a fresh, high-effort independent re-verification pass,
      requested by Radu specifically to finish before the joint F1-F6

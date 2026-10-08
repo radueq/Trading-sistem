@@ -1,33 +1,31 @@
-# Implementation Plan -- Spec #003 + Spec #004 remediation (2026-10-05/06/07, revision 11)
+# Implementation Plan -- Spec #003 + Spec #004 remediation (2026-10-05/06/07, revision 12)
 
 **Status: Stage 1 IMPLEMENTED and ACCEPTED. Stage 2 (corrected
 admission/registry mechanism, calendar tested with fixtures) ACCEPTED
 in that scope. Minimal `#003` v2 -> `#005` compatibility delta
 ACCEPTED. Stage 3 (config identity infrastructure) IMPLEMENTED WITH
-TWO ROUNDS OF CORRECTIONS APPLIED (commit `8650f17`, round-2 fix at
-`955f482`, round-3 fix this revision), delivered for GPT's next review
--- NOT yet itself reviewed. Stage 4 onward: NOT AUTHORIZED.** Built
-from `docs/joint_remediation_design_003_004_2026-10-04.md` (revision
-11, closed calendar contract included, section 7 config identity) and
-`docs/decision_sheet_003_004_2026-10-05.md` (revision 14, the
-Technical Decision Registry). **Precedence: the registry's own
-decisions replace revision 11's open alternatives; this plan only
-sequences already-made decisions, it does not re-decide anything.**
+THREE ROUNDS OF CORRECTIONS APPLIED (commit `8650f17`, round-2 fix at
+`955f482`, round-3 fix at `565c306`, round-4 fix this revision),
+delivered for GPT's next review -- NOT yet itself reviewed. Stage 4
+onward: NOT AUTHORIZED.** Built from `docs/joint_remediation_design_
+003_004_2026-10-04.md` (revision 11, closed calendar contract
+included, section 7 config identity) and `docs/decision_sheet_003_
+004_2026-10-05.md` (revision 15, the Technical Decision Registry).
+**Precedence: the registry's own decisions replace revision 11's open
+alternatives; this plan only sequences already-made decisions, it does
+not re-decide anything.**
 
-**Revision 11 records GPT's own CHANGES REQUIRED verdict on Stage 3's
-round-2 delivery (commit `955f482`): the four findings from round 2
-are confirmed FIXED (verification runs by default; a tampered object
-is rejected whether or not `config_registry` is new or omitted;
-`freeze()` closes the `MappingProxyType` alias). One further defect
-remained: nothing tied the preregistration gate back to the SPECIFIC
-config the DRAFT was built under. GPT's own reproduction through the
-real gate: a draft built under config A, preregistered while BOTH the
-caller-supplied `hypothesis_config` AND the live file itself had moved
-to a self-consistent config B, with no `config_registry` shared to
-catch the drift -- was wrongly ACCEPTED, the resulting hypothesis
-carrying `strategy_config_version=A` while the gate had actually run
-under B. Fixed this revision -- see the updated Stage 3 section below
-for exact detail.**
+**Revision 12 records GPT's own CHANGES REQUIRED verdict on Stage 3's
+round-3 delivery (commit `565c306`): round 3's `draft.strategy_config_
+version` check is correct (GPT confirmed it, independently, through
+the real gate) but insufficient alone -- the gate could still establish
+its OWN reference AT preregistration time whenever nothing was
+registered yet. GPT's own reproduction through the real gate: with NO
+`config_registry`, or with a freshly-constructed, EMPTY one, a fully
+self-consistent draft/config still reached PREREGISTERED -- the label
+on the draft proves self-consistency, never that anything was already
+registered by an earlier step. Fixed this revision -- see the updated
+Stage 3 section below for exact detail.**
 
 **Revision 10 records GPT's own CHANGES REQUIRED verdict on Stage 3's
 first delivery (commit `8650f17`): the mechanism was PARTIAL, not the
@@ -591,15 +589,16 @@ unchanged); any stage beyond what is already authorized above.
 
 ## Stage 3 -- Config identity infrastructure (shared #003 + #004)
 
-**IMPLEMENTED at commit `8650f17`; CORRECTED twice after GPT's own
-CHANGES REQUIRED verdicts on exactly that commit (round 2, `955f482`)
-and then on the round-2 delivery itself (round 3, this revision) --
-delivered again for GPT's next review, NOT yet itself reviewed. Radu's
-explicit authorization, 2026-10-07, scoped to exactly this stage per the
-already-accepted plan below: applied to Discovery, Evaluation,
-Hypothesis's preregistration gate, AND Research Queue -- does NOT
-resume Batch 3, does NOT adopt `CalendarRegistry` into `#005`, does
-NOT authorize Stage 4 or any other stage.**
+**IMPLEMENTED at commit `8650f17`; CORRECTED three times after GPT's
+own CHANGES REQUIRED verdicts on exactly that commit (round 2,
+`955f482`), on the round-2 delivery (round 3, `565c306`), and on the
+round-3 delivery (round 4, this revision) -- delivered again for GPT's
+next review, NOT yet itself reviewed. Radu's explicit authorization,
+2026-10-07, scoped to exactly this stage per the already-accepted plan
+below: applied to Discovery, Evaluation, Hypothesis's preregistration
+gate, AND Research Queue -- does NOT resume Batch 3, does NOT adopt
+`CalendarRegistry` into `#005`, does NOT authorize Stage 4 or any
+other stage.**
 
 **GPT's four findings on `8650f17`, and the correction applied to
 each:**
@@ -834,6 +833,50 @@ snapshot -> rejected before any write (`HypothesisRegistry.all_
 hypotheses() == ()` confirmed). Full project suite (`pytest tests/`):
 **863 passed, 1 skipped** (pre-existing, unrelated) -- zero regression
 from the round-2 baseline of 859.
+
+**Round 4 (this revision) -- GPT's own CHANGES REQUIRED verdict on the
+round-3 delivery (`565c306`): the `draft.strategy_config_version`
+check is correct and confirmed working through the real gate, but
+insufficient alone.** GPT's own reproduction: with NO `config_
+registry` at all, or with a freshly-constructed EMPTY one, a fully
+self-consistent draft/config (no drift anywhere) still reached
+PREREGISTERED -- the gate remained free to treat its own fresh read as
+"the reference" whenever nothing was registered yet, and `draft.
+strategy_config_version` is just a label on the draft, proving self-
+consistency, never that an earlier step actually registered the
+context. **Fixed:** `config_registry` is now REQUIRED, specifically at
+the Hypothesis preregistration gate (NOT at Discovery/Evaluation/
+Research Queue, where a local context remains legitimate per GPT's
+own explicit confirmation), to already have the "hypothesis" domain
+registered by an EARLIER step. Resolved via `ConfigRegistry.resolve()`
+-- never `register_or_verify()`, which could register the first
+reference AT the gate. Once resolved, the SAME three checks from round
+3 (mandatory live re-read, caller-supplied `hypothesis_config`, `draft.
+strategy_config_version`) all run against this ONE resolved snapshot,
+consumed exclusively by `validate_for_preregistration()` below. No
+fallback to a new registry anywhere in the chain -- `config_registry`
+threads through the caller's own path and through `PersistentHypothesis
+Registry.preregister()` (the persistence wrapper) unchanged. 4
+pre-existing test files (`test_53`, `test_61`, `test_62`, `test_65`)
+plus `generate_report_artifacts.py` updated to construct and pass an
+already-seeded `ConfigRegistry` (new `hypothesis_config_registry`
+fixture in `conftest.py`, simulating the real earlier step). Verification
+discipline applied: the new requirement was temporarily reverted to
+round 3's own shape, confirmed the two tests depending on it exclusively
+FAIL ("DID NOT RAISE"), the other 10 in the same file unaffected, then
+restored. **5 regressions, all through the real gate**
+(`tests/spec004/test_74_config_identity_gate.py`, now 12 tests):
+context omitted -> rejected before any write; context present but
+WITHOUT the "hypothesis" domain -> rejected before any write (kept
+SEPARATE from the previous case, per GPT's own explicit instruction --
+the prior delivery's single combined test conflated the two); context
+A with source and argument B -> rejected; context A with a draft of a
+different version -> rejected before any write; context A with draft
+and config A unchanged -> accepted, including through a dedicated NEW
+test using `PersistentHypothesisRegistry.preregister()` specifically.
+Full project suite (`pytest tests/`): **865 passed, 1 skipped**
+(pre-existing, unrelated) -- zero regression from the round-3 baseline
+of 863.
 
 **Explicitly NOT done by this stage:** `#005`'s own adoption of
 `CalendarRegistry` (B5, separate, still not authorized); Batch 3
