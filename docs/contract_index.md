@@ -972,6 +972,72 @@ is not itself the audit.
      baseline of 818. No other stage begun; `#005`'s own adoption of
      `CalendarRegistry` (B5), the real-calendar gap (B3), and the Spec
      #005/Batch 3 pause remain unchanged.
+
+     **GPT's own review of the `8650f17` delivery: Stage 3 -- CHANGES
+     REQUIRED, four defects, all confirmed by inspection and independent
+     execution, one reproduced concretely through the real `build_
+     research_queue()`. CORRECTED, this round -- delivered again for
+     GPT's next review, NOT yet accepted.** (1) Protection was opt-in --
+     `config_registry=None` left Discovery/Evaluation/Research Queue's
+     original defect fully active; GPT reproduced a content-only tamper
+     (same `config_version`, different `minimum_valid_episode_n`)
+     silently changing eligibility results through `build_research_
+     queue()` with no registry supplied. Now mandatory by default: a
+     local, throwaway `ConfigRegistry()` is used internally when none
+     is shared, and verification always runs. (2) The first `register_
+     or_verify()` call for a domain trusted whatever (version, content)
+     the caller's object claimed, even on a brand-new registry -- an
+     already-tampered config was silently accepted as truth on first
+     use. Now each domain's loader exposes `raw_texts` on its config
+     object plus a pure `reparse_raw_texts()` (the loader's own parse+
+     hash code, extracted, no disk I/O); every consumer reparses the
+     candidate's OWN `raw_texts` independently and verifies the
+     candidate against this re-derived ground truth before ever
+     registering it -- never trusting the caller's claim. `Registered
+     ConfigVersion` gained the `raw_texts` field section 7 requires.
+     (3) `ConfigRegistry.register()` was public and unconditional -- a
+     later call could silently overwrite an already-registered domain.
+     Now `register()` is no longer public; `register_or_verify()` is
+     the only write path (idempotent-or-reject). The Hypothesis gate's
+     own tie between "config pinned for this operation" and "verifying
+     it is still active" now runs through this same call unconditionally,
+     not only when `config_registry` happened to be shared. (4)
+     `freeze()` fell through unchanged for an externally-supplied
+     `MappingProxyType` -- a nested mutable list inside one stayed
+     mutable after "freezing." Now `freeze()` recurses into `dict` and
+     `MappingProxyType` identically, and explicitly rejects any other
+     unrecognized mutable type. **Test fixture work required by the
+     fix:** `tests/spec003/conftest.py`'s `reduced_discovery_config`/
+     `fast_evaluation_config`, plus 7 further pre-existing files
+     (`tests/spec002/test_15/16/23/24`, `tests/spec003/test_33/43/45/
+     47`, `tests/spec004/test_50`) built a deliberately-different
+     config via `dataclasses.replace()` while keeping the original
+     label -- exactly the shape mandatory self-consistency now rejects
+     -- rewritten through a new shared helper, `tests/fixtures/
+     config_overrides.py` (re-serializes the override back to real YAML
+     text, reparses via `reparse_raw_texts()`, no extra disk I/O). Two
+     of those files (`test_24`, `test_33`) updated to exclude
+     identity-dependent fields (`config_version`, `family_id`) from an
+     equality assertion, asserting separately that the identity
+     genuinely differs -- an honest, non-regression side effect of
+     `candidate_budget`/`horizons`/`support` genuinely being part of
+     their file's own content. The three tests that previously
+     MANDATED the no-registry bypass (`tests/spec002/test_25`, `tests/
+     spec003/test_48`, `tests/spec004/test_75`, each named `test_
+     default_config_registry_none_leaves_*_unaffected`) were REMOVED,
+     not modified, replaced by tests proving the SAME scenario is now
+     correctly REJECTED. Verification discipline applied: the pre-
+     round-2 bypass was temporarily restored in `discovery/engine.py`,
+     confirmed the new no-registry regression test actually FAILS
+     against it, then the fix was restored. 61 tests now across the 5
+     touched/new Stage-3 files (net +9 versus the first delivery's 31:
+     3 removed, 12 added), all passing in isolation. Full project
+     suite: **859 passed, 1 skipped** (pre-existing, unrelated) -- zero
+     regression from the `8650f17` baseline of 849. No other stage
+     begun; `#005`'s own adoption of `CalendarRegistry` (B5), the
+     real-calendar gap (B3), and the Spec #005/Batch 3 pause remain
+     unchanged. Stage 1/J1, Stage 2, and the `#003` v2 -> `#005` delta
+     stay ACCEPTED, unaffected by this correction.
    - **Spec #004: two rounds done (2026-10-04).** Round 1 (Claude
      alone): a fresh, high-effort independent re-verification pass,
      requested by Radu specifically to finish before the joint F1-F6
