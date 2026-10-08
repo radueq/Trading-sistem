@@ -1,5 +1,4 @@
 import json
-from dataclasses import replace
 
 import pytest
 
@@ -14,6 +13,7 @@ from fixtures.fake_yfinance import make_ticker_factory
 
 from discovery.config.loader import load_config as load_discovery_config
 from evaluation.config.loader import load_config as load_evaluation_config
+from fixtures.config_overrides import discovery_config_with_overrides, evaluation_config_with_overrides
 
 from spec003.fixtures.tiny_universe import ALL_DATASETS, BENCHMARK, DATES
 
@@ -65,9 +65,14 @@ COMPRESSION_WINDOW_END = DATES[55]
 
 @pytest.fixture
 def reduced_discovery_config():
+    """Deliberately different from real discovery.yaml -- Stage 3
+    (config identity infrastructure, authorized 2026-10-07, CORRECTED
+    round 2) requires this to be genuinely loader-sourced (its
+    `config_version` must really, differently correspond to this
+    content), never a `replace()`'d object keeping the original,
+    now-stale `raw_texts` -- see tests/fixtures/config_overrides.py."""
     base = load_discovery_config()
-    return replace(
-        base,
+    return discovery_config_with_overrides(
         features={**base.features, "percentile_window": 15, "percentile_min_periods": 15},
         eligibility={**base.eligibility, "minimum_history_days": 15, "minimum_adv_20": 1000},
     )
@@ -75,13 +80,15 @@ def reduced_discovery_config():
 
 @pytest.fixture
 def fast_evaluation_config():
+    """See `reduced_discovery_config`'s own docstring -- same reason,
+    same fix."""
     base = load_evaluation_config()
-    data = dict(base.data)
-    data["support"] = {"minimum_episode_count": 1, "minimum_unique_securities": 1}
-    data["bootstrap"] = {**base.data["bootstrap"], "iterations": 200, "block_length_bars": 5}
-    data["comparison"] = {**base.data["comparison"], "iterations": 200}
-    data["stability"] = {"temporal_bins": 3}
-    return replace(base, data=data)
+    return evaluation_config_with_overrides(
+        support={"minimum_episode_count": 1, "minimum_unique_securities": 1},
+        bootstrap={**base.data["bootstrap"], "iterations": 200, "block_length_bars": 5},
+        comparison={**base.data["comparison"], "iterations": 200},
+        stability={"temporal_bins": 3},
+    )
 
 
 # FORMAL_DEVELOPMENT now REQUIRES a registry-resolved, OFFICIAL_VERIFIED

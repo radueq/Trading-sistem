@@ -24,8 +24,8 @@ def test_candidate_budget_disabled_returns_everything(conn, universe):
     config = load_config()
     unbounded = dict(config.discovery)
     unbounded["candidate_budget"] = {"enabled": False, "max_candidates": 1}
-    from dataclasses import replace
-    config_unbounded = replace(config, discovery=unbounded)
+    from fixtures.config_overrides import discovery_config_with_overrides
+    config_unbounded = discovery_config_with_overrides(discovery=unbounded)
 
     candidates = run_discovery(
         conn, universe["non_benchmark_ids"], AS_OF, universe["benchmark_security_id"], config_unbounded,

@@ -87,8 +87,8 @@ def test_data_gap_outcomes_are_counted_and_reconcile_through_the_engine(reduced_
     )
     sigset = freeze_signature_set([sig])
 
-    from dataclasses import replace
-    horizon_cfg = replace(fast_evaluation_config, data={**fast_evaluation_config.data, "horizons": {"unit": "BARS", "values": [5]}})
+    from fixtures.config_overrides import evaluation_config_with_overrides
+    horizon_cfg = evaluation_config_with_overrides(horizons={"unit": "BARS", "values": [5]})
 
     profiles, _ = run_evaluation(
         conn, [gapsec_id], benchmark_security_id,

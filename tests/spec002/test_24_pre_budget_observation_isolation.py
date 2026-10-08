@@ -12,11 +12,16 @@ convenience parameter that has nothing to do with statistics. Spec
 #003's own TEST 33 re-verifies this from the Evaluation Engine's
 consuming side; this test verifies it at the source.
 """
-from dataclasses import replace
+import dataclasses
 
 from discovery.config.loader import load_config
 from discovery.engine import compute_discovery_observations, run_discovery
+from fixtures.config_overrides import discovery_config_with_overrides
 from spec002.fixtures.synthetic_universe import AS_OF
+
+
+def _without_config_version(observations):
+    return [dataclasses.replace(o, config_version=None) for o in observations]
 
 
 def test_changing_max_candidates_does_not_change_pre_budget_observations(conn, universe):
@@ -28,19 +33,28 @@ def test_changing_max_candidates_does_not_change_pre_budget_observations(conn, u
 
     tiny_budget = dict(config.discovery)
     tiny_budget["candidate_budget"] = {"enabled": True, "max_candidates": 1}
-    config_tiny_budget = replace(config, discovery=tiny_budget)
+    config_tiny_budget = discovery_config_with_overrides(discovery=tiny_budget)
     observations_tiny_budget = compute_discovery_observations(
         conn, universe["non_benchmark_ids"], AS_OF, universe["benchmark_security_id"], config_tiny_budget,
     )
 
     unbounded = dict(config.discovery)
     unbounded["candidate_budget"] = {"enabled": False, "max_candidates": 1}
-    config_unbounded = replace(config, discovery=unbounded)
+    config_unbounded = discovery_config_with_overrides(discovery=unbounded)
     observations_unbounded = compute_discovery_observations(
         conn, universe["non_benchmark_ids"], AS_OF, universe["benchmark_security_id"], config_unbounded,
     )
 
-    assert observations_default == observations_tiny_budget == observations_unbounded
+    # Honest hashing (Stage 3, config identity infrastructure) means
+    # config_tiny_budget/config_unbounded genuinely differ in
+    # config_version from config (candidate_budget IS part of
+    # discovery.yaml's own content) -- that label difference is
+    # EXPECTED and asserted separately below; the actual claim this
+    # test makes is that every OTHER field is untouched.
+    assert _without_config_version(observations_default) == _without_config_version(observations_tiny_budget) == _without_config_version(observations_unbounded)
+    assert observations_default[0].config_version == config.config_version
+    assert observations_tiny_budget[0].config_version == config_tiny_budget.config_version
+    assert config_tiny_budget.config_version != config.config_version != config_unbounded.config_version
 
     # sanity: the budget DOES bind on run_discovery()'s post-budget output,
     # so this isn't passing merely because the budget never mattered here

@@ -1,25 +1,33 @@
 """Config identity infrastructure -- Section 7 of the joint remediation
 design (003+004, 2026-10-04, revision 11); decision registry, Stage 3;
 Radu's explicit authorization, 2026-10-07, applied to Discovery,
-Evaluation, Hypothesis, and Research Queue.
+Evaluation, Hypothesis, and Research Queue. CORRECTED round 2 (GPT
+changes-required verdict on commit `8650f17`): the first implementation
+left verification conditional on an opt-in `config_registry`, trusted
+whatever (version, content) a caller claimed as "the" reference on
+first use, allowed `ConfigRegistry.register()` to silently overwrite an
+existing domain entry, and `freeze()` did not recurse into an
+externally-supplied `MappingProxyType`. All four are fixed here.
 
-One `load_config()` call per operation, a full recursive freeze (never
-`MappingProxyType` alone -- a list nested inside a dict-of-dicts is
-still a plain, mutable list through a bare `MappingProxyType` wrapper),
-and a two-part verification (declared label + structurally-normalized
-content, each catching a DIFFERENT failure mode) for any config object
-not sourced directly from the registered snapshot.
-
-`config_version` itself is NEVER touched or re-derived here -- it
-remains EXACTLY what each domain's own, unchanged loader computes
+`config_version` itself is NEVER touched or re-derived -- it remains
+EXACTLY what each domain's own, unchanged loader computes
 (`sha256(raw_text)[:12]` for hypothesis/evaluation;
 `sha256("".join(raw_texts))[:12]` for discovery, preserving its own
 multi-source-combination rule byte-for-byte). This module only (a)
 retains that version verbatim, (b) builds an immutable, recursively-
 frozen snapshot of the already-parsed content for safe reuse, and (c)
-compares a CANDIDATE object against an EARLIER-REGISTERED one.
+compares a CANDIDATE object against an INDEPENDENTLY-SOURCED one.
 Historical identities computed under the unchanged loaders are
 preserved exactly; nothing here reinterprets them.
+
+The "independent source" a candidate gets compared against is NEVER
+built from the candidate's own claimed (version, content) pair --
+every call site in discovery/engine.py, evaluation/engine.py,
+hypothesis/evidence/queue.py, and hypothesis/registry/preregistration.py
+re-derives it from a `raw_texts` tuple via that domain's own
+`reparse_raw_texts()` (a pure function, no disk I/O, the EXACT same
+parse+hash code `load_config()` itself uses) -- this module stays
+domain-agnostic and never parses YAML itself.
 """
 from __future__ import annotations
 
@@ -27,24 +35,38 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any, Optional
 
+_ATOMIC_TYPES = (str, int, float, bool, type(None), bytes)
+
 
 class ConfigIdentityError(ValueError):
     pass
 
 
 def freeze(value: Any) -> Any:
-    """Full recursive freeze: dict -> `MappingProxyType` of
+    """Full recursive freeze: dict OR `MappingProxyType` (handled
+    IDENTICALLY -- a bare `isinstance(value, dict)` check would miss an
+    externally-supplied `MappingProxyType`, letting a nested mutable
+    list inside it pass through un-recursed) -> `MappingProxyType` of
     recursively-frozen values; list/tuple -> tuple of recursively-
-    frozen elements; every other value (str/int/float/bool/None)
-    returned as-is (already immutable). Built from a fresh,
-    independent traversal -- never aliases the original dict/list
-    objects anywhere in the result, so mutating the SOURCE after
-    freezing can never reach the frozen snapshot."""
-    if isinstance(value, dict):
+    frozen elements; an atomic scalar (str/int/float/bool/None/bytes,
+    already immutable) returned as-is. Built from a fresh, independent
+    traversal -- never aliases the original dict/list objects anywhere
+    in the result, so mutating the SOURCE after freezing can never
+    reach the frozen snapshot. Any OTHER type (set, bytearray, a
+    custom mutable object, ...) is explicitly REJECTED -- silently
+    passing an unrecognized mutable value through would let it alias
+    into a snapshot callers rely on being immutable."""
+    if isinstance(value, (dict, MappingProxyType)):
         return MappingProxyType({k: freeze(v) for k, v in value.items()})
     if isinstance(value, (list, tuple)):
         return tuple(freeze(v) for v in value)
-    return value
+    if isinstance(value, _ATOMIC_TYPES):
+        return value
+    raise ConfigIdentityError(
+        f"freeze() cannot safely freeze a value of type {type(value).__name__!r} -- only "
+        "dict/MappingProxyType, list/tuple, and atomic scalars (str/int/float/bool/None/bytes) "
+        "may appear in a config snapshot; an unrecognized type might still be externally mutable"
+    )
 
 
 def normalize_for_comparison(value: Any) -> Any:
@@ -68,15 +90,18 @@ def normalize_for_comparison(value: Any) -> Any:
 
 @dataclass(frozen=True)
 class RegisteredConfigVersion:
-    """One `load_config()` call's own retained identity for one
-    operation (or one domain within an operation): `version` is the
-    loader's OWN output, carried forward VERBATIM -- never re-derived
-    from `content` by any hash computed here. `content` is the fully,
-    recursively frozen structure built from the SAME parsed data the
-    loader produced."""
+    """One domain's own retained identity for one operation: `version`
+    is the loader's OWN output, carried forward VERBATIM -- never
+    re-derived from `content` by any hash computed here. `content` is
+    the fully, recursively frozen structure built from the parsed data
+    an INDEPENDENT `reparse_raw_texts()` call produced. `raw_texts` is
+    retained alongside them (Section 7's own requirement) so a LATER
+    comparison always has the actual source text available, never only
+    a derived version/content pair."""
     domain: str
     version: str
     content: Any
+    raw_texts: tuple[str, ...]
 
     def verify(self, candidate_version: str, candidate_content: Any) -> tuple[bool, tuple[str, ...]]:
         """Two SEPARATE checks, each catching a different failure
@@ -109,10 +134,16 @@ class RegisteredConfigVersion:
         return (not errors, tuple(errors))
 
 
-def register_config_version(domain: str, version: str, content: Any) -> RegisteredConfigVersion:
+def register_config_version(domain: str, version: str, content: Any, raw_texts: tuple[str, ...]) -> RegisteredConfigVersion:
     """Builds a `RegisteredConfigVersion` by freezing `content` --
-    `version` is retained exactly as given, never recomputed."""
-    return RegisteredConfigVersion(domain=domain, version=version, content=freeze(content))
+    `version`/`raw_texts` are retained exactly as given, never
+    recomputed. Callers are responsible for sourcing `version`/
+    `content` INDEPENDENTLY (via a domain's own `reparse_raw_texts()`)
+    -- this function itself does not verify that `version` honestly
+    corresponds to `raw_texts`; `ConfigRegistry.register_or_verify()`
+    and each call site's own self-consistency check are what enforce
+    that (see discovery/engine.py et al.)."""
+    return RegisteredConfigVersion(domain=domain, version=version, content=freeze(content), raw_texts=tuple(raw_texts))
 
 
 class ConfigRegistry:
@@ -122,22 +153,26 @@ class ConfigRegistry:
     pattern (`AdmissionRegistry`, `CalendarRegistry`): one write path,
     a resolve path that refuses anything not registered through it.
 
-    `register()` is unconditional -- it always (re)writes the domain's
-    entry, used for the FIRST, authoritative registration.
-    `register_or_verify()` is what most callers actually want: the
-    FIRST call for a domain registers it as this operation's own
-    pinned baseline; every SUBSEQUENT call verifies its candidate
-    against that SAME baseline, raising on a mismatch rather than
-    silently re-registering a different one -- this is what makes
-    'the operation consumes exclusively the verified snapshot'
-    enforceable across multiple internal read points within one
-    operation, or across a multi-step workflow."""
+    CORRECTED round 2: the public surface no longer exposes an
+    unconditional overwrite. `register_or_verify()` is the ONLY public
+    write path: the FIRST call for a domain registers it as this
+    operation's own pinned baseline; every SUBSEQUENT call verifies
+    its candidate against that SAME baseline and raises
+    `ConfigIdentityError` on a mismatch -- it never silently
+    re-registers a different one. Within one operation's context, a
+    DIFFERENT re-registration for an already-registered domain is
+    REJECTED, keeping the original; a genuinely new operation gets a
+    new `ConfigRegistry` instance, which starts empty."""
 
     def __init__(self) -> None:
         self._entries: dict[str, RegisteredConfigVersion] = {}
 
-    def register(self, domain: str, version: str, content: Any) -> RegisteredConfigVersion:
-        registered = register_config_version(domain, version, content)
+    def _force_register(self, domain: str, version: str, content: Any, raw_texts: tuple[str, ...]) -> RegisteredConfigVersion:
+        """Private: unconditionally (re)writes the domain's entry.
+        Used ONLY internally by `register_or_verify()`'s first-call
+        branch -- never exposed publicly, so nothing outside this
+        class can overwrite an already-registered domain."""
+        registered = register_config_version(domain, version, content, raw_texts)
         self._entries[domain] = registered
         return registered
 
@@ -150,10 +185,10 @@ class ConfigRegistry:
             raise ConfigIdentityError(f"no RegisteredConfigVersion registered for domain={domain!r}")
         return entry
 
-    def register_or_verify(self, domain: str, version: str, content: Any) -> RegisteredConfigVersion:
+    def register_or_verify(self, domain: str, version: str, content: Any, raw_texts: tuple[str, ...] = ()) -> RegisteredConfigVersion:
         existing = self.try_resolve(domain)
         if existing is None:
-            return self.register(domain, version, content)
+            return self._force_register(domain, version, content, raw_texts)
         ok, errors = existing.verify(version, content)
         if not ok:
             raise ConfigIdentityError("; ".join(errors))

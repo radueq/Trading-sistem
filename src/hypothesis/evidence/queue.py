@@ -35,9 +35,10 @@ from __future__ import annotations
 
 from typing import Optional
 
-from config_identity.registry import ConfigRegistry
+from config_identity.registry import ConfigIdentityError, ConfigRegistry, register_config_version
 
 from hypothesis.config.loader import HypothesisConfig
+from hypothesis.config.loader import reparse_raw_texts as reparse_hypothesis_raw_texts
 from hypothesis.models.entities import EvidencePacket, ResearchQueueEntry
 
 PRIORITY_BASIS_OUTCOME_AWARE = "DEVELOPMENT_OUTCOME_AWARE_SELECTION"
@@ -102,22 +103,49 @@ def build_research_queue(
     defensively regardless).
 
     `config_registry` (Stage 3 -- config identity infrastructure,
-    authorized 2026-10-07; optional, default `None` -- every
-    pre-Stage-3 call site, including the deliberately-different-
-    config test in TEST 50, is unaffected). When supplied: the FIRST
-    call for the "hypothesis" domain within it registers `config` as
-    this operation's own pinned baseline; a SUBSEQUENT call sharing
-    the same registry verifies its candidate against that SAME
-    baseline (label + structurally-normalized content), raising
-    BEFORE any of the eligibility/priority computation below on a
-    mismatch -- never an unguarded, unverified `config` silently
-    driving this operation. The operation then reads `eligibility_
-    config`/`reference_horizon_bars`/`config_version` EXCLUSIVELY from
-    the recursively-frozen, verified snapshot, never the caller's own,
-    independently-mutable `config.data`."""
-    if config_registry is not None:
-        registered = config_registry.register_or_verify("hypothesis", config.config_version, config.data)
-        config = HypothesisConfig(data=registered.content, config_version=config.config_version)
+    authorized 2026-10-07; CORRECTED round 2 -- GPT changes-required
+    verdict on `8650f17` reproduced a content-only tamper silently
+    changing eligibility results through exactly this function when
+    `config_registry` was omitted). Mandatory by DEFAULT: the
+    parameter is optional only for SHARING one verified baseline
+    across multiple calls -- omitting it still performs a full,
+    call-scoped verification. Two separate checks, every call:
+    (1) self-consistency -- `config.raw_texts` reparsed INDEPENDENTLY
+        (`reparse_hypothesis_raw_texts()`, the exact parse+hash code
+        `load_config()` itself uses) and verified against `config`'s
+        OWN claimed config_version/data, so even a brand-new registry
+        can never be seeded from a caller's merely-claimed pair;
+    (2) cross-call consistency -- the self-consistent result
+        registered-or-verified against `config_registry` (shared, or
+        a local throwaway one when omitted).
+    Both raise `ConfigIdentityError` BEFORE any of the eligibility/
+    priority computation below. The operation then reads
+    `eligibility_config`/`reference_horizon_bars`/`config_version`
+    EXCLUSIVELY from the recursively-frozen, verified snapshot, never
+    the caller's own, independently-mutable `config.data`.
+
+    TEST 50's own deliberately-different config (`tightened_config`)
+    is unaffected ONLY because it is now genuinely loader-sourced
+    (see `tests/fixtures/config_overrides.py`) -- a hand-mutated
+    object whose label/content disagree with its own retained
+    `raw_texts` is rejected exactly like any other tamper, with or
+    without `config_registry`."""
+    registry = config_registry if config_registry is not None else ConfigRegistry()
+
+    ground_truth_hypothesis = reparse_hypothesis_raw_texts(config.raw_texts)
+    ground_truth_entry = register_config_version(
+        "hypothesis", ground_truth_hypothesis.config_version, ground_truth_hypothesis.data, config.raw_texts,
+    )
+    self_ok, self_errors = ground_truth_entry.verify(config.config_version, config.data)
+    if not self_ok:
+        raise ConfigIdentityError(
+            "hypothesis config is not self-consistent -- its claimed config_version/data does not "
+            f"match what its own raw_texts actually parse to: {'; '.join(self_errors)}"
+        )
+    registered = registry.register_or_verify(
+        "hypothesis", ground_truth_entry.version, ground_truth_entry.content, ground_truth_entry.raw_texts,
+    )
+    config = HypothesisConfig(data=registered.content, config_version=registered.version, raw_texts=registered.raw_texts)
 
     eligibility_config = config.data["research_queue_eligibility"]
     reference_horizon_bars = config.data["evidence_reference"]["reference_horizon_bars"]

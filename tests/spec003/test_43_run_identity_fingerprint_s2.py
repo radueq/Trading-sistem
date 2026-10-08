@@ -9,9 +9,8 @@ INDEPENDENT axis checks, not one -- two runs identical in every other
 input but differing in exactly ONE of these five must produce
 different `evaluation_run_id`s.
 """
-from dataclasses import replace
-
 from evaluation.engine import RUN_ID_SCHEME_VERSION, run_evaluation
+from fixtures.config_overrides import evaluation_config_with_overrides
 from evaluation.models.entities import EvaluationSignatureDefinition, LaneStateCondition
 from evaluation.registry.runs import build_run_id
 from evaluation.registry.signatures import freeze_signature_set
@@ -79,10 +78,7 @@ def test_different_horizons_produce_different_run_id(
 ):
     security_ids = tiny_universe["non_benchmark_ids"]
     benchmark = tiny_universe["benchmark_security_id"]
-    other_cfg = replace(fast_evaluation_config, data={
-        **fast_evaluation_config.data,
-        "horizons": {"unit": "BARS", "values": [1, 2]},
-    })
+    other_cfg = evaluation_config_with_overrides(horizons={"unit": "BARS", "values": [1, 2]})
     id_a = _run_id(conn, security_ids, benchmark, reduced_discovery_config, fast_evaluation_config, formal_calendar_registry, formal_calendar_id)
     id_b = _run_id(conn, security_ids, benchmark, reduced_discovery_config, other_cfg, formal_calendar_registry, formal_calendar_id)
     assert id_a != id_b

@@ -19,12 +19,12 @@ def test_diversity_avoids_single_signature_collapse(conn, universe):
 
 
 def test_diversity_disabled_falls_back_to_plain_ranking(conn, universe):
-    from dataclasses import replace
+    from fixtures.config_overrides import discovery_config_with_overrides
 
     config = load_config()
     no_diversity = dict(config.discovery)
     no_diversity["diversity"] = {"enabled": False}
-    config_no_diversity = replace(config, discovery=no_diversity)
+    config_no_diversity = discovery_config_with_overrides(discovery=no_diversity)
 
     candidates = run_discovery(
         conn, universe["non_benchmark_ids"], AS_OF, universe["benchmark_security_id"], config_no_diversity,

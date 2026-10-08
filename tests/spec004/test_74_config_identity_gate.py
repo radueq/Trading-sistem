@@ -124,7 +124,7 @@ def test_config_registry_catches_a_config_that_changed_since_an_earlier_registra
     read."""
     config_registry = ConfigRegistry()
     real = load_hypothesis_config()
-    config_registry.register("hypothesis", real.config_version, real.data)  # earlier registration
+    config_registry.register_or_verify("hypothesis", real.config_version, real.data, real.raw_texts)  # earlier registration
 
     tampered_data = dict(real.data)
     tampered_data["hypothesis_budget"] = {**real.data["hypothesis_budget"], "max_hypotheses_per_signature": 999999}
@@ -142,7 +142,7 @@ def test_config_registry_passes_when_the_fresh_re_read_still_matches_the_earlier
 ):
     config_registry = ConfigRegistry()
     real = load_hypothesis_config()
-    config_registry.register("hypothesis", real.config_version, real.data)  # earlier registration, same content
+    config_registry.register_or_verify("hypothesis", real.config_version, real.data, real.raw_texts)  # earlier registration, same content
 
     frozen = _gate(entry_definition, horizon_candidates, evidence_provenance, hypothesis_config, run_registry, config_registry=config_registry)
     assert frozen.status == HypothesisStatus.PREREGISTERED.value

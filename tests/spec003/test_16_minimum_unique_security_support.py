@@ -3,11 +3,10 @@
 support_status must also gate on unique_security_count, independent of
 episode_count -- many episodes from ONE security is not enough support.
 """
-from dataclasses import replace
-
 from evaluation.engine import run_evaluation
 from evaluation.models.entities import EvaluationSignatureDefinition, LaneStateCondition, SupportStatus
 from evaluation.registry.signatures import freeze_signature_set
+from fixtures.config_overrides import evaluation_config_with_overrides
 
 from spec003.conftest import COMPRESSION_WINDOW_END, COMPRESSION_WINDOW_START
 
@@ -22,9 +21,7 @@ def test_support_insufficient_when_unique_securities_below_threshold(
         created_before_outcome_evaluation=True,
     )
     sigset = freeze_signature_set([sig])
-    high_security_threshold_cfg = replace(fast_evaluation_config, data={
-        **fast_evaluation_config.data, "support": {"minimum_episode_count": 1, "minimum_unique_securities": 999},
-    })
+    high_security_threshold_cfg = evaluation_config_with_overrides(support={"minimum_episode_count": 1, "minimum_unique_securities": 999})
     profiles, _ = run_evaluation(
         conn, tiny_universe["non_benchmark_ids"], tiny_universe["benchmark_security_id"],
         COMPRESSION_WINDOW_START, COMPRESSION_WINDOW_END, sigset, reduced_discovery_config, high_security_threshold_cfg,

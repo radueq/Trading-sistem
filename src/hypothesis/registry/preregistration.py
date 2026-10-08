@@ -110,23 +110,33 @@ def preregister_hypothesis(
     errors: list[str] = []
 
     # Step -1 (Stage 3 -- config identity infrastructure, authorized
-    # 2026-10-07): mandatory live re-read, BEFORE anything else. A
-    # fresh load_config() call, every single time -- never cached,
-    # never skipped.
+    # 2026-10-07; CORRECTED round 2 -- GPT changes-required verdict on
+    # `8650f17`, finding #3: this gate's tie to a previously-registered
+    # reference must not disappear just because `config_registry` is
+    # omitted). Mandatory live re-read, BEFORE anything else -- a fresh
+    # load_config() call, every single time, never cached, never
+    # skipped. The result is ALWAYS registered-or-verified against a
+    # registry -- shared across calls when `config_registry` is
+    # supplied, or a local throwaway one when omitted -- so "the
+    # config pinned for this operation" and "verifying the config is
+    # still active" are tied together UNIFORMLY on every call, not
+    # only when a registry happens to be shared.
     fresh_hypothesis_config = load_hypothesis_config()
-    fresh_registered = register_config_version(
-        "hypothesis", fresh_hypothesis_config.config_version, fresh_hypothesis_config.data,
-    )
-    if config_registry is not None:
-        try:
-            config_registry.register_or_verify(
-                "hypothesis", fresh_hypothesis_config.config_version, fresh_hypothesis_config.data,
-            )
-        except ConfigIdentityError as exc:
-            errors.append(
-                f"hypothesis.yaml changed since it was registered earlier in this operation "
-                f"(Stage 3 mandatory live re-read): {exc}"
-            )
+    active_config_registry = config_registry if config_registry is not None else ConfigRegistry()
+    try:
+        fresh_registered = active_config_registry.register_or_verify(
+            "hypothesis", fresh_hypothesis_config.config_version, fresh_hypothesis_config.data,
+            fresh_hypothesis_config.raw_texts,
+        )
+    except ConfigIdentityError as exc:
+        errors.append(
+            f"hypothesis.yaml changed since it was registered earlier in this operation "
+            f"(Stage 3 mandatory live re-read): {exc}"
+        )
+        fresh_registered = register_config_version(
+            "hypothesis", fresh_hypothesis_config.config_version, fresh_hypothesis_config.data,
+            fresh_hypothesis_config.raw_texts,
+        )
     candidate_ok, candidate_errors = fresh_registered.verify(hypothesis_config.config_version, hypothesis_config.data)
     if not candidate_ok:
         errors.append(

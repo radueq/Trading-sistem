@@ -38,12 +38,12 @@ import pandas as pd
 
 from data_foundation.pit import access as pit
 
-from config_identity.registry import ConfigRegistry
+from config_identity.registry import ConfigIdentityError, ConfigRegistry, register_config_version
 from discovery.candidate.convergence import (
     active_lanes_for, build_descriptive_metrics, compute_extremeness, reason_codes_for,
 )
 from discovery.candidate.selector import select_candidates
-from discovery.config.loader import DiscoveryConfig, load_config
+from discovery.config.loader import DiscoveryConfig, load_config, reparse_raw_texts
 from discovery.eligibility.engine import evaluate_eligibility
 from discovery.features import momentum, relative_strength, trend, volatility, volume
 from discovery.models.entities import (
@@ -198,34 +198,68 @@ def _observation_to_candidate(obs: DiscoveryObservation) -> DiscoveryCandidate:
 
 def _register_or_verify_discovery_config(config: DiscoveryConfig, config_registry: Optional[ConfigRegistry]) -> DiscoveryConfig:
     """Stage 3 -- config identity infrastructure (decision registry,
-    Stage 3; authorized 2026-10-07). When `config_registry` is
-    supplied: the FIRST call for the "discovery" domain registers
-    `config` as this operation's own pinned baseline; every SUBSEQUENT
-    call verifies its candidate against that SAME baseline (label +
-    structurally-normalized content, both checked), raising
-    `ConfigIdentityError` on a mismatch BEFORE any computation runs --
-    never silently proceeding on a config that changed under the
-    operation's feet. Returns a `DiscoveryConfig` whose four fields are
-    the RECURSIVELY FROZEN snapshot (never the original, independently
-    mutable dicts) -- the operation reads config content EXCLUSIVELY
-    from this returned object from here on. `config_version` itself is
-    carried forward verbatim, never recomputed (Discovery's own
-    multi-source `sha256("".join(raw_texts))[:12]` combination rule,
-    preserved byte-for-byte in `discovery/config/loader.py`, unchanged).
-    When `config_registry` is `None` (the default -- every pre-Stage-3
-    call site), this is a no-op passthrough of `config` unchanged."""
-    if config_registry is None:
-        return config
-    content = {
+    Stage 3; authorized 2026-10-07; CORRECTED round 2 -- GPT changes-
+    required verdict on `8650f17`). Mandatory by DEFAULT: `config_registry`
+    is optional only for SHARING one verified baseline across multiple
+    calls -- omitting it still performs a full, call-scoped verification
+    against a throwaway local `ConfigRegistry`, never a bypass.
+
+    Two separate checks, every single call, regardless of
+    `config_registry`:
+    (1) self-consistency -- `config.raw_texts` is reparsed
+        INDEPENDENTLY via `reparse_raw_texts()` (the exact parse+hash
+        code `load_config()` itself uses, never re-derived or
+        approximated), and the result is verified against `config`'s
+        OWN claimed `config_version`/fields. This is what makes even
+        the FIRST registration for a domain trustworthy on a
+        brand-new registry: the reference is never seeded from
+        whatever (version, content) the caller's object merely
+        CLAIMS, always from an independent re-derivation of its own
+        retained raw source text.
+    (2) cross-call consistency -- the now-proven-self-consistent
+        result is registered-or-verified against `config_registry`
+        (shared across calls, or a local throwaway one when omitted)
+        -- catching a config that changed between an EARLIER call
+        sharing the same registry and this one.
+    Both raise `ConfigIdentityError` BEFORE any computation runs --
+    never silently proceeding on a config that disagrees with its own
+    source or with an earlier call in the same operation.
+
+    Returns a `DiscoveryConfig` whose four fields are the RECURSIVELY
+    FROZEN snapshot (never the original, independently mutable dicts)
+    -- the operation reads config content EXCLUSIVELY from this
+    returned object from here on. `config_version` itself is carried
+    forward verbatim, never recomputed (Discovery's own multi-source
+    `sha256("".join(raw_texts))[:12]` combination rule, preserved
+    byte-for-byte in `discovery/config/loader.py`, unchanged)."""
+    registry = config_registry if config_registry is not None else ConfigRegistry()
+
+    ground_truth_config = reparse_raw_texts(config.raw_texts)
+    ground_truth_content = {
+        "features": ground_truth_config.features, "states": ground_truth_config.states,
+        "discovery": ground_truth_config.discovery, "eligibility": ground_truth_config.eligibility,
+    }
+    ground_truth = register_config_version(
+        "discovery", ground_truth_config.config_version, ground_truth_content, config.raw_texts,
+    )
+
+    candidate_content = {
         "features": config.features, "states": config.states,
         "discovery": config.discovery, "eligibility": config.eligibility,
     }
-    registered = config_registry.register_or_verify("discovery", config.config_version, content)
+    self_ok, self_errors = ground_truth.verify(config.config_version, candidate_content)
+    if not self_ok:
+        raise ConfigIdentityError(
+            "discovery config is not self-consistent -- its claimed config_version/content does not "
+            f"match what its own raw_texts actually parse to: {'; '.join(self_errors)}"
+        )
+
+    registered = registry.register_or_verify("discovery", ground_truth.version, ground_truth.content, ground_truth.raw_texts)
     frozen = registered.content
     return DiscoveryConfig(
         features=frozen["features"], states=frozen["states"],
         discovery=frozen["discovery"], eligibility=frozen["eligibility"],
-        config_version=config.config_version,
+        config_version=registered.version, raw_texts=registered.raw_texts,
     )
 
 
@@ -243,9 +277,10 @@ def compute_discovery_observations(
     `run_discovery()` is a thin wrapper around this function -- see below.
 
     `config_registry` (Stage 3, optional, default `None` -- see
-    `_register_or_verify_discovery_config()`): when supplied, registers
-    or verifies `config` against the SAME shared registry's "discovery"
-    domain, and consumes exclusively the frozen result."""
+    `_register_or_verify_discovery_config()`): verification is MANDATORY
+    regardless -- supplying it only shares the verified baseline across
+    multiple calls; omitting it still verifies `config` locally, against
+    its own raw source text. Consumes exclusively the frozen result."""
     config = config or load_config()
     config = _register_or_verify_discovery_config(config, config_registry)
     states_config = config.states
@@ -370,6 +405,8 @@ def run_discovery(
     copies."""
     config = config or load_config()
     config = _register_or_verify_discovery_config(config, config_registry)
-    observations = compute_discovery_observations(conn, security_ids, as_of, benchmark_security_id, config)
+    observations = compute_discovery_observations(
+        conn, security_ids, as_of, benchmark_security_id, config, config_registry=config_registry,
+    )
     candidates = [_observation_to_candidate(obs) for obs in observations]
     return select_candidates(candidates, config.discovery)

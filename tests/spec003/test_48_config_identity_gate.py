@@ -1,14 +1,20 @@
 """TEST 48 -- the Stage 3 config identity mechanism wired into
 `run_evaluation()` (decision registry, Stage 3; authorized
-2026-10-07), verified through the REAL engine -- registers/verifies
-BOTH `discovery_config` and `evaluation_config` into the SAME shared
-`ConfigRegistry`, and consumes exclusively the frozen result (including
-indirectly, through `_collect_observations()`'s own Discovery calls).
+2026-10-07; CORRECTED round 2 -- GPT changes-required verdict on
+commit `8650f17`), verified through the REAL engine -- registers/
+verifies BOTH `discovery_config` and `evaluation_config`, and consumes
+exclusively the frozen result (including indirectly, through
+`_collect_observations()`'s own Discovery calls, which now share the
+SAME registry).
 
-`config_registry` is optional, default `None` -- every pre-Stage-3
-test in this package (TEST 1-47) is completely unaffected, including
-`reduced_discovery_config`/`fast_evaluation_config`, which deliberately
-differ from the real on-disk YAML content.
+Verification is MANDATORY BY DEFAULT (finding #1) -- `config_registry`
+is optional only for SHARING one verified baseline across multiple
+calls; omitting it still verifies locally. Every pre-Stage-3 test in
+this package (TEST 1-47) remains unaffected ONLY because
+`reduced_discovery_config`/`fast_evaluation_config` are now genuinely
+loader-sourced (`tests/fixtures/config_overrides.py`) -- their content
+deliberately differs from the real on-disk YAML, but their
+`config_version` genuinely, differently corresponds to that content.
 """
 from dataclasses import replace
 
@@ -97,13 +103,16 @@ def test_run_evaluation_rejects_an_evaluation_config_whose_label_disagrees_with_
         )
 
 
-def test_default_config_registry_none_leaves_existing_behavior_unchanged(
+def test_genuinely_loader_sourced_alternative_configs_keep_working_without_any_config_registry(
     conn, tiny_universe, reduced_discovery_config, fast_evaluation_config, formal_calendar_registry, formal_calendar_id,
 ):
     """No config_registry supplied -- reduced_discovery_config/
     fast_evaluation_config, which deliberately differ from the real
-    on-disk YAML, must keep working exactly as every other test in
-    tests/spec003/ relies on."""
+    on-disk YAML, keep working exactly as every other test in
+    tests/spec003/ relies on, PRECISELY BECAUSE they are genuinely
+    loader-sourced (their config_version really, differently
+    corresponds to their own content) -- never because verification
+    is skipped."""
     sigset = _sigset(reduced_discovery_config)
     dev_start, dev_end = DATES[30], DATES[45]
 
@@ -112,3 +121,41 @@ def test_default_config_registry_none_leaves_existing_behavior_unchanged(
         dev_start, dev_end, sigset, reduced_discovery_config, fast_evaluation_config,
         calendar_registry=formal_calendar_registry, calendar_id=formal_calendar_id,
     )
+
+
+def test_a_tampered_discovery_config_is_rejected_on_the_very_first_call_with_a_brand_new_registry(
+    conn, tiny_universe, reduced_discovery_config, fast_evaluation_config, formal_calendar_registry, formal_calendar_id,
+):
+    """Finding #2: the FIRST registration for a domain must never trust
+    whatever the caller's object merely claims -- even a brand-new
+    `ConfigRegistry()` must reject it."""
+    sigset = _sigset(reduced_discovery_config)
+    dev_start, dev_end = DATES[30], DATES[45]
+    tampered_discovery = replace(reduced_discovery_config, eligibility={**reduced_discovery_config.eligibility, "minimum_history_days": 999})
+    assert tampered_discovery.config_version == reduced_discovery_config.config_version
+
+    with pytest.raises(ConfigIdentityError, match="is not self-consistent"):
+        run_evaluation(
+            conn, tiny_universe["non_benchmark_ids"], tiny_universe["benchmark_security_id"],
+            dev_start, dev_end, sigset, tampered_discovery, fast_evaluation_config,
+            calendar_registry=formal_calendar_registry, calendar_id=formal_calendar_id, config_registry=ConfigRegistry(),
+        )
+
+
+def test_a_tampered_discovery_config_is_rejected_even_without_any_config_registry(
+    conn, tiny_universe, reduced_discovery_config, fast_evaluation_config, formal_calendar_registry, formal_calendar_id,
+):
+    """Finding #1: protection is the DEFAULT -- this is the exact shape
+    of tamper GPT reproduced through `build_research_queue()` (TEST
+    75's own repro); `run_evaluation()` must refuse it identically,
+    with no registry at all."""
+    sigset = _sigset(reduced_discovery_config)
+    dev_start, dev_end = DATES[30], DATES[45]
+    tampered_discovery = replace(reduced_discovery_config, eligibility={**reduced_discovery_config.eligibility, "minimum_history_days": 999})
+
+    with pytest.raises(ConfigIdentityError, match="is not self-consistent"):
+        run_evaluation(
+            conn, tiny_universe["non_benchmark_ids"], tiny_universe["benchmark_security_id"],
+            dev_start, dev_end, sigset, tampered_discovery, fast_evaluation_config,
+            calendar_registry=formal_calendar_registry, calendar_id=formal_calendar_id,
+        )

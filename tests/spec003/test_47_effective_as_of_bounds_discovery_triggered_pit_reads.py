@@ -48,13 +48,11 @@ def test_effective_as_of_bounds_every_pit_read_including_discovery_triggered_one
 
     monkeypatch.setattr(pit_access, "get_price_series_as_of", _spying_get_price_series_as_of)
 
-    from dataclasses import replace
+    from fixtures.config_overrides import evaluation_config_with_overrides
     # Two horizons from the SAME entry window: one lands inside
     # development (but past data_as_of -> INSUFFICIENT_FUTURE_DATA),
     # one lands past development_end -> CROSSES_LOCKED_OOS.
-    two_horizon_cfg = replace(fast_evaluation_config, data={
-        **fast_evaluation_config.data, "horizons": {"unit": "BARS", "values": [5, 20]},
-    })
+    two_horizon_cfg = evaluation_config_with_overrides(horizons={"unit": "BARS", "values": [5, 20]})
 
     sig = EvaluationSignatureDefinition(
         signature_id="VOLATILITY_EXTREME_COMPRESSION", lane_conditions=(LaneStateCondition("volatility", "EXTREME_COMPRESSION"),),

@@ -173,7 +173,7 @@ def build_performance_report() -> tuple[str, float]:
     from evaluation.registry.signatures import freeze_signature_set
 
     from spec003.fixtures.tiny_universe import ALL_DATASETS, BENCHMARK, DATES
-    from dataclasses import replace
+    from fixtures.config_overrides import discovery_config_with_overrides
 
     conn = connect_and_init(":memory:")
     now = utc_now_iso()
@@ -199,8 +199,7 @@ def build_performance_report() -> tuple[str, float]:
     non_bench_ids = [sid for tk, sid in security_ids.items() if tk != BENCHMARK["ticker"]]
 
     base_discovery_cfg = load_discovery_config()
-    discovery_cfg = replace(
-        base_discovery_cfg,
+    discovery_cfg = discovery_config_with_overrides(
         features={**base_discovery_cfg.features, "percentile_window": 15, "percentile_min_periods": 15},
         eligibility={**base_discovery_cfg.eligibility, "minimum_history_days": 15, "minimum_adv_20": 1000},
     )

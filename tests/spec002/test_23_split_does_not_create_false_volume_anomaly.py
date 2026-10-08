@@ -23,8 +23,6 @@ Not testing "RVOL == 1 exactly after a split" (real volume varies
 naturally) -- isolating the split's own mechanical contribution by
 holding everything else constant, per Radu's fixture design.
 """
-from dataclasses import replace
-
 import pytest
 
 from data_foundation.adapters.yfinance_adapter import YFinanceAdapter
@@ -34,6 +32,7 @@ from fixtures.market_data import make_bars
 
 from discovery.config.loader import load_config
 from discovery.engine import run_discovery
+from fixtures.config_overrides import discovery_config_with_overrides
 from spec002.fixtures.synthetic_universe import DATES
 
 # 30 pre-split bars + 6 post-split bars; as_of sits 6 trading days after
@@ -77,8 +76,7 @@ def test_split_alone_does_not_move_volume_percentile_off_neutral(conn, now, univ
     ing.ingest_corporate_actions(conn, adapter, sid, ticker, start, end, now)
 
     base_config = load_config()
-    config = replace(
-        base_config,
+    config = discovery_config_with_overrides(
         features={**base_config.features, "percentile_window": 20, "percentile_min_periods": 20},
         eligibility={**base_config.eligibility, "minimum_history_days": 20, "minimum_adv_20": 50},
     )

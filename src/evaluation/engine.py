@@ -32,7 +32,7 @@ from __future__ import annotations
 from dataclasses import replace
 from typing import Optional
 
-from config_identity.registry import ConfigRegistry
+from config_identity.registry import ConfigIdentityError, ConfigRegistry, register_config_version
 
 from data_foundation.calendar.contract import (
     require_calendar_covers_window,
@@ -43,6 +43,7 @@ from data_foundation.calendar.registry import CalendarRegistry
 from data_foundation.pit import access as pit
 
 from discovery.config.loader import DiscoveryConfig
+from discovery.config.loader import reparse_raw_texts as reparse_discovery_raw_texts
 from discovery.engine import DISCOVERY_ENGINE_VERSION, compute_discovery_observations
 
 from evaluation.baseline.universe import (
@@ -50,6 +51,7 @@ from evaluation.baseline.universe import (
     robust_iqr, stratified_baseline_point_estimate,
 )
 from evaluation.config.loader import EvaluationConfig
+from evaluation.config.loader import reparse_raw_texts as reparse_evaluation_raw_texts
 from evaluation.models.entities import (
     BaselineComparison, ConcentrationStats, ConfidenceInterval, DescriptiveStats,
     EvaluationRunRegistry, EvidenceProfile, MissingnessReport, OutcomeStatus,
@@ -131,10 +133,12 @@ def _resolve_session_dates_from_calendar(conn, benchmark_security_id, developmen
     return dates, bench_bars
 
 
-def _collect_observations(conn, security_ids, observation_dates, benchmark_security_id, discovery_config):
+def _collect_observations(conn, security_ids, observation_dates, benchmark_security_id, discovery_config, config_registry=None):
     all_obs = []
     for as_of in observation_dates:
-        all_obs.extend(compute_discovery_observations(conn, security_ids, as_of, benchmark_security_id, discovery_config))
+        all_obs.extend(compute_discovery_observations(
+            conn, security_ids, as_of, benchmark_security_id, discovery_config, config_registry=config_registry,
+        ))
     return all_obs
 
 
@@ -407,41 +411,80 @@ def run_evaluation(
     the fetch itself, not only which fields of an already-fetched bar
     get used afterward."""
     # Stage 3 -- config identity infrastructure (decision registry,
-    # Stage 3; authorized 2026-10-07; optional, default None -- every
-    # pre-Stage-3 call site is unaffected). When `config_registry` is
-    # supplied: the FIRST call for each domain within it registers
-    # `discovery_config`/`evaluation_config` as THIS operation's own
-    # pinned baseline; a SUBSEQUENT call sharing the same registry
-    # (e.g. a later run in the same workflow) verifies its candidate
-    # against that SAME baseline, raising before any computation on a
-    # mismatch. Both `discovery_config`/`evaluation_config` are then
-    # rebuilt from the recursively-frozen, verified content -- every
-    # read below (directly, and via `_collect_observations()`'s own
-    # `compute_discovery_observations()` calls, which receive this
-    # SAME already-frozen `discovery_config`) consumes exclusively
-    # this snapshot, never the caller's own independently-mutable
-    # dicts. `config_version` itself is carried forward verbatim,
-    # never recomputed.
-    if config_registry is not None:
-        discovery_content = {
-            "features": discovery_config.features, "states": discovery_config.states,
-            "discovery": discovery_config.discovery, "eligibility": discovery_config.eligibility,
-        }
-        registered_discovery = config_registry.register_or_verify(
-            "discovery", discovery_config.config_version, discovery_content,
+    # Stage 3; authorized 2026-10-07; CORRECTED round 2 -- GPT changes-
+    # required verdict on `8650f17`). Mandatory by DEFAULT: `config_registry`
+    # is optional only for SHARING one verified baseline across multiple
+    # calls (e.g. a later run in the same workflow) -- omitting it still
+    # performs a full, call-scoped verification against a throwaway local
+    # `ConfigRegistry`, never a bypass.
+    #
+    # Both `discovery_config`/`evaluation_config` go through TWO separate
+    # checks, every single call:
+    # (1) self-consistency -- each one's own `raw_texts` is reparsed
+    #     INDEPENDENTLY (`reparse_discovery_raw_texts()`/
+    #     `reparse_evaluation_raw_texts()`, the exact parse+hash code
+    #     each `load_config()` itself uses), and the result verified
+    #     against the caller-supplied object's OWN claimed
+    #     config_version/content. The reference is never seeded from
+    #     whatever the caller's object merely claims.
+    # (2) cross-call consistency -- the self-consistent result is then
+    #     registered-or-verified against `config_registry` (shared, or
+    #     a local throwaway one when omitted).
+    # Both `discovery_config`/`evaluation_config` are then rebuilt from
+    # the recursively-frozen, verified content -- every read below
+    # (directly, and via `_collect_observations()`'s own
+    # `compute_discovery_observations()` calls, which now receive this
+    # SAME registry so they verify against the identical pinned
+    # baseline rather than a second, independent local one) consumes
+    # exclusively this snapshot, never the caller's own independently-
+    # mutable dicts. `config_version` itself is carried forward
+    # verbatim, never recomputed.
+    registry = config_registry if config_registry is not None else ConfigRegistry()
+
+    ground_truth_discovery = reparse_discovery_raw_texts(discovery_config.raw_texts)
+    ground_truth_discovery_content = {
+        "features": ground_truth_discovery.features, "states": ground_truth_discovery.states,
+        "discovery": ground_truth_discovery.discovery, "eligibility": ground_truth_discovery.eligibility,
+    }
+    ground_truth_discovery_entry = register_config_version(
+        "discovery", ground_truth_discovery.config_version, ground_truth_discovery_content, discovery_config.raw_texts,
+    )
+    candidate_discovery_content = {
+        "features": discovery_config.features, "states": discovery_config.states,
+        "discovery": discovery_config.discovery, "eligibility": discovery_config.eligibility,
+    }
+    ok, errors = ground_truth_discovery_entry.verify(discovery_config.config_version, candidate_discovery_content)
+    if not ok:
+        raise ConfigIdentityError(
+            "discovery_config is not self-consistent -- its claimed config_version/content does not "
+            f"match what its own raw_texts actually parse to: {'; '.join(errors)}"
         )
-        frozen_discovery = registered_discovery.content
-        discovery_config = DiscoveryConfig(
-            features=frozen_discovery["features"], states=frozen_discovery["states"],
-            discovery=frozen_discovery["discovery"], eligibility=frozen_discovery["eligibility"],
-            config_version=discovery_config.config_version,
+    registered_discovery = registry.register_or_verify(
+        "discovery", ground_truth_discovery_entry.version, ground_truth_discovery_entry.content, ground_truth_discovery_entry.raw_texts,
+    )
+    frozen_discovery = registered_discovery.content
+    discovery_config = DiscoveryConfig(
+        features=frozen_discovery["features"], states=frozen_discovery["states"],
+        discovery=frozen_discovery["discovery"], eligibility=frozen_discovery["eligibility"],
+        config_version=registered_discovery.version, raw_texts=registered_discovery.raw_texts,
+    )
+
+    ground_truth_evaluation = reparse_evaluation_raw_texts(evaluation_config.raw_texts)
+    ground_truth_evaluation_entry = register_config_version(
+        "evaluation", ground_truth_evaluation.config_version, ground_truth_evaluation.data, evaluation_config.raw_texts,
+    )
+    ok, errors = ground_truth_evaluation_entry.verify(evaluation_config.config_version, evaluation_config.data)
+    if not ok:
+        raise ConfigIdentityError(
+            "evaluation_config is not self-consistent -- its claimed config_version/content does not "
+            f"match what its own raw_texts actually parse to: {'; '.join(errors)}"
         )
-        registered_evaluation = config_registry.register_or_verify(
-            "evaluation", evaluation_config.config_version, evaluation_config.data,
-        )
-        evaluation_config = EvaluationConfig(
-            data=registered_evaluation.content, config_version=evaluation_config.config_version,
-        )
+    registered_evaluation = registry.register_or_verify(
+        "evaluation", ground_truth_evaluation_entry.version, ground_truth_evaluation_entry.content, ground_truth_evaluation_entry.raw_texts,
+    )
+    evaluation_config = EvaluationConfig(
+        data=registered_evaluation.content, config_version=registered_evaluation.version, raw_texts=registered_evaluation.raw_texts,
+    )
 
     ev_data = evaluation_config.data
     mode = ev_data["evaluation_mode"]
@@ -541,7 +584,7 @@ def run_evaluation(
         session_dates, benchmark_bars = _resolve_session_dates(
             conn, benchmark_security_id, development_start, development_end, effective_as_of,
         )
-    all_obs = _collect_observations(conn, security_ids, session_dates, benchmark_security_id, discovery_config)
+    all_obs = _collect_observations(conn, security_ids, session_dates, benchmark_security_id, discovery_config, config_registry=registry)
 
     involved_security_ids = sorted({o.security_id for o in all_obs})
     bars_by_security = _fetch_bars_by_security(conn, involved_security_ids, effective_as_of)
