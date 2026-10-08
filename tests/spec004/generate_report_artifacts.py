@@ -40,6 +40,8 @@ from hypothesis.proposals.validator import validate_proposal
 from hypothesis.registry.hypotheses import HypothesisRegistry, build_hypothesis_id, hypothesis_fingerprint, materialize_variants
 from hypothesis.registry.preregistration import PreregistrationError, preregister_hypothesis
 
+from config_identity.registry import ConfigRegistry
+
 from spec004.conftest import (
     DISCOVERY_CONFIG_VERSION, EVALUATION_CONFIG_VERSION, EVALUATION_RUN_ID, SIGNATURE_ID, SIGNATURE_SET_ID,
     approved_human_decision, make_evidence_profile, make_proposal_raw,
@@ -49,6 +51,11 @@ import evaluation.models.entities as eval_entities
 
 DCFG = load_discovery_config()
 HCFG = load_hypothesis_config()
+# Stage 3, round-4 fix: preregister_hypothesis() now requires an
+# earlier-established context -- this module-level registry plays that
+# role for this script's own real pipeline run.
+HCFG_REGISTRY = ConfigRegistry()
+HCFG_REGISTRY.register_or_verify("hypothesis", HCFG.config_version, HCFG.data, HCFG.raw_texts)
 
 
 def _signature_definition():
@@ -119,7 +126,7 @@ def _build_and_preregister(raw_proposal: dict, registry: HypothesisRegistry, run
     try:
         hyp = preregister_hypothesis(
             draft, variants, proposal=proposal, proposal_validation=validation, consensus=consensus,
-            registry=registry, run_registry=run_reg, hypothesis_config=HCFG,
+            registry=registry, run_registry=run_reg, hypothesis_config=HCFG, config_registry=HCFG_REGISTRY,
         )
     except PreregistrationError as exc:
         registry.mark_proposal_rejected(proposal.proposal_id)

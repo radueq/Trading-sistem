@@ -62,7 +62,7 @@ def test_register_refuses_a_hand_built_first_time_preregistered_hypothesis(entry
     assert reg.get(fabricated.hypothesis_id) is None
 
 
-def test_preregister_hypothesis_succeeds_through_the_real_gate(entry_definition, horizon_candidates, evidence_provenance, hypothesis_config, run_registry):
+def test_preregister_hypothesis_succeeds_through_the_real_gate(entry_definition, horizon_candidates, evidence_provenance, hypothesis_config, hypothesis_config_registry, run_registry):
     draft = _draft(entry_definition, horizon_candidates, evidence_provenance, hypothesis_config)
     variants = materialize_variants(draft, created_at="2026-09-25T00:00:00Z")
     draft = dataclasses.replace(draft, variant_ids=tuple(v.strategy_variant_id for v in variants))
@@ -73,6 +73,7 @@ def test_preregister_hypothesis_succeeds_through_the_real_gate(entry_definition,
     frozen = preregister_hypothesis(
         draft, variants, proposal=proposal, proposal_validation=ProposalValidationResult(True, "OK", (), proposal.proposal_id),
         consensus=consensus, registry=reg, run_registry=run_registry, hypothesis_config=hypothesis_config,
+        config_registry=hypothesis_config_registry,
     )
     assert frozen.status == HypothesisStatus.PREREGISTERED.value
     assert reg.get(frozen.hypothesis_id) == frozen
@@ -80,7 +81,7 @@ def test_preregister_hypothesis_succeeds_through_the_real_gate(entry_definition,
         assert reg.get_variant(v.strategy_variant_id) == v
 
 
-def test_preregister_hypothesis_rejects_without_human_approve(entry_definition, horizon_candidates, evidence_provenance, hypothesis_config, run_registry):
+def test_preregister_hypothesis_rejects_without_human_approve(entry_definition, horizon_candidates, evidence_provenance, hypothesis_config, hypothesis_config_registry, run_registry):
     draft = _draft(entry_definition, horizon_candidates, evidence_provenance, hypothesis_config)
     variants = materialize_variants(draft, created_at="t")
     draft = dataclasses.replace(draft, variant_ids=tuple(v.strategy_variant_id for v in variants))
@@ -94,6 +95,7 @@ def test_preregister_hypothesis_rejects_without_human_approve(entry_definition, 
             preregister_hypothesis(
                 draft, variants, proposal=proposal, proposal_validation=ProposalValidationResult(True, "OK", (), proposal.proposal_id),
                 consensus=consensus, registry=reg, run_registry=run_registry, hypothesis_config=hypothesis_config,
+                config_registry=hypothesis_config_registry,
             )
             assert False, "expected PreregistrationError"
         except PreregistrationError:
@@ -101,7 +103,7 @@ def test_preregister_hypothesis_rejects_without_human_approve(entry_definition, 
     assert reg.get(draft.hypothesis_id) is None
 
 
-def test_preregister_hypothesis_rejects_an_invalid_proposal(entry_definition, horizon_candidates, evidence_provenance, hypothesis_config, run_registry):
+def test_preregister_hypothesis_rejects_an_invalid_proposal(entry_definition, horizon_candidates, evidence_provenance, hypothesis_config, hypothesis_config_registry, run_registry):
     draft = _draft(entry_definition, horizon_candidates, evidence_provenance, hypothesis_config)
     variants = materialize_variants(draft, created_at="t")
     draft = dataclasses.replace(draft, variant_ids=tuple(v.strategy_variant_id for v in variants))
@@ -113,13 +115,14 @@ def test_preregister_hypothesis_rejects_an_invalid_proposal(entry_definition, ho
             draft, variants, proposal=proposal,
             proposal_validation=ProposalValidationResult(False, "HYPOTHESIS_COMPLEXITY_EXCEEDED", ("too many conditions",), proposal.proposal_id),
             consensus=consensus, registry=reg, run_registry=run_registry, hypothesis_config=hypothesis_config,
+            config_registry=hypothesis_config_registry,
         )
         assert False, "expected PreregistrationError"
     except PreregistrationError as e:
         assert "too many conditions" in str(e)
 
 
-def test_preregister_hypothesis_rejects_a_draft_already_claiming_preregistered(entry_definition, horizon_candidates, evidence_provenance, hypothesis_config, run_registry):
+def test_preregister_hypothesis_rejects_a_draft_already_claiming_preregistered(entry_definition, horizon_candidates, evidence_provenance, hypothesis_config, hypothesis_config_registry, run_registry):
     already_claiming = _draft(entry_definition, horizon_candidates, evidence_provenance, hypothesis_config, status=HypothesisStatus.PREREGISTERED.value)
     variants = materialize_variants(already_claiming, created_at="t")
     already_claiming = dataclasses.replace(already_claiming, variant_ids=tuple(v.strategy_variant_id for v in variants))
@@ -130,6 +133,7 @@ def test_preregister_hypothesis_rejects_a_draft_already_claiming_preregistered(e
         preregister_hypothesis(
             already_claiming, variants, proposal=proposal, proposal_validation=ProposalValidationResult(True, "OK", (), proposal.proposal_id),
             consensus=consensus, registry=reg, run_registry=run_registry, hypothesis_config=hypothesis_config,
+            config_registry=hypothesis_config_registry,
         )
         assert False, "expected PreregistrationError"
     except PreregistrationError as e:

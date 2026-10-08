@@ -14,7 +14,7 @@ from hypothesis.registry.persistence import JsonlAuditLog, PersistentHypothesisR
 from spec004.conftest import approved_human_decision, make_proposal_raw
 
 
-def _commit(tmp_path, entry_definition, horizon_candidates, evidence_provenance, hypothesis_config, run_registry):
+def _commit(tmp_path, entry_definition, horizon_candidates, evidence_provenance, hypothesis_config, hypothesis_config_registry, run_registry):
     import dataclasses
 
     from hypothesis.models.entities import (
@@ -46,13 +46,13 @@ def _commit(tmp_path, entry_definition, horizon_candidates, evidence_provenance,
     frozen = persistent.preregister(
         draft, variants, proposal=proposal, proposal_validation=ProposalValidationResult(True, "OK", (), proposal.proposal_id),
         consensus=compute_consensus(proposal.proposal_id, (), human_decision=approved_human_decision(at="t")),
-        run_registry=run_registry, hypothesis_config=hypothesis_config,
+        run_registry=run_registry, hypothesis_config=hypothesis_config, config_registry=hypothesis_config_registry,
     )
     return log_path, frozen, variants
 
 
-def test_exactly_one_new_line_is_appended_for_the_whole_commit(tmp_path, entry_definition, horizon_candidates, evidence_provenance, hypothesis_config, run_registry):
-    log_path, frozen, variants = _commit(tmp_path, entry_definition, horizon_candidates, evidence_provenance, hypothesis_config, run_registry)
+def test_exactly_one_new_line_is_appended_for_the_whole_commit(tmp_path, entry_definition, horizon_candidates, evidence_provenance, hypothesis_config, hypothesis_config_registry, run_registry):
+    log_path, frozen, variants = _commit(tmp_path, entry_definition, horizon_candidates, evidence_provenance, hypothesis_config, hypothesis_config_registry, run_registry)
     lines = log_path.read_text().strip().split("\n")
     assert len(lines) == 1, "the hypothesis and every variant must be written in ONE append(), not len(variants)+1"
     record = json.loads(lines[0])
@@ -61,22 +61,22 @@ def test_exactly_one_new_line_is_appended_for_the_whole_commit(tmp_path, entry_d
     assert len(record["payload"]["variants"]) == len(variants)
 
 
-def test_replay_reconstructs_the_hypothesis_and_every_variant_from_that_one_line(tmp_path, entry_definition, horizon_candidates, evidence_provenance, hypothesis_config, run_registry):
-    log_path, frozen, variants = _commit(tmp_path, entry_definition, horizon_candidates, evidence_provenance, hypothesis_config, run_registry)
+def test_replay_reconstructs_the_hypothesis_and_every_variant_from_that_one_line(tmp_path, entry_definition, horizon_candidates, evidence_provenance, hypothesis_config, hypothesis_config_registry, run_registry):
+    log_path, frozen, variants = _commit(tmp_path, entry_definition, horizon_candidates, evidence_provenance, hypothesis_config, hypothesis_config_registry, run_registry)
     replayed = JsonlAuditLog(log_path).replay()
     assert replayed.get(frozen.hypothesis_id) == frozen
     for v in variants:
         assert replayed.get_variant(v.strategy_variant_id) == v
 
 
-def test_no_commit_line_means_no_hypothesis_at_all_never_a_partial_one(tmp_path, entry_definition, horizon_candidates, evidence_provenance, hypothesis_config, run_registry):
+def test_no_commit_line_means_no_hypothesis_at_all_never_a_partial_one(tmp_path, entry_definition, horizon_candidates, evidence_provenance, hypothesis_config, hypothesis_config_registry, run_registry):
     # Simulates a crash BEFORE the single atomic append() -- the log file
     # never receives the line, so replay must show NOTHING for this
     # hypothesis, never a partially-registered one.
     log_path = tmp_path / "audit.jsonl"
     replayed_before = JsonlAuditLog(log_path).replay()
     assert replayed_before.all_hypotheses() == ()
-    _, frozen, variants = _commit(tmp_path, entry_definition, horizon_candidates, evidence_provenance, hypothesis_config, run_registry)
+    _, frozen, variants = _commit(tmp_path, entry_definition, horizon_candidates, evidence_provenance, hypothesis_config, hypothesis_config_registry, run_registry)
     replayed_after = JsonlAuditLog(log_path).replay()
     assert replayed_after.get(frozen.hypothesis_id) == frozen
     assert len(replayed_after.variants_for(frozen.hypothesis_id)) == len(variants)

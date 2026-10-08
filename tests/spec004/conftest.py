@@ -64,6 +64,22 @@ def hypothesis_config():
 
 
 @pytest.fixture
+def hypothesis_config_registry(hypothesis_config):
+    """A `ConfigRegistry` with the "hypothesis" domain already
+    registered -- simulates the EARLIER step in a real workflow (e.g.
+    proposal validation, before the draft is even built) that must
+    establish this context BEFORE `preregister_hypothesis()`'s own
+    gate ever runs (Stage 3, round-4 fix: the gate itself must never
+    be the place that first establishes trust in a config)."""
+    from config_identity.registry import ConfigRegistry
+    registry = ConfigRegistry()
+    registry.register_or_verify(
+        "hypothesis", hypothesis_config.config_version, hypothesis_config.data, hypothesis_config.raw_texts,
+    )
+    return registry
+
+
+@pytest.fixture
 def registry():
     return HypothesisRegistry()
 

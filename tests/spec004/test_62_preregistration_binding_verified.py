@@ -49,18 +49,19 @@ def _draft(
     return draft, variants
 
 
-def test_consistent_binding_succeeds(entry_definition, horizon_candidates, evidence_provenance, hypothesis_config, run_registry):
+def test_consistent_binding_succeeds(entry_definition, horizon_candidates, evidence_provenance, hypothesis_config, hypothesis_config_registry, run_registry):
     proposal = _proposal("prop_1")
     draft, variants = _draft(entry_definition, horizon_candidates, evidence_provenance, hypothesis_config, proposal_id="prop_1")
     consensus = compute_consensus("prop_1", (), human_decision=approved_human_decision())
     frozen = preregister_hypothesis(
         draft, variants, proposal=proposal, proposal_validation=ProposalValidationResult(True, "OK", (), "prop_1"),
         consensus=consensus, registry=HypothesisRegistry(), run_registry=run_registry, hypothesis_config=hypothesis_config,
+        config_registry=hypothesis_config_registry,
     )
     assert frozen.status == HypothesisStatus.PREREGISTERED.value
 
 
-def test_proposal_validation_for_a_different_proposal_is_rejected(entry_definition, horizon_candidates, evidence_provenance, hypothesis_config, run_registry):
+def test_proposal_validation_for_a_different_proposal_is_rejected(entry_definition, horizon_candidates, evidence_provenance, hypothesis_config, hypothesis_config_registry, run_registry):
     proposal = _proposal("prop_1")
     draft, variants = _draft(entry_definition, horizon_candidates, evidence_provenance, hypothesis_config, proposal_id="prop_1")
     consensus = compute_consensus("prop_1", (), human_decision=approved_human_decision())
@@ -69,10 +70,11 @@ def test_proposal_validation_for_a_different_proposal_is_rejected(entry_definiti
             draft, variants, proposal=proposal,
             proposal_validation=ProposalValidationResult(True, "OK", (), "prop_DIFFERENT"),
             consensus=consensus, registry=HypothesisRegistry(), run_registry=run_registry, hypothesis_config=hypothesis_config,
+            config_registry=hypothesis_config_registry,
         )
 
 
-def test_consensus_for_a_different_proposal_is_rejected(entry_definition, horizon_candidates, evidence_provenance, hypothesis_config, run_registry):
+def test_consensus_for_a_different_proposal_is_rejected(entry_definition, horizon_candidates, evidence_provenance, hypothesis_config, hypothesis_config_registry, run_registry):
     proposal = _proposal("prop_1")
     draft, variants = _draft(entry_definition, horizon_candidates, evidence_provenance, hypothesis_config, proposal_id="prop_1")
     consensus_for_other_proposal = compute_consensus("prop_DIFFERENT", (), human_decision=approved_human_decision())
@@ -80,10 +82,11 @@ def test_consensus_for_a_different_proposal_is_rejected(entry_definition, horizo
         preregister_hypothesis(
             draft, variants, proposal=proposal, proposal_validation=ProposalValidationResult(True, "OK", (), "prop_1"),
             consensus=consensus_for_other_proposal, registry=HypothesisRegistry(), run_registry=run_registry, hypothesis_config=hypothesis_config,
+            config_registry=hypothesis_config_registry,
         )
 
 
-def test_draft_naming_a_different_proposal_than_the_one_supplied_is_rejected(entry_definition, horizon_candidates, evidence_provenance, hypothesis_config, run_registry):
+def test_draft_naming_a_different_proposal_than_the_one_supplied_is_rejected(entry_definition, horizon_candidates, evidence_provenance, hypothesis_config, hypothesis_config_registry, run_registry):
     proposal = _proposal("prop_1")
     # draft's own provenance claims "prop_OTHER", even though the ACTUAL
     # proposal/consensus supplied below are both "prop_1" -- this is
@@ -94,10 +97,11 @@ def test_draft_naming_a_different_proposal_than_the_one_supplied_is_rejected(ent
         preregister_hypothesis(
             draft, variants, proposal=proposal, proposal_validation=ProposalValidationResult(True, "OK", (), "prop_1"),
             consensus=consensus, registry=HypothesisRegistry(), run_registry=run_registry, hypothesis_config=hypothesis_config,
+            config_registry=hypothesis_config_registry,
         )
 
 
-def test_approved_by_disagreeing_with_the_human_decision_is_rejected(entry_definition, horizon_candidates, evidence_provenance, hypothesis_config, run_registry):
+def test_approved_by_disagreeing_with_the_human_decision_is_rejected(entry_definition, horizon_candidates, evidence_provenance, hypothesis_config, hypothesis_config_registry, run_registry):
     proposal = _proposal("prop_1")
     draft, variants = _draft(entry_definition, horizon_candidates, evidence_provenance, hypothesis_config, proposal_id="prop_1", approved_by="someone_else")
     consensus = compute_consensus("prop_1", (), human_decision=approved_human_decision(by="radu"))
@@ -105,10 +109,11 @@ def test_approved_by_disagreeing_with_the_human_decision_is_rejected(entry_defin
         preregister_hypothesis(
             draft, variants, proposal=proposal, proposal_validation=ProposalValidationResult(True, "OK", (), "prop_1"),
             consensus=consensus, registry=HypothesisRegistry(), run_registry=run_registry, hypothesis_config=hypothesis_config,
+            config_registry=hypothesis_config_registry,
         )
 
 
-def test_approved_at_disagreeing_with_the_human_decision_is_rejected(entry_definition, horizon_candidates, evidence_provenance, hypothesis_config, run_registry):
+def test_approved_at_disagreeing_with_the_human_decision_is_rejected(entry_definition, horizon_candidates, evidence_provenance, hypothesis_config, hypothesis_config_registry, run_registry):
     proposal = _proposal("prop_1")
     draft, variants = _draft(
         entry_definition, horizon_candidates, evidence_provenance, hypothesis_config,
@@ -119,4 +124,5 @@ def test_approved_at_disagreeing_with_the_human_decision_is_rejected(entry_defin
         preregister_hypothesis(
             draft, variants, proposal=proposal, proposal_validation=ProposalValidationResult(True, "OK", (), "prop_1"),
             consensus=consensus, registry=HypothesisRegistry(), run_registry=run_registry, hypothesis_config=hypothesis_config,
+            config_registry=hypothesis_config_registry,
         )

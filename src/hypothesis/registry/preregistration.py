@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from config_identity.registry import ConfigIdentityError, ConfigRegistry, register_config_version
+from config_identity.registry import ConfigIdentityError, ConfigRegistry
 
 from evaluation.models.entities import EvaluationRunRegistry
 
@@ -50,50 +50,50 @@ def preregister_hypothesis(
     failing group:
 
     -1. Config identity (Stage 3 -- config identity infrastructure,
-        decision registry, Stage 3; authorized 2026-10-07; the
-        "mandatory live re-read" gate, decision registry C1; CORRECTED
-        round 3 -- GPT changes-required verdict on `955f482`). Every
-        call -- unconditionally, not opt-in -- re-reads
-        `hypothesis.yaml` FRESH, right now, and runs THREE separate
-        checks, none of which substitutes for another:
-        (a) the CALLER-SUPPLIED `hypothesis_config` is verified against
-            that fresh read: its declared `config_version` (label) and
-            its actual `.data` (content), checked SEPARATELY, both
-            normalized to the same representation before the content
-            comparison. A `hypothesis_config` whose label is wrong,
-            whose content is wrong, or both, is refused here.
-        (b) if `config_registry` is ALSO supplied: this fresh read is
-            additionally registered-or-verified against it, catching a
-            config that changed on disk between an EARLIER registration
-            in this same workflow (e.g. at proposal-validation time,
-            sharing the same `ConfigRegistry` instance) and this gate
-            running now -- never merely comparing two in-memory copies
-            taken at the same moment.
+        decision registry, Stage 3; authorized 2026-10-07; CORRECTED
+        round 4 -- GPT changes-required verdict on `565c306`: the gate
+        itself must never be the place that FIRST establishes trust in
+        a config). `config_registry` is now REQUIRED to already have
+        the "hypothesis" domain registered by an EARLIER step in this
+        workflow -- resolved via `ConfigRegistry.resolve()` (raises if
+        nothing is registered yet), NEVER `register_or_verify()`
+        (which would silently accept whatever is offered FIRST, AT the
+        gate, as the reference). Omitting `config_registry`, or
+        supplying one with no "hypothesis" entry yet, is refused here,
+        before any other check and before any registry write -- round
+        3's `draft.strategy_config_version` check alone was
+        insufficient: that label is just a string on the draft, it
+        proves nothing was ALREADY registered anywhere, since any
+        caller can set it to match whatever the live file currently
+        says. Once resolved, THREE checks run against this ONE
+        resolved snapshot, none substituting for another:
+        (a) the mandatory live re-read -- `hypothesis.yaml` is read
+            FRESH, right now, and verified against the resolved
+            snapshot, catching a file that changed on disk since the
+            earlier registration;
+        (b) the CALLER-SUPPLIED `hypothesis_config` argument, verified
+            against the SAME resolved snapshot: its declared `config_
+            version` (label) and its actual `.data` (content), checked
+            SEPARATELY, both normalized to the same representation
+            before the content comparison;
         (c) `draft.strategy_config_version` -- the config version the
-            DRAFT itself was built under, recorded at construction time,
-            travelling WITH the draft object -- must equal the ACTIVE
-            config version actually used at this gate (the verified
-            fresh read's own version). GPT's own reproduction: a draft
-            built under config A, preregistered while BOTH the caller-
-            supplied `hypothesis_config` AND the live file ITSELF had
-            already moved to a self-consistent config B (no
-            `config_registry` shared to catch the drift via (b)) was
-            wrongly ACCEPTED -- checks (a)/(b) alone only prove the
-            CALLER's claim is internally honest and/or consistent with
-            an explicitly shared earlier registration; neither ties the
-            gate back to the specific snapshot THIS draft was actually
-            built under. (c) closes that gap unconditionally, using the
-            draft's own self-declared anchor -- it needs no shared
-            registry to work, and does not replace (b): (b) catches
-            drift via an EXPLICITLY shared context across multiple
-            calls, (c) catches it via the draft's OWN recorded anchor,
-            even with no sharing at all. A mismatch here is refused
-            BEFORE any of the checks below, and before any registry
-            write.
+            DRAFT itself was built under, recorded at construction
+            time -- must equal the resolved snapshot's own version. A
+            draft built under one config can never be silently
+            preregistered under a different one.
+        GPT's own reproduction (round 3): a draft built under config A,
+        preregistered while BOTH the caller-supplied `hypothesis_config`
+        AND the live file ITSELF had already moved to a self-consistent
+        config B, with NO `config_registry` shared -- was wrongly
+        ACCEPTED, because the gate was free to treat its OWN fresh read
+        as the reference when nothing was registered yet. Requiring
+        `resolve()` to succeed closes this: there is no path left where
+        the gate can establish its own reference at preregistration
+        time.
         `validate_for_preregistration()` below then consumes
-        EXCLUSIVELY this freshly-verified, recursively-frozen
-        snapshot -- never the caller's own, independently-mutable
-        `hypothesis_config.data`.
+        EXCLUSIVELY this resolved snapshot's content -- never a freshly
+        re-registered one, never the caller's own, independently-
+        mutable `hypothesis_config.data`.
     0. `proposal`, `proposal_validation`, `consensus`, and
        `draft.hypothesis_provenance` all name the SAME proposal, and the
        recorded approver/approval-time on `draft` match the human
@@ -134,59 +134,58 @@ def preregister_hypothesis(
     errors: list[str] = []
 
     # Step -1 (Stage 3 -- config identity infrastructure, authorized
-    # 2026-10-07; CORRECTED round 2 -- GPT changes-required verdict on
-    # `8650f17`, finding #3: this gate's tie to a previously-registered
-    # reference must not disappear just because `config_registry` is
-    # omitted). Mandatory live re-read, BEFORE anything else -- a fresh
-    # load_config() call, every single time, never cached, never
-    # skipped. The result is ALWAYS registered-or-verified against a
-    # registry -- shared across calls when `config_registry` is
-    # supplied, or a local throwaway one when omitted -- so "the
-    # config pinned for this operation" and "verifying the config is
-    # still active" are tied together UNIFORMLY on every call, not
-    # only when a registry happens to be shared.
-    fresh_hypothesis_config = load_hypothesis_config()
-    active_config_registry = config_registry if config_registry is not None else ConfigRegistry()
-    try:
-        fresh_registered = active_config_registry.register_or_verify(
-            "hypothesis", fresh_hypothesis_config.config_version, fresh_hypothesis_config.data,
-            fresh_hypothesis_config.raw_texts,
-        )
-    except ConfigIdentityError as exc:
+    # 2026-10-07; CORRECTED round 4 -- GPT changes-required verdict on
+    # `565c306`). `config_registry` is now REQUIRED to already have
+    # the "hypothesis" domain registered by an EARLIER step in this
+    # workflow. `resolve()` -- never `register_or_verify()` -- so the
+    # gate can only ever COMPARE against a pre-existing reference, it
+    # can never CREATE one for itself.
+    fresh_registered = None
+    if config_registry is None:
         errors.append(
-            f"hypothesis.yaml changed since it was registered earlier in this operation "
-            f"(Stage 3 mandatory live re-read): {exc}"
+            "preregister_hypothesis() requires an explicit config_registry with the 'hypothesis' "
+            "domain already registered by an earlier step in this workflow (Stage 3) -- the gate "
+            "itself must never be the place that first establishes trust in a config"
         )
-        fresh_registered = register_config_version(
-            "hypothesis", fresh_hypothesis_config.config_version, fresh_hypothesis_config.data,
-            fresh_hypothesis_config.raw_texts,
-        )
-    candidate_ok, candidate_errors = fresh_registered.verify(hypothesis_config.config_version, hypothesis_config.data)
-    if not candidate_ok:
-        errors.append(
-            "hypothesis_config supplied to preregister_hypothesis() does not match the current, "
-            f"freshly-read hypothesis.yaml (Stage 3 mandatory live re-read): {'; '.join(candidate_errors)}"
-        )
+    else:
+        try:
+            fresh_registered = config_registry.resolve("hypothesis")
+        except ConfigIdentityError as exc:
+            errors.append(
+                f"config_registry has no 'hypothesis' domain registered yet -- preregister_hypothesis() "
+                f"requires it to already exist from an earlier step in this workflow (Stage 3): {exc}"
+            )
 
-    # Step -1(c) (round-3 fix, GPT changes-required verdict on
-    # `955f482`): ties the gate back to the SPECIFIC snapshot this
-    # draft was actually built under -- unconditional, independent of
-    # config_registry, and independent of whatever hypothesis_config
-    # argument this particular call happens to receive. A draft built
-    # under one config can never be silently preregistered once the
-    # active config has moved to a different one, even when the
-    # caller's own hypothesis_config argument is itself genuine and
-    # self-consistent with the CURRENT file -- that only proves the
-    # argument is honest about NOW, never that it's the SAME config
-    # this draft's own guardrails (HypothesisComplexitySnapshot et al.)
-    # were actually computed against.
-    if draft.strategy_config_version != fresh_registered.version:
-        errors.append(
-            f"draft.strategy_config_version={draft.strategy_config_version!r} does not match the "
-            f"active hypothesis.yaml config_version={fresh_registered.version!r} actually in use at "
-            f"this gate (Stage 3 mandatory live re-read) -- a draft built under one config can never "
-            f"be silently preregistered under a different one"
-        )
+    if fresh_registered is not None:
+        # (a) mandatory live re-read, against the RESOLVED snapshot --
+        # never a fresh registration of its own.
+        fresh_hypothesis_config = load_hypothesis_config()
+        reread_ok, reread_errors = fresh_registered.verify(fresh_hypothesis_config.config_version, fresh_hypothesis_config.data)
+        if not reread_ok:
+            errors.append(
+                f"hypothesis.yaml changed since it was registered earlier in this operation "
+                f"(Stage 3 mandatory live re-read): {'; '.join(reread_errors)}"
+            )
+        # (b) the caller-supplied hypothesis_config argument, against
+        # the SAME resolved snapshot.
+        candidate_ok, candidate_errors = fresh_registered.verify(hypothesis_config.config_version, hypothesis_config.data)
+        if not candidate_ok:
+            errors.append(
+                "hypothesis_config supplied to preregister_hypothesis() does not match the registered "
+                f"context (Stage 3 mandatory live re-read): {'; '.join(candidate_errors)}"
+            )
+        # (c) round-3 fix, kept: draft.strategy_config_version -- the
+        # config version the DRAFT itself was built under -- must
+        # equal the resolved snapshot's own version. A draft built
+        # under one config can never be silently preregistered under
+        # a different one.
+        if draft.strategy_config_version != fresh_registered.version:
+            errors.append(
+                f"draft.strategy_config_version={draft.strategy_config_version!r} does not match the "
+                f"active hypothesis.yaml config_version={fresh_registered.version!r} actually in use at "
+                f"this gate (Stage 3 mandatory live re-read) -- a draft built under one config can never "
+                f"be silently preregistered under a different one"
+            )
 
     if proposal.proposal_id != proposal_validation.proposal_id:
         errors.append(

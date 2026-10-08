@@ -35,7 +35,7 @@ def test_proposals_and_rejection_survive_a_fresh_replay(tmp_path, discovery_conf
     assert kept in replayed.all_proposals()
 
 
-def test_preregistered_hypothesis_and_variants_survive_a_fresh_replay(tmp_path, entry_definition, horizon_candidates, evidence_provenance, hypothesis_config, run_registry):
+def test_preregistered_hypothesis_and_variants_survive_a_fresh_replay(tmp_path, entry_definition, horizon_candidates, evidence_provenance, hypothesis_config, hypothesis_config_registry, run_registry):
     from hypothesis.models.entities import Direction, HypothesisComplexitySnapshot, HypothesisProvenance, HypothesisResearchMode, StrategyHypothesis
     from hypothesis.proposals.normalize import normalize_proposal
     from hypothesis.proposals.validator import ProposalValidationResult
@@ -66,7 +66,7 @@ def test_preregistered_hypothesis_and_variants_survive_a_fresh_replay(tmp_path, 
     frozen = persistent.preregister(
         draft, variants, proposal=proposal, proposal_validation=ProposalValidationResult(True, "OK", (), proposal.proposal_id),
         consensus=compute_consensus(proposal.proposal_id, (), human_decision=approved_human_decision(at="t")),
-        run_registry=run_registry, hypothesis_config=hypothesis_config,
+        run_registry=run_registry, hypothesis_config=hypothesis_config, config_registry=hypothesis_config_registry,
     )
 
     replayed = JsonlAuditLog(log_path).replay()

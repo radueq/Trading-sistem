@@ -2,24 +2,22 @@
 `preregister_hypothesis()` (decision registry, Stage 3; authorized
 2026-10-07): the mandatory live re-read gate (decision registry C1),
 verified through the REAL gate, not only the shared helper in
-isolation. CORRECTED round 3 -- GPT changes-required verdict on
-`955f482`: nothing previously tied the gate back to the SPECIFIC
-snapshot the DRAFT itself was built under -- a draft built under
-config A was wrongly accepted once BOTH the caller-supplied
-`hypothesis_config` argument AND the live file had already moved to a
-self-consistent config B, with no `config_registry` shared to catch
-the drift via the cross-call registry tie. `draft.strategy_config_
-version` is now checked, unconditionally, against the active config
-actually used at the gate (see `preregistration.py`'s own Step -1(c)).
+isolation. CORRECTED round 4 -- GPT changes-required verdict on
+`565c306`: round 3's `draft.strategy_config_version` check closed one
+gap, but the gate could still establish its OWN reference AT
+preregistration time whenever nothing was registered yet (`config_
+registry=None`, or an empty `ConfigRegistry()`) -- a label on the
+draft proves nothing was registered earlier; it is just a string any
+caller can set. `config_registry` is now REQUIRED to already have the
+"hypothesis" domain registered by an EARLIER step in this workflow,
+resolved via `ConfigRegistry.resolve()` (never `register_or_verify()`,
+which could register the first reference AT the gate) -- see
+`preregistration.py`'s own Step -1.
 
-Every existing call site in this package (TEST 53/56/62/63/etc.)
-already supplies a genuinely-loaded `hypothesis_config`, with the
-draft built under THAT SAME config (the `hypothesis_config` fixture is
-`load_config()`'s own real output, confirmed in `conftest.py`) -- so
-the new mandatory checks are UNCONDITIONAL (not opt-in) and still
-leave every one of them unaffected; `config_registry` is a SEPARATE,
-optional parameter only needed to additionally catch a config that
-changed since an EARLIER registration in the same workflow.
+Every existing call site in this package (TEST 53/56/62/63/etc.) now
+threads a `hypothesis_config_registry` fixture (conftest.py) through,
+simulating the earlier step that legitimately establishes this context
+before preregistration ever runs.
 """
 import dataclasses
 
@@ -34,6 +32,7 @@ from hypothesis.models.entities import (
     StrategyHypothesis,
 )
 from hypothesis.registry.hypotheses import HypothesisRegistry, build_hypothesis_id, hypothesis_fingerprint, materialize_variants
+from hypothesis.registry.persistence import PersistentHypothesisRegistry
 from hypothesis.registry.preregistration import PreregistrationError, preregister_hypothesis
 from hypothesis.proposals.normalize import normalize_proposal
 from hypothesis.proposals.validator import ProposalValidationResult
@@ -71,11 +70,10 @@ def _gate(
     """`draft_config` (default: `hypothesis_config`) is the config the
     DRAFT itself is built under -- separate from `hypothesis_config`,
     the argument actually passed to `preregister_hypothesis()`'s own
-    gate call. Every pre-round-3 test leaves it at the default (draft
-    and gate call always under the SAME config); the round-3
-    regressions below set it explicitly DIFFERENT, to reproduce GPT's
-    own finding that nothing previously tied the gate back to the
-    SPECIFIC snapshot the draft was built under."""
+    gate call. `config_registry` is NOT defaulted to anything seeded --
+    every test must supply its own (or deliberately omit/empty it, to
+    exercise the round-4 requirement that the gate never establishes
+    its own reference)."""
     draft_config = draft_config if draft_config is not None else hypothesis_config
     draft = _draft(entry_definition, horizon_candidates, evidence_provenance, draft_config)
     variants = materialize_variants(draft, created_at="2026-09-25T00:00:00Z")
@@ -90,48 +88,72 @@ def _gate(
     )
 
 
+def _tightened_hypothesis_budget_config(base):
+    budget = base.data["hypothesis_budget"]
+    return hypothesis_config_with_overrides(
+        hypothesis_budget={**budget, "max_hypotheses_per_signature": budget["max_hypotheses_per_signature"] + 1},
+    )
+
+
 def test_genuine_hypothesis_config_passes_the_mandatory_live_re_read(
-    entry_definition, horizon_candidates, evidence_provenance, hypothesis_config, run_registry,
+    entry_definition, horizon_candidates, evidence_provenance, hypothesis_config, hypothesis_config_registry, run_registry,
 ):
-    frozen = _gate(entry_definition, horizon_candidates, evidence_provenance, hypothesis_config, run_registry)
+    frozen = _gate(
+        entry_definition, horizon_candidates, evidence_provenance, hypothesis_config, run_registry,
+        config_registry=hypothesis_config_registry,
+    )
     assert frozen.status == HypothesisStatus.PREREGISTERED.value
 
 
 def test_a_hypothesis_config_whose_content_disagrees_with_the_real_file_is_rejected(
-    entry_definition, horizon_candidates, evidence_provenance, hypothesis_config, run_registry,
+    entry_definition, horizon_candidates, evidence_provenance, hypothesis_config, hypothesis_config_registry, run_registry,
 ):
     """Correct label, wrong content -- the SAME real config_version,
     but hand-mutated data that no longer matches what hypothesis.yaml
-    actually says right now."""
+    actually says right now. The draft is built under the REAL config
+    (so check (c) stays silent); only the hypothesis_config ARGUMENT
+    passed to the gate is tampered, caught by check (b) against the
+    resolved context."""
     tampered_data = dict(hypothesis_config.data)
     tampered_data["hypothesis_budget"] = {**hypothesis_config.data["hypothesis_budget"], "max_hypotheses_per_signature": 999999}
     tampered = dataclasses.replace(hypothesis_config, data=tampered_data)
     assert tampered.config_version == hypothesis_config.config_version
 
     with pytest.raises(PreregistrationError, match="mandatory live re-read"):
-        _gate(entry_definition, horizon_candidates, evidence_provenance, tampered, run_registry)
+        _gate(
+            entry_definition, horizon_candidates, evidence_provenance, tampered, run_registry,
+            draft_config=hypothesis_config, config_registry=hypothesis_config_registry,
+        )
 
 
 def test_a_hypothesis_config_whose_label_disagrees_with_its_own_content_is_rejected(
-    entry_definition, horizon_candidates, evidence_provenance, hypothesis_config, run_registry,
+    entry_definition, horizon_candidates, evidence_provenance, hypothesis_config, hypothesis_config_registry, run_registry,
 ):
     """Wrong label, correct content -- the real data, but a dishonest
-    config_version string."""
+    config_version string, as the hypothesis_config ARGUMENT; the draft
+    itself is built under the real config."""
     mislabeled = dataclasses.replace(hypothesis_config, config_version="cfg_DISHONEST_LABEL")
 
     with pytest.raises(PreregistrationError, match="mandatory live re-read"):
-        _gate(entry_definition, horizon_candidates, evidence_provenance, mislabeled, run_registry)
+        _gate(
+            entry_definition, horizon_candidates, evidence_provenance, mislabeled, run_registry,
+            draft_config=hypothesis_config, config_registry=hypothesis_config_registry,
+        )
 
 
 def test_a_directly_constructed_inconsistent_hypothesis_config_is_rejected(
-    entry_definition, horizon_candidates, evidence_provenance, hypothesis_config, run_registry,
+    entry_definition, horizon_candidates, evidence_provenance, hypothesis_config, hypothesis_config_registry, run_registry,
 ):
-    """Neither the label nor the content were ever produced by a real
-    load_config() call -- both checks fail at once."""
+    """Neither the label nor the content of the hypothesis_config
+    ARGUMENT were ever produced by a real load_config() call -- both
+    checks fail at once. The draft is built under the real config."""
     forged = dataclasses.replace(hypothesis_config, data={"hand_built": True}, config_version="cfg_MADE_UP")
 
     with pytest.raises(PreregistrationError, match="mandatory live re-read"):
-        _gate(entry_definition, horizon_candidates, evidence_provenance, forged, run_registry)
+        _gate(
+            entry_definition, horizon_candidates, evidence_provenance, forged, run_registry,
+            draft_config=hypothesis_config, config_registry=hypothesis_config_registry,
+        )
 
 
 def test_config_registry_catches_a_config_that_changed_since_an_earlier_registration(
@@ -170,46 +192,13 @@ def test_config_registry_passes_when_the_fresh_re_read_still_matches_the_earlier
     assert frozen.status == HypothesisStatus.PREREGISTERED.value
 
 
-def _tightened_hypothesis_budget_config(base):
-    budget = base.data["hypothesis_budget"]
-    return hypothesis_config_with_overrides(
-        hypothesis_budget={**budget, "max_hypotheses_per_signature": budget["max_hypotheses_per_signature"] + 1},
-    )
-
-
-def test_a_draft_built_under_an_earlier_config_is_rejected_when_the_active_config_moved_on_with_no_shared_context(
-    entry_definition, horizon_candidates, evidence_provenance, hypothesis_config, run_registry, monkeypatch,
-):
-    """GPT's own reproduction on `955f482`: the draft is built under
-    config A; the CALLER-supplied `hypothesis_config` argument AND the
-    live file itself (monkeypatched) have both already moved to a
-    genuinely different, self-consistent config B; NO `config_registry`
-    is shared, so there is nothing for mechanism (b) to catch the
-    drift against. Before the round-3 fix this was wrongly ACCEPTED,
-    with the returned hypothesis carrying `strategy_config_version=A`
-    while the config actually used at the gate was B."""
-    config_a = hypothesis_config
-    config_b = _tightened_hypothesis_budget_config(config_a)
-    assert config_b.config_version != config_a.config_version  # sanity: genuinely different
-
-    import hypothesis.registry.preregistration as prereg_module
-    monkeypatch.setattr(prereg_module, "load_hypothesis_config", lambda: config_b)
-
-    with pytest.raises(PreregistrationError, match="does not match the active"):
-        _gate(
-            entry_definition, horizon_candidates, evidence_provenance, config_b, run_registry,
-            draft_config=config_a,
-        )
-
-
 def test_a_draft_built_under_an_earlier_config_is_rejected_when_a_shared_registry_still_pins_it(
     entry_definition, horizon_candidates, evidence_provenance, hypothesis_config, run_registry, monkeypatch,
 ):
-    """SAME scenario as above, but this time `config_registry` was
-    ALREADY pinned to A earlier in the workflow -- mechanism (b) alone
-    already catches this (confirmed working since round 2); kept as
-    its own explicit regression per GPT's required list, distinct from
-    the no-context case above."""
+    """Context A (shared registry pinned to A), but the live file AND
+    the hypothesis_config argument have both moved to a genuinely
+    different, self-consistent config B -- rejected via the mandatory
+    live re-read against the resolved A."""
     config_a = hypothesis_config
     config_registry = ConfigRegistry()
     config_registry.register_or_verify("hypothesis", config_a.config_version, config_a.data, config_a.raw_texts)
@@ -227,39 +216,94 @@ def test_a_draft_built_under_an_earlier_config_is_rejected_when_a_shared_registr
 
 
 def test_unchanged_config_with_a_shared_registry_still_succeeds(
-    entry_definition, horizon_candidates, evidence_provenance, hypothesis_config, run_registry,
+    entry_definition, horizon_candidates, evidence_provenance, hypothesis_config, hypothesis_config_registry, run_registry,
 ):
     """Sanity/positive counterpart: config genuinely UNCHANGED (draft,
     gate call, and shared registry all agree on the SAME real config)
-    -- must still succeed, confirming the round-3 fix does not turn
-    sharing a registry into a reason to reject on its own."""
-    config_registry = ConfigRegistry()
-    config_registry.register_or_verify(
-        "hypothesis", hypothesis_config.config_version, hypothesis_config.data, hypothesis_config.raw_texts,
-    )
-
+    -- must still succeed."""
     frozen = _gate(
         entry_definition, horizon_candidates, evidence_provenance, hypothesis_config, run_registry,
-        config_registry=config_registry,
+        config_registry=hypothesis_config_registry,
     )
     assert frozen.status == HypothesisStatus.PREREGISTERED.value
 
 
-def test_a_draft_whose_recorded_config_version_disagrees_with_the_active_snapshot_is_rejected_before_any_writes(
-    entry_definition, horizon_candidates, evidence_provenance, hypothesis_config, run_registry,
+def test_unchanged_config_succeeds_through_the_persistent_wrapper_too(
+    tmp_path, entry_definition, horizon_candidates, evidence_provenance, hypothesis_config, hypothesis_config_registry, run_registry,
 ):
-    """`draft.strategy_config_version` itself disagrees with the
-    active, genuinely-current config -- rejected by the new check
-    alone, with no tamper anywhere else (the caller's own
-    `hypothesis_config` argument is the real, current file) and no
-    `config_registry` at all; confirms nothing is written to the
-    HypothesisRegistry before the rejection."""
+    """GPT's required positive case, through `PersistentHypothesisRegistry.
+    preregister()` specifically -- `config_registry` must thread through
+    the persistence wrapper with no fallback to a new one, and a
+    genuinely unchanged config must still succeed through it."""
+    draft = _draft(entry_definition, horizon_candidates, evidence_provenance, hypothesis_config)
+    variants = materialize_variants(draft, created_at="2026-09-25T00:00:00Z")
+    draft = dataclasses.replace(draft, variant_ids=tuple(v.strategy_variant_id for v in variants))
+    proposal = _proposal()
+    consensus = compute_consensus(proposal.proposal_id, (), human_decision=approved_human_decision())
+
+    persistent = PersistentHypothesisRegistry.open(tmp_path / "audit.jsonl")
+    frozen = persistent.preregister(
+        draft, variants, proposal=proposal, proposal_validation=ProposalValidationResult(True, "OK", (), proposal.proposal_id),
+        consensus=consensus, run_registry=run_registry, hypothesis_config=hypothesis_config,
+        config_registry=hypothesis_config_registry,
+    )
+    assert frozen.status == HypothesisStatus.PREREGISTERED.value
+    assert persistent.registry.get(frozen.hypothesis_id) == frozen
+
+
+def test_a_draft_whose_recorded_config_version_disagrees_with_the_active_snapshot_is_rejected_before_any_writes(
+    entry_definition, horizon_candidates, evidence_provenance, hypothesis_config, hypothesis_config_registry, run_registry,
+):
+    """Context A properly established, hypothesis_config argument is
+    the real, current file -- but the DRAFT itself was built under a
+    genuinely different config B. Rejected by check (c) alone; confirms
+    nothing is written to the HypothesisRegistry before the rejection."""
     config_b = _tightened_hypothesis_budget_config(hypothesis_config)
     hyp_registry = HypothesisRegistry()
 
     with pytest.raises(PreregistrationError, match="does not match the active"):
         _gate(
             entry_definition, horizon_candidates, evidence_provenance, hypothesis_config, run_registry,
-            draft_config=config_b, registry=hyp_registry,
+            draft_config=config_b, registry=hyp_registry, config_registry=hypothesis_config_registry,
         )
     assert hyp_registry.all_hypotheses() == ()
+
+
+def test_omitting_config_registry_entirely_is_rejected_before_any_writes(
+    entry_definition, horizon_candidates, evidence_provenance, hypothesis_config, run_registry,
+):
+    """Finding (round 4): the gate must never be the place that FIRST
+    establishes trust in a config. With NO config_registry at all --
+    even though the draft and the hypothesis_config argument are both
+    genuinely consistent with the real, current file, with no drift
+    anywhere -- the call is still refused, because nothing proves the
+    'hypothesis' domain was registered by an EARLIER step. Distinct
+    from the next test (a context IS supplied, just empty) and from
+    the A/B-mismatch tests above (this one has NO mismatch at all)."""
+    hyp_registry = HypothesisRegistry()
+    with pytest.raises(PreregistrationError, match="requires an explicit config_registry"):
+        _gate(
+            entry_definition, horizon_candidates, evidence_provenance, hypothesis_config, run_registry,
+            registry=hyp_registry,  # config_registry omitted (defaults to None)
+        )
+    assert hyp_registry.all_hypotheses() == ()
+
+
+def test_a_config_registry_with_no_hypothesis_domain_registered_yet_is_rejected_before_any_writes(
+    entry_definition, horizon_candidates, evidence_provenance, hypothesis_config, run_registry,
+):
+    """Same requirement as above, but `config_registry` IS supplied --
+    a real, freshly-constructed `ConfigRegistry()` that nothing has
+    registered the "hypothesis" domain into yet. `resolve()` must
+    raise (never silently register the gate's own fresh read as the
+    reference, which `register_or_verify()` would have done) -- again
+    with no drift anywhere else, isolating this one requirement."""
+    empty_registry = ConfigRegistry()
+    hyp_registry = HypothesisRegistry()
+    with pytest.raises(PreregistrationError, match="no 'hypothesis' domain registered yet"):
+        _gate(
+            entry_definition, horizon_candidates, evidence_provenance, hypothesis_config, run_registry,
+            registry=hyp_registry, config_registry=empty_registry,
+        )
+    assert hyp_registry.all_hypotheses() == ()
+    assert empty_registry.try_resolve("hypothesis") is None  # the gate never registered anything either
