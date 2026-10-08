@@ -51,25 +51,49 @@ def preregister_hypothesis(
 
     -1. Config identity (Stage 3 -- config identity infrastructure,
         decision registry, Stage 3; authorized 2026-10-07; the
-        "mandatory live re-read" gate, decision registry C1). Every
+        "mandatory live re-read" gate, decision registry C1; CORRECTED
+        round 3 -- GPT changes-required verdict on `955f482`). Every
         call -- unconditionally, not opt-in -- re-reads
-        `hypothesis.yaml` FRESH, right now, and verifies the CALLER-
-        SUPPLIED `hypothesis_config` against that fresh read: its
-        declared `config_version` (label) and its actual `.data`
-        (content), checked SEPARATELY, both normalized to the same
-        representation before the content comparison. A `hypothesis_
-        config` whose label is wrong, whose content is wrong, or both,
-        is refused here, before any of the checks below ever run.
+        `hypothesis.yaml` FRESH, right now, and runs THREE separate
+        checks, none of which substitutes for another:
+        (a) the CALLER-SUPPLIED `hypothesis_config` is verified against
+            that fresh read: its declared `config_version` (label) and
+            its actual `.data` (content), checked SEPARATELY, both
+            normalized to the same representation before the content
+            comparison. A `hypothesis_config` whose label is wrong,
+            whose content is wrong, or both, is refused here.
+        (b) if `config_registry` is ALSO supplied: this fresh read is
+            additionally registered-or-verified against it, catching a
+            config that changed on disk between an EARLIER registration
+            in this same workflow (e.g. at proposal-validation time,
+            sharing the same `ConfigRegistry` instance) and this gate
+            running now -- never merely comparing two in-memory copies
+            taken at the same moment.
+        (c) `draft.strategy_config_version` -- the config version the
+            DRAFT itself was built under, recorded at construction time,
+            travelling WITH the draft object -- must equal the ACTIVE
+            config version actually used at this gate (the verified
+            fresh read's own version). GPT's own reproduction: a draft
+            built under config A, preregistered while BOTH the caller-
+            supplied `hypothesis_config` AND the live file ITSELF had
+            already moved to a self-consistent config B (no
+            `config_registry` shared to catch the drift via (b)) was
+            wrongly ACCEPTED -- checks (a)/(b) alone only prove the
+            CALLER's claim is internally honest and/or consistent with
+            an explicitly shared earlier registration; neither ties the
+            gate back to the specific snapshot THIS draft was actually
+            built under. (c) closes that gap unconditionally, using the
+            draft's own self-declared anchor -- it needs no shared
+            registry to work, and does not replace (b): (b) catches
+            drift via an EXPLICITLY shared context across multiple
+            calls, (c) catches it via the draft's OWN recorded anchor,
+            even with no sharing at all. A mismatch here is refused
+            BEFORE any of the checks below, and before any registry
+            write.
         `validate_for_preregistration()` below then consumes
         EXCLUSIVELY this freshly-verified, recursively-frozen
         snapshot -- never the caller's own, independently-mutable
-        `hypothesis_config.data`. If `config_registry` is ALSO
-        supplied: this fresh read is additionally registered-or-
-        verified against it, catching a config that changed on disk
-        between an EARLIER registration in this same workflow (e.g.
-        at proposal-validation time, sharing the same `ConfigRegistry`
-        instance) and this gate running now -- never merely comparing
-        two in-memory copies taken at the same moment.
+        `hypothesis_config.data`.
     0. `proposal`, `proposal_validation`, `consensus`, and
        `draft.hypothesis_provenance` all name the SAME proposal, and the
        recorded approver/approval-time on `draft` match the human
@@ -142,6 +166,26 @@ def preregister_hypothesis(
         errors.append(
             "hypothesis_config supplied to preregister_hypothesis() does not match the current, "
             f"freshly-read hypothesis.yaml (Stage 3 mandatory live re-read): {'; '.join(candidate_errors)}"
+        )
+
+    # Step -1(c) (round-3 fix, GPT changes-required verdict on
+    # `955f482`): ties the gate back to the SPECIFIC snapshot this
+    # draft was actually built under -- unconditional, independent of
+    # config_registry, and independent of whatever hypothesis_config
+    # argument this particular call happens to receive. A draft built
+    # under one config can never be silently preregistered once the
+    # active config has moved to a different one, even when the
+    # caller's own hypothesis_config argument is itself genuine and
+    # self-consistent with the CURRENT file -- that only proves the
+    # argument is honest about NOW, never that it's the SAME config
+    # this draft's own guardrails (HypothesisComplexitySnapshot et al.)
+    # were actually computed against.
+    if draft.strategy_config_version != fresh_registered.version:
+        errors.append(
+            f"draft.strategy_config_version={draft.strategy_config_version!r} does not match the "
+            f"active hypothesis.yaml config_version={fresh_registered.version!r} actually in use at "
+            f"this gate (Stage 3 mandatory live re-read) -- a draft built under one config can never "
+            f"be silently preregistered under a different one"
         )
 
     if proposal.proposal_id != proposal_validation.proposal_id:
