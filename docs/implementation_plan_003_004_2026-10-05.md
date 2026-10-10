@@ -1,19 +1,43 @@
-# Implementation Plan -- Spec #003 + Spec #004 remediation (2026-10-05/06/07, revision 12)
+# Implementation Plan -- Spec #003 + Spec #004 remediation (2026-10-05/06/07/10, revision 13)
 
 **Status: Stage 1 IMPLEMENTED and ACCEPTED. Stage 2 (corrected
 admission/registry mechanism, calendar tested with fixtures) ACCEPTED
 in that scope. Minimal `#003` v2 -> `#005` compatibility delta
 ACCEPTED. Stage 3 (config identity infrastructure) IMPLEMENTED WITH
-THREE ROUNDS OF CORRECTIONS APPLIED (commit `8650f17`, round-2 fix at
-`955f482`, round-3 fix at `565c306`, round-4 fix this revision),
-delivered for GPT's next review -- NOT yet itself reviewed. Stage 4
-onward: NOT AUTHORIZED.** Built from `docs/joint_remediation_design_
-003_004_2026-10-04.md` (revision 11, closed calendar contract
-included, section 7 config identity) and `docs/decision_sheet_003_
-004_2026-10-05.md` (revision 15, the Technical Decision Registry).
-**Precedence: the registry's own decisions replace revision 11's open
-alternatives; this plan only sequences already-made decisions, it does
+FOUR ROUNDS OF CORRECTIONS APPLIED (commit `8650f17`, round-2 fix at
+`955f482`, round-3 fix at `565c306`, round-4 fix at `6fc1e0b`) --
+ACCEPTED, GPT's verdict on `014e212`, no further correction
+requested. Stage 4 (common weighted baseline distribution and its
+statistics -- A1-A4, F2a/F2b/F6) IMPLEMENTED this revision, delivered
+for GPT's next review -- NOT yet itself reviewed, per Radu's own
+explicit authorization and its own stated stop condition ("oprește-te
+după Stage 4"). Stage 5 onward: NOT AUTHORIZED.** Built from
+`docs/joint_remediation_design_003_004_2026-10-04.md` (revision 11,
+closed calendar contract included, section 7 config identity) and
+`docs/decision_sheet_003_004_2026-10-05.md` (revision 16, the
+Technical Decision Registry). **Precedence: the registry's own
+decisions replace revision 11's open alternatives; this plan only
+sequences already-made decisions, it does
 not re-decide anything.**
+
+**Revision 13 -- two things, in the same delivery, per Radu's own
+explicit instruction. (1) Records GPT's ACCEPTED verdict on Stage 3
+(commit `014e212`): the round-4 correction (`config_registry`
+mandatory via `resolve()` at the preregistration gate) is confirmed
+correct through the real gate; no further correction requested this
+round. (2) Implements Stage 4 -- common pooled weighted baseline
+distribution feeding `baseline_mean`/`baseline_median`/`baseline_iqr`
+together (A3); the weighted `session_mass` diagnostic (A2); F3 common-
+support blackout (A1); the weighted permutation/bootstrap estimators
+and the inert `exchangeability_status` field (A4); F2a/F2b (frozen
+signature-set integrity) and F6 (`family_test_count`). Design
+unchanged from the registry's own A1-A4/F2a/F2b/F6 entries (revision
+15/16 of `decision_sheet_003_004_2026-10-05.md`) -- this revision
+records implementation only. Per Radu's own authorization: stops
+after Stage 4; does not touch exchangeability validation itself (the
+docs-only acceptance question of whether value-level permutation's
+assumption is sufficient for V1), the G2 out-of-sample protocol, or
+#005/Batch 3.**
 
 **Revision 12 records GPT's own CHANGES REQUIRED verdict on Stage 3's
 round-3 delivery (commit `565c306`): round 3's `draft.strategy_config_
@@ -888,6 +912,11 @@ unchanged); Stage 4 onward (not authorized).
 ---
 
 ## Stage 4 -- #003 statistics AND its #004 consumers, delivered as one bundle
+
+**STATUS: IMPLEMENTED, revision 13, delivered for GPT's next review --
+not yet itself reviewed.** The scope/acceptance-criteria text below is
+UNCHANGED from the authorized design -- it describes what was built,
+not a plan still pending.
 
 **Depends on Stage 2 (same calendar-resolved session dates feed
 bootstrap/bin assignment).** **A3 corrected this round, per GPT's own
