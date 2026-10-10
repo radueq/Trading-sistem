@@ -406,9 +406,10 @@ is not itself the audit.
 
 ## Next steps
 
-0. **#003/#004 remediation engagement -- closing balance (2026-10-10,
-   delivered for GPT's review): `docs/closing_balance_003_004_2026-10-
-   10.md`.** Stage 1-8 of `docs/implementation_plan_003_004_2026-10-
+0. **#003/#004 remediation engagement -- closing balance (2026-10-10;
+   round 2, corrected per GPT's documentary CHANGES REQUIRED on
+   `44f7bb6`, delivered for re-review): `docs/closing_balance_003_004_
+   2026-10-10.md`.** Stage 1-8 of `docs/implementation_plan_003_004_2026-10-
    05.md` are ACCEPTED in their verified scopes; the balance reconciles
    every #003 (Top Findings 1-19) and #004 (Top Findings 1-20) finding
    individually, separates open items by kind, and proposes an order

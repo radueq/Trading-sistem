@@ -1,4 +1,4 @@
-# Implementation Plan -- Spec #003 + Spec #004 remediation (2026-10-05/06/07/10, revision 21)
+# Implementation Plan -- Spec #003 + Spec #004 remediation (2026-10-05/06/07/10, revision 22)
 
 **Status: Stage 1 IMPLEMENTED and ACCEPTED. Stage 2 (corrected
 admission/registry mechanism, calendar tested with fixtures) ACCEPTED
@@ -36,16 +36,27 @@ ACCEPTED in their verified scopes; this ends verification of the
 plan's stages, but closes none of the items excluded from it and does
 not authorize resuming `#005`/Batch 3.** Closing balance:
 `docs/closing_balance_003_004_2026-10-10.md` (Radu's explicit
-authorization, 2026-10-10) -- delivered for GPT's review, not yet itself
-reviewed. Stop after its delivery.**
+authorization, 2026-10-10) -- round 1 (`44f7bb6`) got GPT's CHANGES
+REQUIRED (documentary only; Stage 1-8 acceptances intact); round 2
+corrects it -- delivered for GPT's re-review, not yet itself reviewed.
+Stop after its delivery.**
 Built from
 `docs/joint_remediation_design_003_004_2026-10-04.md` (revision 11,
 closed calendar contract included, section 7 config identity) and
-`docs/decision_sheet_003_004_2026-10-05.md` (revision 24, the
+`docs/decision_sheet_003_004_2026-10-05.md` (revision 25, the
 Technical Decision Registry). **Precedence: the registry's own
 decisions replace revision 11's open alternatives; this plan only
 sequences already-made decisions, it does
 not re-decide anything.**
+
+**Revision 22 -- bilantul de inchidere, runda 2, pe verdictul GPT
+"CHANGES REQUIRED, doar documentar" asupra `44f7bb6` (acceptarile Stage
+1-8 raman intacte). Corecteaza bilantul si intrarea #003 G2 din "What
+this plan does NOT cover": remedierea PROIECTATA in design (sectiunea
+9, checklist rand 5) este doar cea pentru TEST 34; subpunctul TEST 20
+este acoperit din Stage 4 (TEST 52); subpunctul TEST 13 (valori exacte
+`std`/quantile) nu este proiectat nicaieri. Doar documentatie, fara
+cod.**
 
 **Revision 21 -- bilantul de inchidere, pe autorizarea explicita a lui
 Radu (2026-10-10). (1) Consemneaza verdictul GPT asupra Stage 8:
@@ -1291,12 +1302,16 @@ additional criteria beyond what those findings already specify.
 - **A2's real correction mechanism** and **A4's dependency-adequate
   method**: both remain undesigned, GPT/Claude's own future work, not
   scheduled into any stage above.
-- **#003 G2 (TEST 34 vacuous assertion, plus GPT's TEST 13/TEST 20
-  sub-points):** design complete (joint design section 9, checklist
-  row 5) but never placed in any stage of this plan -- an omission found
-  by the closing balance (revision 21), not a decision. Still unfixed at
-  `7ac1387`. Not authorized; see `docs/closing_balance_003_004_
-  2026-10-10.md` sections 2 and 6.
+- **#003 G2 -- TEST 34's vacuous assertion:** its fix is designed
+  (joint design section 9, checklist row 5 -- TEST 34 only) but was
+  never placed in any stage of this plan -- an omission found by the
+  closing balance, not a decision. Still unfixed at `7ac1387`. GPT's
+  related sub-points from the audit are NOT part of that design: TEST
+  20's (unstratified primitive) is covered since Stage 4 by TEST 52;
+  TEST 13's (exact `std`/quantile values of `describe()`) is not
+  designed anywhere and would first need its conventions stated. Not
+  authorized; see `docs/closing_balance_003_004_2026-10-10.md` sections
+  2 and 6 (corrected revision 22).
 - **Strategy performance evaluation**: explicitly separate from every
   acceptance criterion above; not scoped by this plan at all.
 
