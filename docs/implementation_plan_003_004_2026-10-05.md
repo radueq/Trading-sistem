@@ -1,4 +1,4 @@
-# Implementation Plan -- Spec #003 + Spec #004 remediation (2026-10-05/06/07/10, revision 20)
+# Implementation Plan -- Spec #003 + Spec #004 remediation (2026-10-05/06/07/10, revision 21)
 
 **Status: Stage 1 IMPLEMENTED and ACCEPTED. Stage 2 (corrected
 admission/registry mechanism, calendar tested with fixtures) ACCEPTED
@@ -30,17 +30,32 @@ verified scope (implementation `1aa0b60`, docs `051d9a1`; full suite
 not re-run by GPT). Stage 8 (`#004` Finding 18/20) is AUTHORIZED, per
 Radu's own explicit instruction (2026-10-10, with the Finding 18 field-
 list clarification), and IMPLEMENTED at commit `6b11265` -- delivered
-for GPT's review, not yet itself reviewed. Stop condition: **"oprire
-după Stage 8"** -- `#005`/Batch 3 remains NOT AUTHORIZED. Stage 8 is
-the last stage of this plan.**
+for GPT's review -- ACCEPTED by GPT in the authorized scope
+(implementation `6b11265`, docs `7ac1387`). **Stage 1-8 are all
+ACCEPTED in their verified scopes; this ends verification of the
+plan's stages, but closes none of the items excluded from it and does
+not authorize resuming `#005`/Batch 3.** Closing balance:
+`docs/closing_balance_003_004_2026-10-10.md` (Radu's explicit
+authorization, 2026-10-10) -- delivered for GPT's review, not yet itself
+reviewed. Stop after its delivery.**
 Built from
 `docs/joint_remediation_design_003_004_2026-10-04.md` (revision 11,
 closed calendar contract included, section 7 config identity) and
-`docs/decision_sheet_003_004_2026-10-05.md` (revision 23, the
+`docs/decision_sheet_003_004_2026-10-05.md` (revision 24, the
 Technical Decision Registry). **Precedence: the registry's own
 decisions replace revision 11's open alternatives; this plan only
 sequences already-made decisions, it does
 not re-decide anything.**
+
+**Revision 21 -- bilantul de inchidere, pe autorizarea explicita a lui
+Radu (2026-10-10). (1) Consemneaza verdictul GPT asupra Stage 8:
+ACCEPTED in scopul autorizat (`6b11265` + `7ac1387`); Stage 1-8 toate
+acceptate in scopurile verificate. (2) Livreaza
+`docs/closing_balance_003_004_2026-10-10.md`. (3) Consemneaza o omisiune
+gasita de bilant: #003 G2 / TEST 34 a avut design complet, dar nu a fost
+inclus in nicio etapa a acestui plan -- adaugat la "What this plan does
+NOT cover", ca stare de fapt, nu ca autorizare. Doar documentatie.
+#005/Batch 3 ramane neautorizat.**
 
 **Revision 20 -- doua lucruri, pe autorizarea explicita a lui Radu
 (2026-10-10). (1) Consemneaza verdictul GPT asupra Stage 7: ACCEPTED
@@ -1228,8 +1243,8 @@ that adding a `hypothesis` PyPI dependency requires revisiting F1.
 
 **IMPLEMENTED -- Radu's explicit authorization, 2026-10-10, Stage 8
 only, with the Finding 18 field-list clarification (stop after Stage
-8). Commit `6b11265` on `claude/spec004-audit`. Delivered for GPT's
-review, not yet itself reviewed.** Finding 18:
+8). Commit `6b11265` on `claude/spec004-audit`. ACCEPTED by GPT in the
+authorized scope (recorded revision 21).** Finding 18:
 `EvidencePacket.primary_stability_summary` (seven fields, AMENDED from
 the design sketch -- decision sheet section L1, with approval
 provenance); Finding 20: `StopLossRule`/`PartialProfitRule` in
@@ -1276,6 +1291,12 @@ additional criteria beyond what those findings already specify.
 - **A2's real correction mechanism** and **A4's dependency-adequate
   method**: both remain undesigned, GPT/Claude's own future work, not
   scheduled into any stage above.
+- **#003 G2 (TEST 34 vacuous assertion, plus GPT's TEST 13/TEST 20
+  sub-points):** design complete (joint design section 9, checklist
+  row 5) but never placed in any stage of this plan -- an omission found
+  by the closing balance (revision 21), not a decision. Still unfixed at
+  `7ac1387`. Not authorized; see `docs/closing_balance_003_004_
+  2026-10-10.md` sections 2 and 6.
 - **Strategy performance evaluation**: explicitly separate from every
   acceptance criterion above; not scoped by this plan at all.
 

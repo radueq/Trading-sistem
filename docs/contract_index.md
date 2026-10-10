@@ -406,6 +406,18 @@ is not itself the audit.
 
 ## Next steps
 
+0. **#003/#004 remediation engagement -- closing balance (2026-10-10,
+   delivered for GPT's review): `docs/closing_balance_003_004_2026-10-
+   10.md`.** Stage 1-8 of `docs/implementation_plan_003_004_2026-10-
+   05.md` are ACCEPTED in their verified scopes; the balance reconciles
+   every #003 (Top Findings 1-19) and #004 (Top Findings 1-20) finding
+   individually, separates open items by kind, and proposes an order
+   for the remaining blockers. It changes no acceptance recorded in
+   this index, leaves the general baseline `3cdc532` unchanged, and
+   does not resume `#005`/Batch 3. The Spec #003/#004 "Flag" rows above
+   describe the audit-era state; the balance is the current
+   per-finding status.
+
 1. **Independent audit track in progress ("Audit independent #001-#004",
    Radu's instruction, 2026-10-03) -- Master Context does not block this;
    only findings that would themselves depend on its text would be, and
