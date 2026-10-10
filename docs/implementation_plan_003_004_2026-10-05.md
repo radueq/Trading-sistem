@@ -1,4 +1,4 @@
-# Implementation Plan -- Spec #003 + Spec #004 remediation (2026-10-05/06/07/10, revision 16)
+# Implementation Plan -- Spec #003 + Spec #004 remediation (2026-10-05/06/07/10, revision 17)
 
 **Status: Stage 1 IMPLEMENTED and ACCEPTED. Stage 2 (corrected
 admission/registry mechanism, calendar tested with fixtures) ACCEPTED
@@ -17,19 +17,41 @@ FULL** -- GPT independently executed the new test, including the
 `EvidencePacket` checks, and confirmed the A1 gate's disabled-state
 failure mode; no further correction requested; this acceptance does
 NOT itself authorize any later stage. Stage 5 (`#003` TEST 26 AST
-guard) is now AUTHORIZED and DELIVERED this revision, per Radu's own
-explicit instruction -- the corrected candidate-construction algorithm
-(joint design section 8/9) applied with `"evaluation"` as the
-forbidden namespace; delivered for GPT's next review, not yet itself
-reviewed. Stop condition: **"oprește-te după Stage 5"** -- Stage 6
-onward, and `#005`/Batch 3, remain NOT AUTHORIZED.** Built from
+guard) is AUTHORIZED, per Radu's own explicit instruction. Round 1
+(`c2bc4f7`) got GPT's CHANGES REQUIRED verdict: two precise defects in
+the relative-import handling (the `unresolvable` diagnostic silently
+discarded on the real test path; a single-context resolution missing
+the `src`-prefixed rescue case). **Round 2 (this revision) fixes
+both** -- see `docs/decision_sheet_003_004_2026-10-05.md` section K1
+for the full corrected algorithm and the execution-verified boundary
+math. Delivered for GPT's re-review, not yet itself reviewed. Stop
+condition: **"oprește-te după Stage 5"** -- Stage 6 onward, and
+`#005`/Batch 3, remain NOT AUTHORIZED.** Built from
 `docs/joint_remediation_design_003_004_2026-10-04.md` (revision 11,
 closed calendar contract included, section 7 config identity) and
-`docs/decision_sheet_003_004_2026-10-05.md` (revision 19, the
+`docs/decision_sheet_003_004_2026-10-05.md` (revision 20, the
 Technical Decision Registry). **Precedence: the registry's own
 decisions replace revision 11's open alternatives; this plan only
 sequences already-made decisions, it does
 not re-decide anything.**
+
+**Revision 17 -- corecteaza Stage 5 (commit `c2bc4f7`), pe baza
+verdictului GPT "CHANGES REQUIRED": (1) diagnosticul "unresolvable"
+era abandonat pe traseul real al testului principal, nu doar
+verificat la nivel de helper -- fixat prin `_scan_directory()` +
+`warnings.warn()`, cu regresie prin acelasi punct de intrare. (2)
+Rezolutia importurilor relative verifica un singur context de pachet;
+GPT a verificat independent ca `resolve_name("...evaluation", "src.
+discovery.candidate")` rezolva valid la `"src.evaluation"` acolo unde
+contextul simplu ridica `ImportError` -- fixat prin rezolutie pe
+AMBELE contexte (simplu + prefixat `src`), hit din oricare conteaza,
+"unresolvable" doar cand ambele sunt epuizate. Disciplina de
+verificare pe ambele defecte, fara regresie colaterala. Suita completa:
+935 passed, 1 skipped (933+2). Explicatia gresita din revizia 16
+(sectiunea K1 a registrului, "cele doua cazuri din matrice sunt
+identice") inlocuita cu cea corecta, in aceeasi livrare. Stage 5
+ramane livrat pentru re-review GPT. Stage 1-4 raman acceptate,
+neschimbate.**
 
 **Revision 16 -- doua lucruri, pe autorizarea explicita a lui Radu,
 in aceeasi livrare. (1) Consemneaza verdictul final GPT asupra Stage
@@ -1050,13 +1072,15 @@ replace()`) ALL leave `p_key = inf` and rank NO HIGHER than `adjusted_p
 
 ## Stage 5 -- #003 AST guard (TEST 26) and architectural direction
 
-**DELIVERED, revision 16, per Radu's own explicit authorization --
-`tests/spec003/test_26_discovery_cannot_import_evaluation.py`
-rewritten in full, 9 tests (1 production check against the real
-`src/discovery/` tree, 8 regression-matrix cases). Not yet itself
-reviewed by GPT -- see `docs/decision_sheet_003_004_2026-10-05.md`
-section K1 for the full verdict record and the exact prose/algorithm
-reconciliation verified by direct execution before writing the test.**
+**Round 1 (revision 16, commit `c2bc4f7`) got GPT's CHANGES REQUIRED
+verdict -- two precise defects in the relative-import handling. Round
+2 (revision 17) fixes both: `tests/spec003/test_26_discovery_cannot_
+import_evaluation.py` now 11 tests (1 production check against the
+real `src/discovery/` tree, 10 regression-matrix/diagnostic cases).
+Delivered for GPT's re-review, not yet itself reviewed -- see
+`docs/decision_sheet_003_004_2026-10-05.md` section K1 for the full
+verdict record and the corrected dual-package-tuple-context algorithm,
+verified by direct execution before the fix.**
 
 **No dependency on Stages 1-4.**
 
