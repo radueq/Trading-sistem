@@ -148,7 +148,9 @@ def _example_a() -> str:
     packet = build_evidence_packet(signature, profiles, run_reg, HCFG)
     lines.append(f"EvidencePacket: signature={packet.signature_id}, primary_horizon_bars={packet.primary_evidence_horizon_bars} "
                  f"(from config evidence_reference.reference_horizon_bars, never a free per-call parameter), "
-                 f"primary_relative_mean={packet.primary_relative_mean:.4f}, primary_adjusted_p={packet.primary_adjusted_p:.4f}\n")
+                 f"primary_relative_mean={packet.primary_relative_mean:.4f}, primary_adjusted_p={packet.primary_adjusted_p:.4f} "
+                 f"(DIAGNOSTIC ONLY in V1 -- exchangeability_status={packet.primary_exchangeability_status!r}, "
+                 f"never drives Research Queue ranking: p_key=inf unconditionally)\n")
 
     registry = HypothesisRegistry()
     raw = make_proposal_raw(proposal_id="prop_A", horizon_candidates={

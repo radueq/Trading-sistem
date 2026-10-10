@@ -46,6 +46,13 @@ effect by construction, mean=0 for both groups), single horizon
 already look tempting for several of them; BH-FDR is what exposes
 that as an artifact of testing many things at once.
 
+`raw_p`/`adjusted_p` below are DIAGNOSTIC ONLY in V1 (joint
+remediation design 003+004, Stage 4; decision registry A4) --
+the underlying permutation test's required exchangeability
+assumption is not independently verified, so neither figure
+drives Research Queue ranking; see `exchangeability_status` on
+`BaselineComparison`/`EvidencePacket`.
+
 | Signature | raw_p | adjusted_p (BH-FDR, q=0.05) | 'significant' at raw p<0.05? | after BH-FDR? |
 |---|---|---|---|---|
 | trap_sig_14 | 0.0030 | 0.0899 | YES | no |

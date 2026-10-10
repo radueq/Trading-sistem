@@ -11,17 +11,17 @@ path every other caller must use.**
 
 ### Example A -- Valid LONG continuation hypothesis
 
-EvidencePacket: signature=VOL_COMPRESSION_RS_HIGH, primary_horizon_bars=3 (from config evidence_reference.reference_horizon_bars, never a free per-call parameter), primary_relative_mean=0.0100, primary_adjusted_p=0.0100
+EvidencePacket: signature=VOL_COMPRESSION_RS_HIGH, primary_horizon_bars=3 (from config evidence_reference.reference_horizon_bars, never a free per-call parameter), primary_relative_mean=0.0100, primary_adjusted_p=0.0100 (DIAGNOSTIC ONLY in V1 -- exchangeability_status='UNVERIFIED', never drives Research Queue ranking: p_key=inf unconditionally)
 
 Proposal valid: True (complexity_status=OK)
-StrategyHypothesis: hypothesis_id=hyp_dd29366b9aa0baf3, direction=LONG, status=PREREGISTERED
-Materialized variants (4): var_9ccfac161d..=TIME_EXIT:1, var_165142a2da..=TIME_EXIT:2, var_1b2d26f3db..=TIME_EXIT:3, var_938698cc4a..=SIGNAL_INVALIDATION:5
+StrategyHypothesis: hypothesis_id=hyp_a5c27a3bb3be36b7, direction=LONG, status=PREREGISTERED
+Materialized variants (4): var_3545368feb..=TIME_EXIT:1, var_08778e5565..=TIME_EXIT:2, var_cfafdc27ff..=TIME_EXIT:3, var_35411b1ed0..=SIGNAL_INVALIDATION:5
 Preregistered through the ONE atomic gate (registry.preregistration.preregister_hypothesis()) -- never a hand-built PREREGISTERED object handed to register() (PATCH #004-A finding #1).
 
 ### Example B -- Negative effect must NOT auto-flip to SHORT
 
-LONG proposal (built from negative-effect evidence) stays LONG: valid=True, hypothesis_id=hyp_a86321d3cc7c39e9
-SHORT proposal is a SEPARATE, explicit hypothesis: valid=True, hypothesis_id=hyp_d05029fa98e6b034
+LONG proposal (built from negative-effect evidence) stays LONG: valid=True, hypothesis_id=hyp_2c4974fc8f557138
+SHORT proposal is a SEPARATE, explicit hypothesis: valid=True, hypothesis_id=hyp_88daab62838b46f7
 Two distinct hypothesis_ids: True (never the same record silently flipped)
 Registry now holds both: 2 PREREGISTERED hypotheses on the same signature
 

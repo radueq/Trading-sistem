@@ -79,15 +79,25 @@ def is_eligible_for_review(packet: EvidencePacket, eligibility_config: dict) -> 
 
 
 def compute_review_priority(packet: EvidencePacket) -> tuple[float, float, float]:
-    """Ascending sort key -- smaller is higher priority. Explicitly
-    outcome-aware (adjusted_p, standardized_effect, valid_episode_n), ALL
+    """Ascending sort key -- smaller is higher priority. `effect_key`/
+    `support_key` are outcome-aware (standardized_effect, valid_episode_n),
     read from the packet's single policy-fixed reference horizon -- never
     from whichever horizon in the decay curve looks strongest. Every
     caller MUST label the result with `PRIORITY_BASIS_OUTCOME_AWARE` (see
-    `build_research_queue` below) rather than treat it as neutral."""
-    adjusted_p = packet.primary_adjusted_p
+    `build_research_queue` below) rather than treat it as neutral.
+
+    `p_key` is `float("inf")` UNCONDITIONALLY (joint remediation design
+    003+004, Stage 4; decision registry A4) -- raw/adjusted significance
+    stays DIAGNOSTIC ONLY in V1 (the underlying permutation test's
+    required exchangeability assumption is not independently verified,
+    see `EvidencePacket.primary_exchangeability_status`), so it never
+    drives ranking. This function does not read `primary_adjusted_p` or
+    `primary_exchangeability_status` at all -- not even to branch on the
+    status text -- so no value either field could ever hold (including
+    one artificially injected via `dataclasses.replace()`) changes the
+    result."""
     effect = packet.primary_standardized_effect
-    p_key = adjusted_p if adjusted_p is not None else float("inf")
+    p_key = float("inf")
     effect_key = -abs(effect) if effect is not None else 0.0
     support_key = float(-packet.primary_valid_episode_n)
     return (p_key, effect_key, support_key)

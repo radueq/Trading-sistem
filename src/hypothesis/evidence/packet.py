@@ -129,6 +129,7 @@ def build_evidence_packet(
             median_relative_return=p.relative_outcome.median,
             valid_episode_n=p.support.valid_episode_n,
             adjusted_p=p.baseline_comparison.adjusted_p,
+            exchangeability_status=p.baseline_comparison.exchangeability_status,
         )
         for p in sorted(profiles, key=lambda p: p.horizon_bars)
     )
@@ -166,4 +167,5 @@ def build_evidence_packet(
         primary_missingness_ratio=_missingness_ratio(primary),
         primary_has_stability_bins=len(primary.stability) > 0,
         warnings=primary.warnings,
+        primary_exchangeability_status=primary.baseline_comparison.exchangeability_status,
     )

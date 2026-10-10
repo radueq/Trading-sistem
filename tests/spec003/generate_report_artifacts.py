@@ -123,6 +123,12 @@ def build_multiple_testing_trap_section() -> str:
         "(3 bars), tested together as ONE frozen family. Raw p-values alone",
         "already look tempting for several of them; BH-FDR is what exposes",
         "that as an artifact of testing many things at once.\n",
+        "`raw_p`/`adjusted_p` below are DIAGNOSTIC ONLY in V1 (joint",
+        "remediation design 003+004, Stage 4; decision registry A4) --",
+        "the underlying permutation test's required exchangeability",
+        "assumption is not independently verified, so neither figure",
+        "drives Research Queue ranking; see `exchangeability_status` on",
+        "`BaselineComparison`/`EvidencePacket`.\n",
         "| Signature | raw_p | adjusted_p (BH-FDR, q=0.05) | 'significant' at raw p<0.05? | after BH-FDR? |",
         "|---|---|---|---|---|",
     ]

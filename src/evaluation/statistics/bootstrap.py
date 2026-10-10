@@ -103,6 +103,37 @@ def bootstrap_ci_for_series(
     return percentile_ci(replicates, alpha)
 
 
+def weighted_mean_by_security(rows: list[tuple[str, float]]) -> Optional[float]:
+    """Per-security-equalized mean of `(security_id, value)` rows --
+    local weight `1/(k*n_i)` per row (`k`=distinct securities present,
+    `n_i`=this security's own row count among `rows`); the bin-level
+    `W_b` factor from `baseline.universe.stratified_baseline_weighted_
+    points()`'s own `w = W_b/(k*n_i)` formula is omitted here on
+    purpose -- it is a constant multiplicative factor across every row
+    of ONE bin, so it cancels exactly in the ratio this function
+    computes. Used as the per-replicate statistic for the bootstrap
+    (joint remediation design 003+004 section 6; decision registry A4):
+    `k`/`n_i` are recomputed from WHATEVER composition is passed in --
+    the caller is responsible for passing the real sample's rows for
+    the point estimate's own CI, or one replicate's own resampled rows
+    for the per-replicate bootstrap statistic, never the original
+    sample's fixed weights reused across replicates. `None` if `rows`
+    is empty."""
+    if not rows:
+        return None
+    counts: dict[str, int] = {}
+    for sid, _ in rows:
+        counts[sid] = counts.get(sid, 0) + 1
+    k = len(counts)
+    total_weight = 0.0
+    total = 0.0
+    for sid, v in rows:
+        w = 1.0 / (k * counts[sid])
+        total += w * v
+        total_weight += w
+    return total / total_weight if total_weight > 0 else None
+
+
 def _stable_bin_offset(label: str, sorted_labels: list[str]) -> int:
     """A deterministic, process-stable per-bin seed offset -- Python's
     built-in hash() is salted per-process for strings, which would break
@@ -112,30 +143,46 @@ def _stable_bin_offset(label: str, sorted_labels: list[str]) -> int:
 
 
 def stratified_baseline_bootstrap_replicates(
-    baseline_dated_values_by_bin: dict[str, list[tuple[str, float]]],
+    baseline_dated_values_by_bin: dict[str, list[tuple[str, str, float]]],  # (security_id, as_of, value)
     session_dates_by_bin: dict[str, list[str]],
     weights_by_bin: dict[str, float],
     block_length_bars: int,
     iterations: int,
     seed: int,
-    statistic: Callable[[list[float]], float] = _mean,
 ) -> list[float]:
     """The CI-producing counterpart of
-    baseline.universe.stratified_baseline_point_estimate: one TIME_BLOCK
-    bootstrap replicate per bin per iteration (each bin resampled
-    independently over ITS OWN slice of the real session calendar --
-    `session_dates_by_bin[label]`, GPT Review #003 Round 2 -- via a
-    stable per-bin seed offset), combined using the signature's FIXED
-    bin weights (never resampled themselves)."""
+    `baseline.universe.stratified_baseline_weighted_points` (joint
+    remediation design 003+004 section 6; decision registry A4 --
+    the per-replicate statistic now corresponds to the SAME
+    per-security-weighted mean `baseline_mean` itself uses, not a plain
+    mean): one TIME_BLOCK bootstrap replicate per bin per iteration
+    (each bin resampled independently over ITS OWN slice of the real
+    session calendar -- `session_dates_by_bin[label]`, GPT Review #003
+    Round 2 -- via a stable per-bin seed offset), combined using the
+    signature's FIXED bin weights (never resampled themselves).
+
+    WITHIN each bin, `time_block_bootstrap_replicates()` is reused
+    UNCHANGED -- it only groups-by-date and concatenates whatever
+    payload each row carries, so passing `(security_id, value)` pairs
+    as that payload and `weighted_mean_by_security` as the statistic
+    makes each DRAWN REPLICATE recompute its own `k_rep`/`n_i_rep` from
+    THAT replicate's own resampled composition (block resampling with
+    replacement can change which/how many rows of each security appear
+    -- the original sample's fixed weights are never reused across
+    replicates). Interval construction from the combined `B` replicate
+    values stays the plain UNWEIGHTED percentile (`percentile_ci()`) --
+    weighting is already fully consumed in this per-replicate step."""
     sorted_labels = sorted(baseline_dated_values_by_bin.keys())
     per_bin_replicates: dict[str, list[float]] = {}
     for label in sorted_labels:
-        dated_values = baseline_dated_values_by_bin[label]
+        rows = baseline_dated_values_by_bin[label]
         bin_sessions = session_dates_by_bin.get(label, [])
         bin_seed = seed + _stable_bin_offset(label, sorted_labels)
+        dated_payload = [(as_of, (sid, v)) for sid, as_of, v in rows]
         per_bin_replicates[label] = time_block_bootstrap_replicates(
-            dated_values, bin_sessions, block_length_bars, iterations, bin_seed, statistic,
-        ) if dated_values and bin_sessions else []
+            dated_payload, bin_sessions, block_length_bars, iterations, bin_seed,
+            statistic=weighted_mean_by_security,
+        ) if rows and bin_sessions else []
 
     combined: list[float] = []
     for r in range(iterations):

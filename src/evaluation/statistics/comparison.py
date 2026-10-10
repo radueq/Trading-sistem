@@ -62,49 +62,100 @@ def permutation_p_value(
     return observed, raw_p
 
 
+def _bin_row_weights(baseline_rows: list[tuple[str, float]]) -> list[float]:
+    """Per-security-equalized LOCAL weight `1/(k_b*n_i,b)` for each row,
+    position-aligned to `baseline_rows`' own order (joint remediation
+    design 003+004 section 5; decision registry A4). The bin-level `W_b`
+    factor from the point estimate's own `w = W_b/(k_b*n_i,b)` formula
+    is omitted here on purpose -- it is a constant multiplicative factor
+    across every row of ONE bin, so it cancels exactly in the weighted
+    mean this function's weights feed into; only the RELATIVE,
+    per-security weighting matters within a single bin's own permutation
+    pool."""
+    counts: dict[str, int] = {}
+    for sid, _ in baseline_rows:
+        counts[sid] = counts.get(sid, 0) + 1
+    k_b = len(counts)
+    return [1.0 / (k_b * counts[sid]) for sid, _ in baseline_rows]
+
+
+def _weighted_mean(values: list[float], weights: list[float]) -> float:
+    total_w = sum(weights)
+    return sum(v * w for v, w in zip(values, weights)) / total_w
+
+
 def stratified_permutation_p_value(
     signature_values_by_bin: dict[str, list[float]],
-    baseline_values_by_bin: dict[str, list[float]],
+    baseline_rows_by_bin: dict[str, list[tuple[str, float]]],  # (security_id, value) per row
     weights_by_bin: dict[str, float],
     iterations: int,
     seed: int,
 ) -> tuple[Optional[float], Optional[float]]:
     """The stratified counterpart of `permutation_p_value`, consistent
-    with `baseline.universe.stratified_baseline_point_estimate` and
-    `statistics.bootstrap.stratified_baseline_bootstrap_replicates`: a
-    bin contributes to `observed`/the null distribution only when BOTH
-    its signature and baseline pools are non-empty and its weight > 0 --
-    exactly the same inclusion rule the point estimate uses, so `raw_p`
-    is testing the identical weighted quantity the reported effect size
-    is measuring. Returns (observed_difference, raw_p); (None, None) if
-    no bin qualifies."""
-    pools: dict[str, tuple[list[float], list[float]]] = {}
+    with `baseline.universe.stratified_baseline_weighted_points` and
+    `statistics.bootstrap.stratified_baseline_bootstrap_replicates`
+    (joint remediation design 003+004 section 5; decision registry A4,
+    correcting the pre-Stage-4 mismatch where this test compared against
+    a PLAIN baseline mean while the reported effect size already used a
+    per-security-weighted one): a bin contributes to `observed`/the null
+    distribution only when BOTH its signature and baseline pools are
+    non-empty and its weight > 0 -- exactly the same inclusion rule the
+    point estimate uses.
+
+    WITHIN each bin, the fixed per-row weight (`_bin_row_weights()`,
+    `1/(k_b*n_i,b)`) is precomputed ONCE from the TRUE baseline
+    composition and stays bound to its POSITION in that bin's pooled
+    array (signature values ++ baseline values, exactly as before) --
+    never to whichever value a shuffle later places there. For
+    `observed` and every permuted replicate, only the VALUES are
+    shuffled: the signature-side statistic is the plain mean of
+    whichever values land in the fixed signature slots, and the
+    baseline-side statistic is the WEIGHTED mean of whichever values
+    land in the baseline slots, using each slot's own fixed weight.
+
+    At equal per-security weight (one row per security, `k_b ==
+    len(baseline_rows)`), the fixed weights are uniform and this
+    reduces BYTE-IDENTICAL to the pre-Stage-4 plain test (same observed
+    value, p-value, RNG sequence) -- the per-bin pooling/shuffle
+    mechanics and iteration order are otherwise unchanged.
+
+    Returns (observed_difference, raw_p); (None, None) if no bin
+    qualifies."""
+    pools: dict[str, tuple[list[float], list[tuple[str, float]]]] = {}
     for label, weight in weights_by_bin.items():
         if weight <= 0:
             continue
         sig_vals = signature_values_by_bin.get(label, [])
-        base_vals = baseline_values_by_bin.get(label, [])
-        if not sig_vals or not base_vals:
+        base_rows = baseline_rows_by_bin.get(label, [])
+        if not sig_vals or not base_rows:
             continue
-        pools[label] = (sig_vals, base_vals)
+        pools[label] = (sig_vals, base_rows)
     if not pools or iterations <= 0:
         return None, None
 
+    bin_weights: dict[str, list[float]] = {
+        label: _bin_row_weights(base_rows) for label, (_, base_rows) in pools.items()
+    }
+
     total_weight = sum(weights_by_bin[label] for label in pools)
     observed = sum(
-        weights_by_bin[label] * (sum(sig_vals) / len(sig_vals) - sum(base_vals) / len(base_vals))
-        for label, (sig_vals, base_vals) in pools.items()
+        weights_by_bin[label] * (
+            sum(sig_vals) / len(sig_vals) - _weighted_mean([v for _, v in base_rows], bin_weights[label])
+        )
+        for label, (sig_vals, base_rows) in pools.items()
     ) / total_weight
 
     rng = random.Random(seed)
     at_least_as_extreme = 0
     for _ in range(iterations):
         combined = 0.0
-        for label, (sig_vals, base_vals) in pools.items():
+        for label, (sig_vals, base_rows) in pools.items():
             n_sig = len(sig_vals)
-            pooled = sig_vals + base_vals
+            base_values = [v for _, v in base_rows]
+            pooled = sig_vals + base_values
             rng.shuffle(pooled)
-            perm_diff = sum(pooled[:n_sig]) / n_sig - sum(pooled[n_sig:]) / len(base_vals)
+            shuffled_base = pooled[n_sig:]
+            perm_diff = sum(pooled[:n_sig]) / n_sig - _weighted_mean(shuffled_base, bin_weights[label])
             combined += weights_by_bin[label] * perm_diff
         combined /= total_weight
         if abs(combined) >= abs(observed):

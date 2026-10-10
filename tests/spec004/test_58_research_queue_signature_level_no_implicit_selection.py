@@ -22,11 +22,16 @@ def test_one_entry_per_signature_regardless_of_decay_curve_length(evidence_packe
 def test_priority_uses_only_the_configured_reference_horizon_not_the_strongest_one(evidence_packet, hypothesis_config):
     # profiles_all_horizons's strongest horizon is 3 bars (see conftest),
     # but reference_horizon_bars is a fixed policy value (also 3, by
-    # coincidence of the default config) -- prove the priority key is
-    # computed from `primary_*` fields, which are always the policy
-    # horizon's own values, not a max/min search across the curve.
+    # coincidence of the default config) -- prove the priority key's
+    # outcome-aware tiebreakers are computed from `primary_*` fields,
+    # which are always the policy horizon's own values, not a max/min
+    # search across the curve. p_key itself is float("inf")
+    # UNCONDITIONALLY in V1 (joint remediation design 003+004, Stage 4;
+    # decision registry A4) -- raw/adjusted significance is diagnostic
+    # only and never drives ranking, so it is asserted directly rather
+    # than against primary_adjusted_p.
     key = compute_review_priority(evidence_packet)
-    assert key == (evidence_packet.primary_adjusted_p, -abs(evidence_packet.primary_standardized_effect), -evidence_packet.primary_valid_episode_n)
+    assert key == (float("inf"), -abs(evidence_packet.primary_standardized_effect), -evidence_packet.primary_valid_episode_n)
 
 
 def test_a_packet_not_built_at_the_configured_reference_horizon_is_rejected(evidence_packet, hypothesis_config):

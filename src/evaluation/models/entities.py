@@ -154,6 +154,21 @@ class DescriptiveStats:
 
 
 @dataclass(frozen=True)
+class SessionMassBin:
+    """A2 diagnostic (joint remediation design 003+004 section 3;
+    decision registry A2) -- WEIGHTED per-session mass within ONE
+    temporal bin of the baseline pool, normalized to sum to `1.0`
+    within that bin. `session_mass` sums per-security row WEIGHTS per
+    session (the SAME `w_row` the point estimate uses), never a raw
+    row-count `Counter` -- see `baseline/universe.py:compute_session_
+    mass()`. Purely descriptive, same category as `ConcentrationStats`:
+    never consumed by the point estimate, bootstrap, or permutation
+    test."""
+    bin_label: str
+    session_mass: dict  # {as_of: fraction of this bin's weighted mass}
+
+
+@dataclass(frozen=True)
 class BaselineComparison:
     """Signature vs TEMPORALLY_STRATIFIED_ELIGIBLE_BASELINE (Spec #003
     SS33-34/38, Radu's amendment to the original SS33 -- never raw-row
@@ -161,7 +176,19 @@ class BaselineComparison:
     informally derived from a bootstrap CI crossing zero (Radu's explicit
     correction to the original draft). standardized_effect is the robust
     formula median_difference / (baseline_IQR / 1.349); `None` when
-    baseline_IQR is ~0 (UNDEFINED_ZERO_SCALE, not a silent division)."""
+    baseline_IQR is ~0 (UNDEFINED_ZERO_SCALE, not a silent division).
+
+    `family_test_count`, `exchangeability_status`, and
+    `session_mass_by_bin` were ADDED this round (joint remediation
+    design 003+004, Stage 4; decision registry A2/A4/F6) -- all three
+    default so every pre-Stage-4 construction site is unaffected.
+    `exchangeability_status` is hard-coded `"UNVERIFIED"` by whatever
+    function builds this record (`evaluation/engine.py`) -- no V1 code
+    path ever produces `"VERIFIED"`; `evidence/queue.py`'s
+    `compute_review_priority()` sets `p_key = inf` UNCONDITIONALLY,
+    never reading this field at all, so no value it could ever hold
+    (including one artificially injected via `dataclasses.replace()`)
+    changes ranking."""
     baseline_mean: Optional[float]
     baseline_median: Optional[float]
     mean_difference: Optional[float]
@@ -173,6 +200,9 @@ class BaselineComparison:
     adjusted_p: Optional[float]
     family_id: Optional[str]
     multiple_testing_method: Optional[str]
+    family_test_count: Optional[int] = None
+    exchangeability_status: str = "UNVERIFIED"
+    session_mass_by_bin: tuple[SessionMassBin, ...] = ()
 
 
 @dataclass(frozen=True)

@@ -598,6 +598,12 @@ class DecayPoint:
     median_relative_return: Optional[float]
     valid_episode_n: int
     adjusted_p: Optional[float]
+    # Joint remediation design 003+004, Stage 4; decision registry A4.
+    # Carried through from this horizon's own
+    # BaselineComparison.exchangeability_status -- explanatory metadata
+    # ONLY, never read by any ranking/selection logic. Defaults so every
+    # pre-Stage-4 construction site is unaffected.
+    exchangeability_status: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -645,6 +651,14 @@ class EvidencePacket:
     primary_has_stability_bins: bool
 
     warnings: tuple[str, ...] = field(default_factory=tuple)
+    # Joint remediation design 003+004, Stage 4; decision registry A4.
+    # Carried through from the primary horizon's own BaselineComparison.
+    # exchangeability_status -- explanatory metadata ONLY.
+    # evidence/queue.py's compute_review_priority() sets p_key = inf
+    # UNCONDITIONALLY and never reads this field, so no value it could
+    # ever hold changes ranking. Defaults so every pre-Stage-4
+    # construction site is unaffected.
+    primary_exchangeability_status: str = "UNVERIFIED"
 
 
 # --------------------------------------------------------------------------

@@ -47,8 +47,8 @@ from discovery.config.loader import reparse_raw_texts as reparse_discovery_raw_t
 from discovery.engine import DISCOVERY_ENGINE_VERSION, compute_discovery_observations
 
 from evaluation.baseline.universe import (
-    assign_bin, bin_composition, exclude_self, partition_temporal_bins,
-    robust_iqr, stratified_baseline_point_estimate,
+    assign_bin, bin_composition, compute_session_mass, exclude_self, partition_temporal_bins,
+    stratified_baseline_weighted_points, weighted_mean, weighted_quantile,
 )
 from evaluation.config.loader import EvaluationConfig
 from evaluation.config.loader import reparse_raw_texts as reparse_evaluation_raw_texts
@@ -62,6 +62,7 @@ from evaluation.observations.signatures import match_observations
 from evaluation.outcomes.benchmark import attach_benchmark_return
 from evaluation.outcomes.forward_returns import compute_forward_outcome
 from evaluation.registry.runs import build_run_id, utc_now_iso
+from evaluation.registry.signatures import freeze_signature_set
 from evaluation.statistics.bootstrap import (
     bootstrap_ci_for_series, percentile_ci, stratified_baseline_bootstrap_replicates,
     time_block_bootstrap_replicates,
@@ -253,20 +254,29 @@ def _evaluate_signature_horizon(
         for sid, as_of, o in baseline_pool_h
         if o.outcome_status == OutcomeStatus.VALID.value and o.relative_return is not None
     ]
-    baseline_dated = exclude_self(baseline_all, exclude_pairs)
+    baseline_dated = exclude_self(baseline_all, exclude_pairs)  # (security_id, as_of, value)
 
     signature_dates = [ep.representative_as_of for ep, _ in relative_valid]
     weights = bin_composition(signature_dates, bins)
 
-    baseline_mean = stratified_baseline_point_estimate(baseline_dated, weights, bins, lambda vs: sum(vs) / len(vs))
-    import statistics as _pystats
-    baseline_median = stratified_baseline_point_estimate(baseline_dated, weights, bins, _pystats.median)
+    # ONE pooled weighted baseline distribution (joint remediation design
+    # 003+004 section 3-4; decision registry A3, Stage 4) feeds
+    # baseline_mean/baseline_median/baseline_iqr TOGETHER from this
+    # IDENTICAL pooled set -- replaces the old two-level Level-1
+    # mechanism and the separately-unweighted robust_iqr() call
+    # entirely, in one change, not two.
+    baseline_points = stratified_baseline_weighted_points(baseline_dated, weights, bins)
+    baseline_mean = weighted_mean(baseline_points)
+    baseline_median = weighted_quantile(baseline_points, 0.5)
+    baseline_q1 = weighted_quantile(baseline_points, 0.25)
+    baseline_q3 = weighted_quantile(baseline_points, 0.75)
+    baseline_iqr = baseline_q3 - baseline_q1 if baseline_q1 is not None and baseline_q3 is not None else None
 
-    baseline_by_bin: dict[str, list] = {b.label: [] for b in bins}
-    for d, v in baseline_dated:
+    baseline_by_bin: dict[str, list[tuple[str, str, float]]] = {b.label: [] for b in bins}
+    for sid, d, v in baseline_dated:
         label = assign_bin(d, bins)
         if label is not None:
-            baseline_by_bin[label].append((d, v))
+            baseline_by_bin[label].append((sid, d, v))
     # Each bin's bootstrap resamples over ITS OWN slice of the real
     # session calendar (GPT Review #003 Round 2), never over the dates
     # merely present in that bin's baseline values.
@@ -285,8 +295,31 @@ def _evaluate_signature_horizon(
     ] if signature_replicates and baseline_replicates else []
     mean_difference_ci = percentile_ci(diff_replicates) if diff_replicates else ConfidenceInterval(None, None, "TIME_BLOCK_BOOTSTRAP_PERCENTILE")
 
-    signature_mean_relative = describe(relative_values).mean
-    signature_median_relative = describe(relative_values).median
+    # F3 common support (joint remediation design 003+004 section 3-6;
+    # decision registry A1, Stage 4): a bin counts as common-support
+    # only when the SIGNATURE has weight there (bin_composition()'s own
+    # weights, > 0) AND the baseline pool has at least one row there --
+    # exactly stratified_baseline_weighted_points()'s own existing
+    # inclusion rule, applied here explicitly rather than left as a
+    # silent renormalization that hides a population mismatch.
+    # signature_mean_relative is restricted to this SAME bin subset
+    # (missed in every prior round -- restricting only the baseline side
+    # reintroduces the original mismatch one level down). On any
+    # mismatch (partial OR zero common support), mean_difference/
+    # median_difference/raw_p/mean_difference_ci/standardized_effect ALL
+    # become None TOGETHER below -- the signature's own full-population
+    # absolute_outcome/relative_outcome DescriptiveStats (above) are
+    # untouched.
+    signature_bins_with_weight = {label for label, w in weights.items() if w > 0}
+    common_support_bins = {label for label in signature_bins_with_weight if baseline_by_bin.get(label)}
+    full_common_support = signature_bins_with_weight == common_support_bins
+
+    signature_relative_common = [
+        o.relative_return for ep, o in relative_valid
+        if assign_bin(ep.representative_as_of, bins) in common_support_bins
+    ]
+    signature_mean_relative = describe(signature_relative_common).mean
+    signature_median_relative = describe(signature_relative_common).median
     mean_difference = (
         signature_mean_relative - baseline_mean if signature_mean_relative is not None and baseline_mean is not None else None
     )
@@ -294,26 +327,43 @@ def _evaluate_signature_horizon(
         signature_median_relative - baseline_median if signature_median_relative is not None and baseline_median is not None else None
     )
 
-    baseline_iqr = robust_iqr([v for _, v in baseline_dated])
     standardized_effect, standardized_effect_status = _standardized_effect(median_difference, baseline_iqr)
 
-    # Stratified permutation test (GPT Review #003 Round 1, finding #4):
-    # must compare against the SAME per-bin baseline pools and weights as
-    # the point estimate/CI above -- never the raw unstratified pool.
+    # Stratified permutation test (GPT Review #003 Round 1, finding #4;
+    # re-corrected this round, decision registry A4: must consume the
+    # SAME per-security-weighted baseline mean the point estimate above
+    # reports, never a plain/unweighted one -- otherwise raw_p tests a
+    # different quantity than the effect size being reported). Must
+    # compare against the SAME per-bin baseline pools and weights as the
+    # point estimate/CI above -- never the raw unstratified pool.
     signature_values_by_bin: dict[str, list[float]] = {b.label: [] for b in bins}
     for ep, o in relative_valid:
         label = assign_bin(ep.representative_as_of, bins)
         if label is not None:
             signature_values_by_bin[label].append(o.relative_return)
-    baseline_values_by_bin = {label: [v for _, v in dated] for label, dated in baseline_by_bin.items()}
+    baseline_rows_by_bin = {label: [(sid, v) for sid, _, v in rows] for label, rows in baseline_by_bin.items()}
 
     comparison_cfg = ev_config.data["comparison"]
     observed_diff, raw_p = stratified_permutation_p_value(
-        signature_values_by_bin, baseline_values_by_bin, weights, comparison_cfg["iterations"], comparison_cfg["seed"],
+        signature_values_by_bin, baseline_rows_by_bin, weights, comparison_cfg["iterations"], comparison_cfg["seed"],
     )
+
+    if not full_common_support:
+        mean_difference = None
+        median_difference = None
+        raw_p = None
+        mean_difference_ci = None
+        standardized_effect, standardized_effect_status = _standardized_effect(None, baseline_iqr)
 
     family_id = f"{timeframe}|{horizon_bars}bars|{OUTCOME_TYPE}|{run_id}" if raw_p is not None else None
     mt_cfg = ev_config.data["multiple_testing"]
+
+    # A2 diagnostic (joint remediation design 003+004 section 3; decision
+    # registry A2, Stage 4) -- WEIGHTED per-session mass, purely
+    # descriptive, computed over the FULL baseline pool regardless of
+    # common support; never consumed by any weight/significance formula
+    # above.
+    session_mass_by_bin = compute_session_mass(baseline_dated, weights, bins)
 
     baseline_comparison = BaselineComparison(
         baseline_mean=baseline_mean, baseline_median=baseline_median,
@@ -322,6 +372,11 @@ def _evaluate_signature_horizon(
         standardized_effect=standardized_effect, standardized_effect_status=standardized_effect_status,
         raw_p=raw_p, adjusted_p=None, family_id=family_id,
         multiple_testing_method=mt_cfg["method"] if mode == "FORMAL_DEVELOPMENT" else None,
+        # decision registry A4, Stage 4: hard-coded, never a caller-
+        # supplied constructor argument anywhere in this module -- no V1
+        # code path produces anything other than "UNVERIFIED".
+        exchangeability_status="UNVERIFIED",
+        session_mass_by_bin=session_mass_by_bin,
     )
 
     # Concentration and support are both computed over relative_valid --
@@ -410,6 +465,31 @@ def run_evaluation(
     regardless of calendar use -- Locked OOS is never read, not even
     the fetch itself, not only which fields of an already-fetched bar
     get used afterward."""
+    # Joint remediation design 003+004 section 9; decision registry F2a/
+    # F2b (Stage 4). Checked FIRST, before any config/PIT/Discovery work:
+    # F2a -- a SignatureSet's own signature_set_id must actually match
+    # what freeze_signature_set() recomputes from its signatures (catches
+    # e.g. a SignatureSet built via dataclasses.replace() with mismatched
+    # content/id, which never passed through freeze_signature_set() for
+    # real). F2b -- no two signatures may share one signature_id (a
+    # uniqueness check placed only inside freeze_signature_set() would be
+    # bypassed the same way F2a's own reproduction bypasses it).
+    recomputed_id = freeze_signature_set(list(signature_set.signatures)).signature_set_id
+    if recomputed_id != signature_set.signature_set_id:
+        raise ValueError(
+            f"signature_set.signature_set_id={signature_set.signature_set_id!r} does not match "
+            f"freeze_signature_set() recomputed from its own signatures ({recomputed_id!r}) -- "
+            f"the SignatureSet's content and its own claimed id disagree (joint remediation design "
+            f"003+004 section 9, F2a)"
+        )
+    sig_ids = [s.signature_id for s in signature_set.signatures]
+    if len(set(sig_ids)) != len(sig_ids):
+        duplicates = sorted({s for s in sig_ids if sig_ids.count(s) > 1})
+        raise ValueError(
+            f"signature_set contains duplicate signature_id(s) {duplicates!r} -- every signature in a "
+            f"SignatureSet must be unique, or BH correction's record_key() silently collapses their "
+            f"entries into one (joint remediation design 003+004 section 9, F2b)"
+        )
     # Stage 3 -- config identity infrastructure (decision registry,
     # Stage 3; authorized 2026-10-07; CORRECTED round 2 -- GPT changes-
     # required verdict on `8650f17`). Mandatory by DEFAULT: `config_registry`
@@ -633,6 +713,18 @@ def run_evaluation(
             for p in profiles if p.baseline_comparison.raw_p is not None
         ]
         adjusted = benjamini_hochberg(records)
+        # F6 (joint remediation design 003+004 section 9; decision
+        # registry F6, Stage 4): family_test_count = the number of
+        # PValueRecords actually included in THIS profile's own BH
+        # family -- never a count of every signature x horizon
+        # combination in the run. Every record above already shares its
+        # family_id with every other record at the SAME horizon_bars
+        # (family_id is `f"{timeframe}|{horizon_bars}bars|{outcome_type}
+        # |{run_id}"`, independent of signature_id), so grouping `records`
+        # by horizon_bars gives exactly that family's real size.
+        family_sizes: dict[int, int] = {}
+        for r in records:
+            family_sizes[r.horizon_bars] = family_sizes.get(r.horizon_bars, 0) + 1
         new_profiles = []
         for p in profiles:
             # Keyed by the FULL (signature_id, timeframe, horizon_bars,
@@ -641,9 +733,14 @@ def run_evaluation(
             # every other horizon of the same signature (GPT Review #003
             # Round 1, mandatory finding #1).
             key = record_key(PValueRecord(p.signature_id, p.timeframe, p.horizon_bars, OUTCOME_TYPE, run_id, 0.0))
+            fam_test_count = family_sizes.get(p.horizon_bars) if p.baseline_comparison.raw_p is not None else None
             if key in adjusted:
                 adj_p, fam_id = adjusted[key]
-                p = replace(p, baseline_comparison=replace(p.baseline_comparison, adjusted_p=adj_p, family_id=fam_id))
+                p = replace(p, baseline_comparison=replace(
+                    p.baseline_comparison, adjusted_p=adj_p, family_id=fam_id, family_test_count=fam_test_count,
+                ))
+            else:
+                p = replace(p, baseline_comparison=replace(p.baseline_comparison, family_test_count=fam_test_count))
             new_profiles.append(p)
         profiles = new_profiles
 
