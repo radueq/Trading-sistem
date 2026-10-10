@@ -1,3 +1,11 @@
+# F1 (decision registry F1, Stage 7) -- RESERVED NAME: do NOT add the PyPI
+# property-based-testing library `hypothesis` without re-examining F1 first.
+# This project's own package is src/hypothesis/, imported bare
+# (`import hypothesis`, `from hypothesis.x import y`). TEST 49
+# (tests/spec004/test_49_evaluation_cannot_import_hypothesis.py) reserves the
+# bare name `hypothesis` for that internal package by convention: a bare import
+# of the third-party library would be AST-identical and could not be told apart.
+# TEST 49 fails if `hypothesis` is ever declared here or in pyproject.toml.
 yfinance>=1.7.0
 pandas>=2.0
 PyYAML>=6.0
