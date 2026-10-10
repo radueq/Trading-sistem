@@ -1,4 +1,4 @@
-# Implementation Plan -- Spec #003 + Spec #004 remediation (2026-10-05/06/07/10, revision 19)
+# Implementation Plan -- Spec #003 + Spec #004 remediation (2026-10-05/06/07/10, revision 20)
 
 **Status: Stage 1 IMPLEMENTED and ACCEPTED. Stage 2 (corrected
 admission/registry mechanism, calendar tested with fixtures) ACCEPTED
@@ -25,18 +25,32 @@ Finding 14, E1, Finding 15/17, G1 + Finding 2, H1) IMPLEMENTED at
 commit `a369799` -- ACCEPTED by GPT in the authorized scope for
 delivery `28987a8` (E1's guarantee strictly the agreed three named
 conflicts under synchronous execution). Stage 7 (`#004` TEST 49 AST
-guard + F1) is AUTHORIZED, per Radu's own explicit instruction
-(2026-10-10), and IMPLEMENTED at commit `1aa0b60` -- delivered for
-GPT's review, not yet itself reviewed. Stop condition: **"oprire după
-Stage 7"** -- Stage 8, and `#005`/Batch 3, remain NOT AUTHORIZED.**
+guard + F1) IMPLEMENTED at commit `1aa0b60` -- ACCEPTED by GPT in the
+verified scope (implementation `1aa0b60`, docs `051d9a1`; full suite
+not re-run by GPT). Stage 8 (`#004` Finding 18/20) is AUTHORIZED, per
+Radu's own explicit instruction (2026-10-10, with the Finding 18 field-
+list clarification), and IMPLEMENTED at commit `6b11265` -- delivered
+for GPT's review, not yet itself reviewed. Stop condition: **"oprire
+după Stage 8"** -- `#005`/Batch 3 remains NOT AUTHORIZED. Stage 8 is
+the last stage of this plan.**
 Built from
 `docs/joint_remediation_design_003_004_2026-10-04.md` (revision 11,
 closed calendar contract included, section 7 config identity) and
-`docs/decision_sheet_003_004_2026-10-05.md` (revision 22, the
+`docs/decision_sheet_003_004_2026-10-05.md` (revision 23, the
 Technical Decision Registry). **Precedence: the registry's own
 decisions replace revision 11's open alternatives; this plan only
 sequences already-made decisions, it does
 not re-decide anything.**
+
+**Revision 20 -- doua lucruri, pe autorizarea explicita a lui Radu
+(2026-10-10). (1) Consemneaza verdictul GPT asupra Stage 7: ACCEPTED
+in scopul verificat (`1aa0b60` + `051d9a1`; 26 de teste rerulate
+independent, probe proprii; suita completa nererulata de GPT). (2)
+Implementeaza Stage 8, commit `6b11265`: Finding 18 cu lista de campuri
+AMENDATA explicit (sapte campuri, fara `valid_n` -- provenienta aprobarii
+in decision sheet L1) si Finding 20. Suita: 1030 passed, 1 skipped
+(1017 + 13). Stage 8 livrat pentru review GPT; este ultima etapa a
+planului. #005/Batch 3 ramane neautorizat.**
 
 **Revision 19 -- doua lucruri, pe autorizarea explicita a lui Radu
 (2026-10-10). (1) Consemneaza verdictul GPT asupra Stage 6: ACCEPTED
@@ -1187,7 +1201,9 @@ cross-checked against the real run registry.
 
 **IMPLEMENTED -- Radu's explicit authorization, 2026-10-10, Stage 7
 only (stop after Stage 7). Commit `1aa0b60` on `claude/spec004-audit`.
-Delivered for GPT's review, not yet itself reviewed.** TEST 49 reuses
+ACCEPTED by GPT in the verified scope (recorded revision 20); this
+acceptance did NOT itself authorize Stage 8 -- Radu authorized it
+separately.** TEST 49 reuses
 TEST 26's accepted scanner (dual-context relative resolution, explicit
 `unresolvable` warning on the real scan path), forbidden namespace
 `hypothesis`; F1 note at `requirements.txt` with a trigger test. TEST
@@ -1209,6 +1225,16 @@ that adding a `hypothesis` PyPI dependency requires revisiting F1.
 ---
 
 ## Stage 8 -- #004 evidence/queue correctness (Finding 18/20 only)
+
+**IMPLEMENTED -- Radu's explicit authorization, 2026-10-10, Stage 8
+only, with the Finding 18 field-list clarification (stop after Stage
+8). Commit `6b11265` on `claude/spec004-audit`. Delivered for GPT's
+review, not yet itself reviewed.** Finding 18:
+`EvidencePacket.primary_stability_summary` (seven fields, AMENDED from
+the design sketch -- decision sheet section L1, with approval
+provenance); Finding 20: `StopLossRule`/`PartialProfitRule` in
+`_TYPE_REGISTRY` (section L2). Tests: TEST 84 (9) + TEST 85 (4); full
+suite 1030 passed, 1 skipped (1017 + 13).
 
 **Corrected this round: this stage is NOT functionally downstream of
 Stage 6/G1 -- G1 governs admission INTO the preregistration gate; it
