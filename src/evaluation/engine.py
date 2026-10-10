@@ -64,8 +64,8 @@ from evaluation.outcomes.forward_returns import compute_forward_outcome
 from evaluation.registry.runs import build_run_id, utc_now_iso
 from evaluation.registry.signatures import freeze_signature_set
 from evaluation.statistics.bootstrap import (
-    bootstrap_ci_for_series, percentile_ci, stratified_baseline_bootstrap_replicates,
-    time_block_bootstrap_replicates,
+    bootstrap_ci_for_series, common_support_difference_replicates, percentile_ci,
+    signature_bootstrap_replicates_by_bin, stratified_baseline_replicates_by_bin,
 )
 from evaluation.statistics.comparison import stratified_permutation_p_value
 from evaluation.statistics.concentration import compute_concentration
@@ -283,16 +283,37 @@ def _evaluate_signature_horizon(
     session_dates_by_bin: dict[str, list[str]] = {
         b.label: [d for d in session_dates if b.start_date <= d <= b.end_date] for b in bins
     }
-    baseline_replicates = stratified_baseline_bootstrap_replicates(
-        baseline_by_bin, session_dates_by_bin, weights,
+    # Stage 4 round-2 correction (GPT review on commit `74dc218`,
+    # section 6): the per-bin replicate builders below never silently
+    # drop an empty-iteration replicate (keep_empty_as_none=True
+    # internally) -- a bin empty at iteration r keeps its own list
+    # exactly `iterations` long with a None placeholder there, so
+    # index r always identifies the SAME iteration across every bin
+    # AND across the signature/baseline sides. The pre-correction code
+    # combined baseline bins by position AFTER each bin's own empty
+    # iterations had been silently compacted away, which shifts later
+    # iterations into the WRONG bin pairing -- and separately bootstrap-
+    # ped the signature side as one flat, bin-blind series, so a bin's
+    # baseline-side exclusion in a given replica was never mirrored on
+    # the signature side (A1's own blackout covers the ORIGINAL
+    # population only, not a transient per-replica support gap).
+    signature_dated_by_bin: dict[str, list[tuple[str, float]]] = {b.label: [] for b in bins}
+    for ep, o in relative_valid:
+        label = assign_bin(ep.representative_as_of, bins)
+        if label is not None:
+            signature_dated_by_bin[label].append((ep.representative_as_of, o.relative_return))
+
+    baseline_replicates_by_bin = stratified_baseline_replicates_by_bin(
+        baseline_by_bin, session_dates_by_bin,
         bootstrap_cfg["block_length_bars"], bootstrap_cfg["iterations"], bootstrap_cfg["seed"] + 2,
     )
-    signature_replicates = time_block_bootstrap_replicates(
-        dated_relative, session_dates, bootstrap_cfg["block_length_bars"], bootstrap_cfg["iterations"], bootstrap_cfg["seed"] + 3,
+    signature_replicates_by_bin = signature_bootstrap_replicates_by_bin(
+        signature_dated_by_bin, session_dates_by_bin,
+        bootstrap_cfg["block_length_bars"], bootstrap_cfg["iterations"], bootstrap_cfg["seed"] + 3,
     )
-    diff_replicates = [
-        s - b for s, b in zip(signature_replicates, baseline_replicates)
-    ] if signature_replicates and baseline_replicates else []
+    diff_replicates = common_support_difference_replicates(
+        signature_replicates_by_bin, baseline_replicates_by_bin, weights, bootstrap_cfg["iterations"],
+    )
     mean_difference_ci = percentile_ci(diff_replicates) if diff_replicates else ConfidenceInterval(None, None, "TIME_BLOCK_BOOTSTRAP_PERCENTILE")
 
     # F3 common support (joint remediation design 003+004 section 3-6;
