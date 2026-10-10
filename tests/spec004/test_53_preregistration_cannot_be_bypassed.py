@@ -63,12 +63,15 @@ def test_register_refuses_a_hand_built_first_time_preregistered_hypothesis(entry
 
 
 def test_preregister_hypothesis_succeeds_through_the_real_gate(entry_definition, horizon_candidates, evidence_provenance, hypothesis_config, hypothesis_config_registry, run_registry):
+    proposal = _proposal()
     draft = _draft(entry_definition, horizon_candidates, evidence_provenance, hypothesis_config)
-    variants = materialize_variants(draft, created_at="2026-09-25T00:00:00Z")
+    # Stage 6 (Finding 14): variants must be exactly the proposal's own
+    # replay (its SIGNAL_INVALIDATION exit included), and the approval
+    # must be bound to the proposal's content.
+    variants = materialize_variants(draft, signal_invalidation_exits=proposal.exit_hypotheses, created_at="2026-09-25T00:00:00Z")
     draft = dataclasses.replace(draft, variant_ids=tuple(v.strategy_variant_id for v in variants))
     reg = HypothesisRegistry()
-    proposal = _proposal()
-    consensus = compute_consensus(proposal.proposal_id, (), human_decision=approved_human_decision())
+    consensus = compute_consensus(proposal.proposal_id, (), human_decision=approved_human_decision(proposal=proposal))
 
     frozen = preregister_hypothesis(
         draft, variants, proposal=proposal, proposal_validation=ProposalValidationResult(True, "OK", (), proposal.proposal_id),

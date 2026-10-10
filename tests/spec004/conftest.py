@@ -63,19 +63,37 @@ def hypothesis_config():
     return load_hypothesis_config()
 
 
+def register_discovery_domain(config_registry, discovery_config=None):
+    """Stage 6 (decision registry D1): `preregister_hypothesis()` re-runs
+    `validate_proposal()` against the Discovery config REGISTERED for the
+    operation -- registers it the way an earlier workflow step would
+    (same content shape `discovery.engine` registers)."""
+    discovery_config = discovery_config if discovery_config is not None else load_discovery_config()
+    config_registry.register_or_verify(
+        "discovery", discovery_config.config_version,
+        {"features": discovery_config.features, "states": discovery_config.states,
+         "discovery": discovery_config.discovery, "eligibility": discovery_config.eligibility},
+        discovery_config.raw_texts,
+    )
+    return config_registry
+
+
 @pytest.fixture
-def hypothesis_config_registry(hypothesis_config):
+def hypothesis_config_registry(hypothesis_config, discovery_config):
     """A `ConfigRegistry` with the "hypothesis" domain already
     registered -- simulates the EARLIER step in a real workflow (e.g.
     proposal validation, before the draft is even built) that must
     establish this context BEFORE `preregister_hypothesis()`'s own
     gate ever runs (Stage 3, round-4 fix: the gate itself must never
-    be the place that first establishes trust in a config)."""
+    be the place that first establishes trust in a config). Stage 6
+    (D1): the "discovery" domain is registered too, since the gate now
+    re-runs `validate_proposal()` against both registered snapshots."""
     from config_identity.registry import ConfigRegistry
     registry = ConfigRegistry()
     registry.register_or_verify(
         "hypothesis", hypothesis_config.config_version, hypothesis_config.data, hypothesis_config.raw_texts,
     )
+    register_discovery_domain(registry, discovery_config)
     return registry
 
 
@@ -112,6 +130,7 @@ def evidence_provenance():
         discovery_engine_version="v1.0.0",
         discovery_config_version=DISCOVERY_CONFIG_VERSION,
         timeframe=TIMEFRAME,
+        evaluation_mode="FORMAL_DEVELOPMENT",  # Stage 6, G1 -- matches run_registry.mode below
     )
 
 
@@ -144,7 +163,14 @@ def horizon_candidates():
     )
 
 
-def approved_human_decision(by: str = "radu", at: str = "2026-09-25T00:05:00Z") -> HumanDecision:
+def approved_human_decision(by: str = "radu", at: str = "2026-09-25T00:05:00Z", proposal=None) -> HumanDecision:
+    """Stage 6 (Finding 14): pass `proposal` to bind the approval to that
+    proposal's content via `consensus.record_human_decision()` -- the gate
+    refuses an APPROVE without `content_fingerprint`. Without `proposal`,
+    a bare (unbound) APPROVE, for tests of `can_preregister()` alone."""
+    if proposal is not None:
+        from hypothesis.consensus.consensus import record_human_decision
+        return record_human_decision(proposal, HumanDecisionValue.APPROVE.value, by, at)
     return HumanDecision(decision=HumanDecisionValue.APPROVE.value, decided_by=by, decided_at=at)
 
 
@@ -218,6 +244,7 @@ def make_proposal_raw(**overrides) -> dict:
             "evaluation_config_version": EVALUATION_CONFIG_VERSION, "signature_id": SIGNATURE_ID,
             "signature_set_id": SIGNATURE_SET_ID, "discovery_engine_version": "v1.0.0",
             "discovery_config_version": DISCOVERY_CONFIG_VERSION, "timeframe": TIMEFRAME,
+            "evaluation_mode": "FORMAL_DEVELOPMENT",
         },
         "direction": "LONG", "direction_basis": "EVIDENCE_SIGN",
         "entry_definition": {"core_conditions": [

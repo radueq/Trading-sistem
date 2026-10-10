@@ -215,11 +215,27 @@ class HorizonCandidateSet:
     variant it derives, so a caller who pre-specified [2,3,5] before ever
     seeing evidence (`PRE_SPECIFIED`) is never mislabeled as
     `EVIDENCE_DERIVED`. Part of the family fingerprint (a set considered
-    for a different reason is a different commitment, TEST 59)."""
+    for a different reason is a different commitment, TEST 59).
+
+    `designated_baseline_bars` (Stage 6 -- joint remediation design
+    003+004 section 10, Finding 14; decision registry D1): the ONE
+    horizon, if any, explicitly pre-designated as the baseline TIME_EXIT
+    variant, declared on the PROPOSAL and frozen before any Spec #005
+    backtest/exit-engine run uses the materialized variants (not "before
+    evidence" -- #004 proposals necessarily consume #003 evidence).
+    Evaluation METHODOLOGY, never economic content: deliberately EXCLUDED
+    from `_horizon_fp()`/`hypothesis_fingerprint()`, exactly like
+    `variant_tag`. Because it is outside every economic fingerprint, the
+    gate checks it on its own (`HumanDecision.approved_designated_
+    baseline_bars`) and `preregister_hypothesis()` reads the baseline
+    for its `materialize_variants()` replay from THIS field exclusively,
+    never from a free call-site argument. Defaults to None (no baseline
+    designated) so every pre-Stage-6 construction site is unaffected."""
     unit: str  # "BARS" -- only allowed value V1
     values: tuple[int, ...]
     selection_basis: str
     parameter_source: str  # ParameterSource
+    designated_baseline_bars: Optional[int] = None
 
 
 @dataclass(frozen=True)
@@ -348,6 +364,19 @@ class EvidenceProvenance:
     discovery_config_version: str
 
     timeframe: str
+
+    # Stage 6 -- joint remediation design 003+004 section 10, Finding 1;
+    # decision registry G1 (marking). The Spec #003 `EvaluationMode` of
+    # the run this evidence comes from. Part of `_evidence_fp()` WHENEVER
+    # populated (appended only when not None, so every pre-Stage-6 record
+    # -- which never carried it -- keeps its historical hypothesis_id
+    # byte-for-byte, the same additive discipline as `_exit_fp()`'s
+    # STOP_MANAGED_INVALIDATION branch). A self-declared value proves
+    # nothing on its own: `check_provenance_matches_run()` cross-checks it
+    # against the REAL `EvaluationRunRegistry.mode`, and
+    # `preregister_hypothesis()` hard-rejects anything other than
+    # "FORMAL_DEVELOPMENT" (None included).
+    evaluation_mode: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -545,11 +574,32 @@ class HumanDecision:
     PREREGISTERED (SS46). Replaces the original bare
     `human_decision: Optional[str]`, which `can_preregister()` treated as
     a boolean by non-emptiness alone -- accepting "REJECT" or any other
-    non-empty rejection text as if it were approval."""
+    non-empty rejection text as if it were approval.
+
+    Stage 6 (joint remediation design 003+004 section 10, Finding 14
+    part 2 and the baseline-designation fix; Stage 6): two fields written ONCE, at approval time, from the proposal the
+    human was actually shown -- `consensus.record_human_decision()` is the
+    intended constructor:
+    - `content_fingerprint`: `proposal_content_fingerprint(proposal)`
+      (direction/entry/entry execution/horizon candidates/source evidence
+      via the existing `_entry_fp()`/`_horizon_fp()`/`_evidence_fp()`
+      component functions, PLUS every exit via `_exit_fp()`). The gate
+      recomputes it from the LIVE proposal and requires equality -- what
+      ties "a human approved" to "a human approved THIS content".
+    - `approved_designated_baseline_bars`: recorded independently, NOT
+      derived from or folded into `content_fingerprint` (that field is,
+      by design, outside every economic fingerprint) -- the gate checks it
+      on its own against the LIVE `proposal.horizon_candidates.
+      designated_baseline_bars`, closing the lockstep-mutation gap.
+    Both default to None so a REJECT, or any pre-Stage-6 construction
+    site, is unaffected; an APPROVE without `content_fingerprint` is
+    refused at the gate."""
     decision: str  # HumanDecisionValue
     decided_by: str
     decided_at: str
     rationale: Optional[str] = None
+    content_fingerprint: Optional[str] = None
+    approved_designated_baseline_bars: Optional[int] = None
 
 
 @dataclass(frozen=True)

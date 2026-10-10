@@ -20,6 +20,8 @@ recorded outcome that `can_preregister()` correctly refuses.
 """
 from __future__ import annotations
 
+from typing import Optional
+
 from hypothesis.models.entities import (
     AgentReview,
     AgentStance,
@@ -27,7 +29,28 @@ from hypothesis.models.entities import (
     ConsensusStatus,
     HumanDecision,
     HumanDecisionValue,
+    HypothesisProposal,
 )
+from hypothesis.registry.hypotheses import proposal_content_fingerprint
+
+
+def record_human_decision(
+    proposal: HypothesisProposal, decision: str, decided_by: str, decided_at: str,
+    rationale: Optional[str] = None,
+) -> HumanDecision:
+    """Stage 6 -- joint remediation design 003+004 section 10, Finding 14
+    part 2 and the baseline-designation fix. The human review step's own
+    constructor: records the decision TOGETHER WITH what was decided on,
+    computed from the `proposal` the human was actually shown --
+    `content_fingerprint` (economic content) and, separately,
+    `approved_designated_baseline_bars` (methodology, outside every
+    economic fingerprint). `preregister_hypothesis()` recomputes both from
+    the LIVE proposal and refuses any mismatch."""
+    return HumanDecision(
+        decision=decision, decided_by=decided_by, decided_at=decided_at, rationale=rationale,
+        content_fingerprint=proposal_content_fingerprint(proposal),
+        approved_designated_baseline_bars=proposal.horizon_candidates.designated_baseline_bars,
+    )
 
 
 def compute_consensus(

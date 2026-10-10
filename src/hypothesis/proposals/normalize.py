@@ -90,6 +90,7 @@ def _normalize_horizon_candidates(raw: dict) -> HorizonCandidateSet:
         values=tuple(_require(raw, "values")),
         selection_basis=raw.get("selection_basis", ""),
         parameter_source=_require(raw, "parameter_source"),
+        designated_baseline_bars=raw.get("designated_baseline_bars"),
     )
 
 
@@ -103,6 +104,7 @@ def _normalize_evidence_provenance(raw: dict) -> EvidenceProvenance:
         discovery_engine_version=_require(raw, "discovery_engine_version"),
         discovery_config_version=_require(raw, "discovery_config_version"),
         timeframe=_require(raw, "timeframe"),
+        evaluation_mode=raw.get("evaluation_mode"),
     )
 
 

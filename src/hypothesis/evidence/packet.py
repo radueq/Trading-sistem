@@ -143,6 +143,9 @@ def build_evidence_packet(
         discovery_engine_version=run_registry.discovery_engine_version,
         discovery_config_version=run_registry.discovery_config_version,
         timeframe=run_registry.timeframe,
+        # Stage 6 -- Finding 1, decision registry G1 (marking): copied
+        # from the REAL run record, never declared by a caller.
+        evaluation_mode=run_registry.mode,
     )
 
     return EvidencePacket(

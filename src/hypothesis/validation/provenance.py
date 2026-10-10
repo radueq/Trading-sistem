@@ -50,5 +50,19 @@ def check_provenance_matches_run(
         errors.append("signature_set_id mismatch between hypothesis provenance and the actual run (TEST 42)")
     if evidence_provenance.timeframe != run_registry.timeframe:
         errors.append("timeframe mismatch between hypothesis provenance and the actual run (TEST 42)")
+    # Stage 6 -- Finding 1, decision registry G1: a DECLARED evaluation_mode
+    # must equal the REAL run's own `mode` (field-name asymmetry: the run
+    # registry calls it `mode`). Checked whenever the evidence declares a
+    # mode; an UNDECLARED mode (None, every pre-Stage-6 record) is not a
+    # lie about the run and is left to each consumer's own policy --
+    # `preregister_hypothesis()` hard-rejects it (G1), so the #004 gate
+    # stays fully strict, while Spec #005's existing callers of this
+    # function keep their exact pre-Stage-6 behavior on such records.
+    if evidence_provenance.evaluation_mode is not None and evidence_provenance.evaluation_mode != run_registry.mode:
+        errors.append(
+            f"evaluation_mode mismatch -- hypothesis evidence claims "
+            f"{evidence_provenance.evaluation_mode!r}, but the actual run's mode is {run_registry.mode!r} "
+            f"(Stage 6, decision registry G1 -- a self-declared mode is never trusted on its own)"
+        )
 
     return (not errors, tuple(errors))

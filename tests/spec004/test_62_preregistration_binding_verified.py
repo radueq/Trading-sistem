@@ -44,7 +44,8 @@ def _draft(
         variant_ids=(), evidence_provenance=evidence_provenance, hypothesis_provenance=prov, constraints=comp,
         created_at="t", created_by="radu", strategy_config_version=hypothesis_config.config_version,
     )
-    variants = materialize_variants(draft, created_at="t")
+    # Stage 6 (Finding 14): the proposal's own replay, its SIGNAL_INVALIDATION exit included.
+    variants = materialize_variants(draft, signal_invalidation_exits=_proposal(proposal_id).exit_hypotheses, created_at="t")
     draft = dataclasses.replace(draft, variant_ids=tuple(v.strategy_variant_id for v in variants))
     return draft, variants
 
@@ -52,7 +53,7 @@ def _draft(
 def test_consistent_binding_succeeds(entry_definition, horizon_candidates, evidence_provenance, hypothesis_config, hypothesis_config_registry, run_registry):
     proposal = _proposal("prop_1")
     draft, variants = _draft(entry_definition, horizon_candidates, evidence_provenance, hypothesis_config, proposal_id="prop_1")
-    consensus = compute_consensus("prop_1", (), human_decision=approved_human_decision())
+    consensus = compute_consensus("prop_1", (), human_decision=approved_human_decision(proposal=proposal))
     frozen = preregister_hypothesis(
         draft, variants, proposal=proposal, proposal_validation=ProposalValidationResult(True, "OK", (), "prop_1"),
         consensus=consensus, registry=HypothesisRegistry(), run_registry=run_registry, hypothesis_config=hypothesis_config,

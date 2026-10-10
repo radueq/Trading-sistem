@@ -44,7 +44,7 @@ from config_identity.registry import ConfigRegistry
 
 from spec004.conftest import (
     DISCOVERY_CONFIG_VERSION, EVALUATION_CONFIG_VERSION, EVALUATION_RUN_ID, SIGNATURE_ID, SIGNATURE_SET_ID,
-    approved_human_decision, make_evidence_profile, make_proposal_raw,
+    approved_human_decision, make_evidence_profile, make_proposal_raw, register_discovery_domain,
 )
 
 import evaluation.models.entities as eval_entities
@@ -56,6 +56,9 @@ HCFG = load_hypothesis_config()
 # role for this script's own real pipeline run.
 HCFG_REGISTRY = ConfigRegistry()
 HCFG_REGISTRY.register_or_verify("hypothesis", HCFG.config_version, HCFG.data, HCFG.raw_texts)
+# Stage 6 (decision registry D1): the gate re-runs validate_proposal()
+# against the registered Discovery snapshot too.
+register_discovery_domain(HCFG_REGISTRY, DCFG)
 
 
 def _signature_definition():
@@ -95,7 +98,8 @@ def _build_and_preregister(raw_proposal: dict, registry: HypothesisRegistry, run
         AgentReview("agent_trend", "manual-relay:gpt", proposal.proposal_id, "SUPPORT", (), (), "t1"),
         AgentReview("agent_skeptic", "manual-relay:claude", proposal.proposal_id, "SUPPORT", (), (), "t2"),
     ], proposal.proposal_id)
-    consensus = compute_consensus(proposal.proposal_id, reviews, human_decision=approved_human_decision())
+    # Stage 6 (Finding 14): the approval is bound to this proposal's content.
+    consensus = compute_consensus(proposal.proposal_id, reviews, human_decision=approved_human_decision(proposal=proposal))
 
     fp = hypothesis_fingerprint(
         proposal.source_evidence.signature_id, proposal.direction, proposal.entry_definition,

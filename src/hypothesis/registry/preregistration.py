@@ -11,25 +11,126 @@ central guarantee, on paper, was not actually enforced anywhere in code.
 `HypothesisRegistry.register()` now refuses a first-time PREREGISTERED
 insert (see `registry/hypotheses.py`); this module is the only supported
 path that can produce one.
+
+Stage 6 -- #004 preregistration gate hardening (joint remediation design
+003+004 section 10; decision registry C1, D1, E1, G1, H1; Findings 1, 2,
+14, 15, 16, 17). Authorized by Radu, 2026-10-10.
 """
 from __future__ import annotations
 
+from collections import Counter
 from typing import Optional
 
 from config_identity.registry import ConfigIdentityError, ConfigRegistry
+
+from discovery.config.loader import DiscoveryConfig
 
 from evaluation.models.entities import EvaluationRunRegistry
 
 from hypothesis.config.loader import HypothesisConfig, load_config as load_hypothesis_config
 from hypothesis.consensus.consensus import can_preregister
-from hypothesis.models.entities import ConsensusRecord, HypothesisProposal, HypothesisStatus, StrategyHypothesis, StrategyVariant
-from hypothesis.proposals.validator import ProposalValidationResult
-from hypothesis.registry.hypotheses import HypothesisRegistry
+from hypothesis.models.entities import (
+    ConsensusRecord,
+    HypothesisProposal,
+    HypothesisResearchMode,
+    HypothesisStatus,
+    StrategyHypothesis,
+    StrategyVariant,
+)
+from hypothesis.proposals.validator import ProposalValidationResult, validate_proposal
+from hypothesis.registry.hypotheses import HypothesisRegistry, materialize_variants, proposal_content_fingerprint
 from hypothesis.validation.rules import validate_for_preregistration
+
+# Stage 6 -- decision registry G1: the ONLY Spec #003 evaluation mode whose
+# evidence may reach PREREGISTERED.
+REQUIRED_EVALUATION_MODE = "FORMAL_DEVELOPMENT"
 
 
 class PreregistrationError(ValueError):
     pass
+
+
+def verify_draft_matches_proposal(
+    draft: StrategyHypothesis, proposal: HypothesisProposal, variants: tuple[StrategyVariant, ...],
+) -> tuple[bool, tuple[str, ...]]:
+    """Stage 6 -- joint remediation design 003+004 section 10, Finding 14
+    part 1. Before this check, nothing compared the draft's trading
+    content against the proposal it claims to descend from -- the only
+    link was the `proposal_id` STRING, which is not content-addressed.
+
+    Field-by-field equality: `draft.direction == proposal.direction`;
+    `draft.entry_definition == proposal.entry_definition`;
+    `draft.entry_execution_policy == proposal.entry_execution_policy`;
+    `draft.horizon_candidate_set == proposal.horizon_candidates`;
+    `draft.evidence_provenance == proposal.source_evidence`.
+
+    Exits by REPLAY, not equality (`materialize_variants()`'s TIME_EXIT
+    expansion is one-to-many): `materialize_variants()` is re-run on the
+    draft with `proposal.exit_hypotheses` and with `baseline_time_exit_
+    bars` read EXCLUSIVELY from `proposal.horizon_candidates.designated_
+    baseline_bars`, and the supplied `variants` must equal that replay
+    exactly, as a multiset of (strategy_variant_id, variant_definition_
+    hash, parent_hypothesis_id, exit_hypothesis, variant_tag) --
+    every proposal exit present, NO other content the proposal didn't ask
+    for, and the BASELINE_VARIANT tag on exactly the designated horizon
+    (never chosen by a free call-site argument). `created_at` is
+    administrative and not compared.
+
+    This proves the draft and the proposal agree with EACH OTHER -- not,
+    by itself, that either is what the human approved; that is the
+    separate `HumanDecision.content_fingerprint`/`approved_designated_
+    baseline_bars` check in `preregister_hypothesis()` (a proposal and a
+    draft mutated TOGETHER pass this function and are caught there)."""
+    errors: list[str] = []
+    field_pairs = (
+        ("direction", draft.direction, "direction", proposal.direction),
+        ("entry_definition", draft.entry_definition, "entry_definition", proposal.entry_definition),
+        ("entry_execution_policy", draft.entry_execution_policy, "entry_execution_policy", proposal.entry_execution_policy),
+        ("horizon_candidate_set", draft.horizon_candidate_set, "horizon_candidates", proposal.horizon_candidates),
+        ("evidence_provenance", draft.evidence_provenance, "source_evidence", proposal.source_evidence),
+    )
+    for draft_field, draft_value, proposal_field, proposal_value in field_pairs:
+        if draft_value != proposal_value:
+            errors.append(
+                f"draft.{draft_field}={draft_value!r} does not equal proposal.{proposal_field}="
+                f"{proposal_value!r} -- a draft must carry exactly the content of the proposal it "
+                f"descends from (Stage 6, Finding 14)"
+            )
+
+    designated = proposal.horizon_candidates.designated_baseline_bars
+    try:
+        replay = materialize_variants(
+            draft, signal_invalidation_exits=proposal.exit_hypotheses, created_at="",
+            baseline_time_exit_bars=designated,
+        )
+    except ValueError as exc:
+        errors.append(
+            f"materialize_variants() replay from the proposal failed (Stage 6, Finding 14): {exc}"
+        )
+        return (False, tuple(errors))
+
+    def _key(v: StrategyVariant) -> tuple:
+        return (v.strategy_variant_id, v.variant_definition_hash, v.parent_hypothesis_id, v.exit_hypothesis, v.variant_tag)
+
+    expected = Counter(_key(v) for v in replay)
+    supplied = Counter(_key(v) for v in variants)
+    missing = expected - supplied
+    unexpected = supplied - expected
+    if missing:
+        errors.append(
+            f"{sum(missing.values())} variant(s) the proposal requires (replayed from proposal.exit_"
+            f"hypotheses + horizon_candidates, baseline from designated_baseline_bars={designated!r}) "
+            f"are not among the supplied variants: {sorted(k[0] + ':' + k[4] for k in missing)!r} "
+            f"(Stage 6, Finding 14)"
+        )
+    if unexpected:
+        errors.append(
+            f"{sum(unexpected.values())} supplied variant(s) are not part of the proposal's own replay -- "
+            f"content or a BASELINE_VARIANT/EXPERIMENTAL_VARIANT tag the proposal never asked for "
+            f"(designated_baseline_bars={designated!r}): {sorted(k[0] + ':' + k[4] for k in unexpected)!r} "
+            f"(Stage 6, Finding 14)"
+        )
+    return (not errors, tuple(errors))
 
 
 def preregister_hypothesis(
@@ -121,7 +222,64 @@ def preregister_hypothesis(
        actually match the fingerprint of the fields they claim to
        address, PATCH #004-B finding #2) -- all now performed by
        `validate_for_preregistration()` (PATCH #004-A findings #2/#5,
-       PATCH #004-B finding #2).
+       PATCH #004-B finding #2), which since Stage 6 also enforces
+       Finding 15's full contract (exactly one TIME_EXIT per candidate
+       value, both directions; uniqueness by full variant fingerprint;
+       exit-field semantics).
+
+    Stage 6 additions (joint remediation design 003+004 section 10;
+    authorized 2026-10-10), all evaluated BEFORE any registry write:
+    - D1 (decision registry D1, tied to C1): `validate_proposal()` is
+      RE-RUN live on the `proposal` argument, against the SAME config
+      snapshots registered for this operation -- the "hypothesis" snapshot
+      step -1 resolved and verified against the mandatory live re-read
+      (C1), and the "discovery" snapshot, which must ALSO already be
+      registered in `config_registry` by an earlier step (never
+      established here). Nothing cached can go stale: emptied/altered
+      `facts_from_evidence`/`interpretation`, or any other field the
+      validator reads, is caught by construction. The cached
+      `proposal_validation` is kept only as a proposal_id binding and as
+      an extra refusal when it says invalid -- never trusted when it says
+      valid.
+    - Finding 14: `verify_draft_matches_proposal()` (draft == proposal
+      field by field; variants == the proposal's own `materialize_
+      variants()` replay, baseline read EXCLUSIVELY from `proposal.
+      horizon_candidates.designated_baseline_bars`); the human decision
+      must carry `content_fingerprint` equal to `proposal_content_
+      fingerprint()` recomputed from the LIVE proposal, and, as its OWN
+      separate check, `approved_designated_baseline_bars` equal to the
+      LIVE `designated_baseline_bars` -- a proposal and draft mutated
+      TOGETHER after approval are caught here, including a change to the
+      designated baseline alone.
+    - G1 + Finding 2 (decision registry G1): hard-reject unless
+      `proposal.source_evidence.evaluation_mode == "FORMAL_DEVELOPMENT"`
+      AND the REAL `run_registry.mode == "FORMAL_DEVELOPMENT"` (a declared
+      mode is additionally cross-checked against the real run record by
+      `check_provenance_matches_run()`); hard-reject unless
+      `draft.research_mode == "PREREGISTERED_STRATEGY"`. Procedural
+      discipline only -- this does NOT make FORMAL_DEVELOPMENT evidence
+      confirmatory (decision registry G1/G2).
+    - E1 (decision registry E1): `registry.dry_run_preregistration()`
+      simulates the exact write sequence (hypothesis, then each variant in
+      order) against a virtual copy of the registry state; any conflict
+      refuses the call with NO write performed.
+
+      Guarantee scope, quoted exactly from decision registry E1, never
+      paraphrased into a broader claim:
+      "The batch-internal simulated-sequential dry run guarantees no
+      partial write under exactly THREE named conditions (content
+      mismatch; PREREGISTERED-content mismatch; variant content
+      mismatch), ONLY under synchronous execution with no write from
+      another caller interleaved between the dry run and the real
+      writes."
+
+      Known limitation, a PRESENT fact, quoted exactly from decision
+      registry E1: "An exception or failure OUTSIDE the three named
+      conditions (e.g. an unexpected error from a bug elsewhere in the
+      call path) is NOT guaranteed to leave the registry in an
+      all-or-nothing state RIGHT NOW, under the CURRENT plain in-memory
+      dict -- this is a gap in today's implementation, not a risk that
+      first appears after some future storage-layer migration."
 
     On success, freezes `draft` into PREREGISTERED (a NEW
     `StrategyHypothesis`, since the dataclass is frozen -- `hypothesis_id`/
@@ -141,6 +299,7 @@ def preregister_hypothesis(
     # gate can only ever COMPARE against a pre-existing reference, it
     # can never CREATE one for itself.
     fresh_registered = None
+    discovery_registered = None
     if config_registry is None:
         errors.append(
             "preregister_hypothesis() requires an explicit config_registry with the 'hypothesis' "
@@ -154,6 +313,17 @@ def preregister_hypothesis(
             errors.append(
                 f"config_registry has no 'hypothesis' domain registered yet -- preregister_hypothesis() "
                 f"requires it to already exist from an earlier step in this workflow (Stage 3): {exc}"
+            )
+        # Stage 6, D1: the live validate_proposal() re-run needs the
+        # Discovery vocabulary too -- from the snapshot registered for this
+        # operation by an earlier step, never loaded or registered here.
+        try:
+            discovery_registered = config_registry.resolve("discovery")
+        except ConfigIdentityError as exc:
+            errors.append(
+                f"config_registry has no 'discovery' domain registered yet -- preregister_hypothesis() "
+                f"re-runs validate_proposal() against the Discovery config registered for this operation "
+                f"by an earlier step, and never establishes that reference itself (Stage 6, D1): {exc}"
             )
 
     if fresh_registered is not None:
@@ -219,11 +389,82 @@ def preregister_hypothesis(
                 f"{consensus.human_decision.decided_at!r} (PATCH #004-B finding #1)"
             )
 
+    # Stage 6, Finding 14 part 1: the draft (and its variants) carry
+    # exactly the proposal's content.
+    match_ok, match_errors = verify_draft_matches_proposal(draft, proposal, variants)
+    if not match_ok:
+        errors.extend(match_errors)
+
+    # Stage 6, Finding 14 part 2 + baseline designation: the human
+    # approval is bound to THIS content, and -- separately -- to this
+    # designated baseline. Both recomputed from the LIVE proposal.
+    if consensus.human_decision is not None:
+        live_fingerprint = proposal_content_fingerprint(proposal)
+        if consensus.human_decision.content_fingerprint is None:
+            errors.append(
+                "consensus.human_decision carries no content_fingerprint -- an approval not bound to the "
+                "content actually reviewed cannot preregister anything (Stage 6, Finding 14); build it "
+                "with consensus.record_human_decision(proposal, ...)"
+            )
+        elif consensus.human_decision.content_fingerprint != live_fingerprint:
+            errors.append(
+                f"consensus.human_decision.content_fingerprint={consensus.human_decision.content_fingerprint!r} "
+                f"does not match the fingerprint of the LIVE proposal content {live_fingerprint!r} -- the "
+                f"proposal changed after the human approved it (Stage 6, Finding 14)"
+            )
+        live_designated = proposal.horizon_candidates.designated_baseline_bars
+        if consensus.human_decision.approved_designated_baseline_bars != live_designated:
+            errors.append(
+                f"consensus.human_decision.approved_designated_baseline_bars="
+                f"{consensus.human_decision.approved_designated_baseline_bars!r} does not match the LIVE "
+                f"proposal.horizon_candidates.designated_baseline_bars={live_designated!r} -- the baseline "
+                f"designation changed after approval (Stage 6, Finding 14 -- checked on its own, since it "
+                f"is outside every economic fingerprint)"
+            )
+
+    # Stage 6, G1 + Finding 2: evidentiary admission.
+    if proposal.source_evidence.evaluation_mode != REQUIRED_EVALUATION_MODE:
+        errors.append(
+            f"proposal.source_evidence.evaluation_mode={proposal.source_evidence.evaluation_mode!r} -- only "
+            f"{REQUIRED_EVALUATION_MODE!r} evidence may reach PREREGISTERED (Stage 6, decision registry G1)"
+        )
+    if run_registry.mode != REQUIRED_EVALUATION_MODE:
+        errors.append(
+            f"run_registry.mode={run_registry.mode!r} -- the REAL evaluation run this evidence traces to is "
+            f"not {REQUIRED_EVALUATION_MODE!r} (Stage 6, decision registry G1)"
+        )
+    if draft.research_mode != HypothesisResearchMode.PREREGISTERED_STRATEGY.value:
+        errors.append(
+            f"draft.research_mode={draft.research_mode!r} -- only "
+            f"{HypothesisResearchMode.PREREGISTERED_STRATEGY.value!r} may reach PREREGISTERED "
+            f"(Stage 6, Finding 2)"
+        )
+
     if not proposal_validation.valid:
         errors.append(
             f"the source HypothesisProposal failed proposals/validator.py's own check: "
             f"{proposal_validation.errors!r}"
         )
+
+    # Stage 6, D1: LIVE re-validation of the proposal argument, against the
+    # registered snapshots -- never the cached flag above.
+    if fresh_registered is not None and discovery_registered is not None:
+        snapshot_hypothesis_config = HypothesisConfig(
+            data=fresh_registered.content, config_version=fresh_registered.version,
+            raw_texts=fresh_registered.raw_texts,
+        )
+        discovery_content = discovery_registered.content
+        snapshot_discovery_config = DiscoveryConfig(
+            features=discovery_content["features"], states=discovery_content["states"],
+            discovery=discovery_content["discovery"], eligibility=discovery_content["eligibility"],
+            config_version=discovery_registered.version, raw_texts=discovery_registered.raw_texts,
+        )
+        live_validation = validate_proposal(proposal, snapshot_discovery_config, snapshot_hypothesis_config)
+        if not live_validation.valid:
+            errors.append(
+                f"the LIVE proposal fails validate_proposal() re-run at the gate against the registered "
+                f"config snapshots (Stage 6, decision registry D1): {live_validation.errors!r}"
+            )
 
     approve_ok, approve_errors = can_preregister(consensus)
     if not approve_ok:
@@ -246,6 +487,17 @@ def preregister_hypothesis(
     gate_ok, gate_errors = validate_for_preregistration(frozen, variants, registry, fresh_registered.content, run_registry)
     if not gate_ok:
         raise PreregistrationError("; ".join(gate_errors))
+
+    # Stage 6, E1: simulated-sequential dry run of the exact writes below,
+    # same order, against a virtual copy -- nothing is written unless the
+    # whole sequence passes. Scope: the three named conditions, under
+    # synchronous execution only (see docstring; decision registry E1).
+    conflicts = registry.dry_run_preregistration(frozen, variants)
+    if conflicts:
+        raise PreregistrationError(
+            "simulated-sequential dry run found a registry conflict -- NO write performed "
+            f"(Stage 6, decision registry E1): {'; '.join(conflicts)}"
+        )
 
     registry._force_register(frozen)
     for v in variants:

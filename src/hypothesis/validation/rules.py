@@ -34,10 +34,24 @@ hypothesis's OWN fields and hard-fails if `hypothesis_id`/
 `variant_fingerprint()` against the INDEPENDENTLY-recomputed
 `definition_hash` (never the hypothesis's own possibly-wrong claim) --
 TEST 63.
+
+Stage 6 -- Finding 15 (GPT-G2), joint remediation design 003+004
+section 10, complete contract: (i) exactly one TIME_EXIT variant per
+`horizon_candidate_set.values` entry, no fewer and no more -- the
+pre-Stage-6 check only compared two caller-controlled id sets, so a
+missing OR an extra TIME_EXIT variant passed; (ii) every variant unique
+by its FULL content fingerprint (`variant_fingerprint()`, never a
+hand-picked field subset), so any number of SIGNAL_INVALIDATION/
+STOP_MANAGED_INVALIDATION variants is allowed as long as none repeats;
+(iii) exit semantics validated per variant: `time_exit_bars` a positive
+integer for TIME_EXIT, `horizon_reference_point`/`exit_execution_policy`
+equal to the config's single V1 value -- previously plain, unchecked
+strings at this gate.
 """
 from __future__ import annotations
 
 import math
+from collections import Counter
 
 from evaluation.models.entities import EvaluationRunRegistry
 
@@ -132,6 +146,73 @@ def _check_stop_managed_invalidation_exit(variant_id: str, ex: ExitHypothesis, e
             f"invalidation_conditions entry, written explicitly at freeze time (PATCH #004-C -- "
             f"never auto-copied from the entry definition)"
         )
+
+
+def _check_variant_completeness_uniqueness_semantics(
+    hypothesis: StrategyHypothesis, variants: tuple[StrategyVariant, ...], true_definition_hash: str,
+    hypothesis_config: dict, errors: list[str],
+) -> None:
+    """Stage 6 -- Finding 15 (GPT-G2), parts (i)-(iii) of the module
+    docstring's contract."""
+    # (i) completeness, BOTH directions: one TIME_EXIT per candidate value.
+    time_exit_bars = Counter(
+        v.exit_hypothesis.time_exit_bars for v in variants
+        if v.exit_hypothesis.exit_family == ExitFamily.TIME_EXIT.value
+    )
+    expected_bars = set(hypothesis.horizon_candidate_set.values)
+    missing = sorted(expected_bars - set(time_exit_bars), key=repr)
+    extra = sorted(set(time_exit_bars) - expected_bars, key=repr)
+    repeated = sorted((b for b, n in time_exit_bars.items() if n > 1), key=repr)
+    if missing:
+        errors.append(
+            f"no TIME_EXIT variant for horizon_candidate_set value(s) {missing!r} -- exactly one TIME_EXIT "
+            f"variant per candidate value is required, none may be missing (Stage 6, Finding 15)"
+        )
+    if extra:
+        errors.append(
+            f"TIME_EXIT variant(s) for time_exit_bars {extra!r} not in horizon_candidate_set.values="
+            f"{sorted(expected_bars)!r} -- no TIME_EXIT variant may exist outside the declared "
+            f"candidate set (Stage 6, Finding 15)"
+        )
+    if repeated:
+        errors.append(
+            f"more than one TIME_EXIT variant for time_exit_bars {repeated!r} -- exactly one per "
+            f"candidate value (Stage 6, Finding 15)"
+        )
+
+    # (ii) uniqueness by FULL content fingerprint, recomputed against the
+    # parent's TRUE definition_hash (never the hypothesis's own claim).
+    fingerprints = Counter(variant_fingerprint(true_definition_hash, v.exit_hypothesis) for v in variants)
+    duplicated = sorted(fp for fp, n in fingerprints.items() if n > 1)
+    if duplicated:
+        errors.append(
+            f"{len(duplicated)} variant content fingerprint(s) occur more than once in this batch -- every "
+            f"variant must be unique by its FULL variant_fingerprint() (Stage 6, Finding 15): "
+            f"{duplicated!r}"
+        )
+
+    # (iii) exit semantics, per variant.
+    required_reference_point = hypothesis_config["horizon_reference_point"]
+    required_exit_execution = hypothesis_config["exit_execution_policy"]
+    for v in variants:
+        ex = v.exit_hypothesis
+        if ex.horizon_reference_point != required_reference_point:
+            errors.append(
+                f"variant {v.strategy_variant_id!r}: horizon_reference_point={ex.horizon_reference_point!r}, "
+                f"must be {required_reference_point!r} (Stage 6, Finding 15)"
+            )
+        if ex.exit_execution_policy != required_exit_execution:
+            errors.append(
+                f"variant {v.strategy_variant_id!r}: exit_execution_policy={ex.exit_execution_policy!r}, "
+                f"must be {required_exit_execution!r} (Stage 6, Finding 15)"
+            )
+        if ex.exit_family == ExitFamily.TIME_EXIT.value and not (
+            isinstance(ex.time_exit_bars, int) and not isinstance(ex.time_exit_bars, bool) and ex.time_exit_bars > 0
+        ):
+            errors.append(
+                f"variant {v.strategy_variant_id!r}: TIME_EXIT time_exit_bars={ex.time_exit_bars!r} must be a "
+                f"positive integer number of bars (Stage 6, Finding 15)"
+            )
 
 
 def validate_for_preregistration(
@@ -235,6 +316,10 @@ def validate_for_preregistration(
             _check_stop_managed_invalidation_exit(v.strategy_variant_id, ex, errors)
         for ic in v.exit_hypothesis.invalidation_conditions:
             _scan_condition_for_outcome_contamination(ic, f"variant {v.strategy_variant_id}.invalidation_conditions", errors)
+
+    _check_variant_completeness_uniqueness_semantics(
+        hypothesis, variants, expected_definition_hash, hypothesis_config, errors,
+    )
 
     has_time_exit = any(v.exit_hypothesis.exit_family == ExitFamily.TIME_EXIT.value for v in variants)
     if variants and not has_time_exit:

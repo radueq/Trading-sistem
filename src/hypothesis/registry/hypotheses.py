@@ -58,11 +58,20 @@ def _horizon_fp(hs: HorizonCandidateSet) -> str:
 
 
 def _evidence_fp(ep: EvidenceProvenance) -> str:
-    return (
+    """Stage 6 (Finding 1 / decision registry G1, marking): `evaluation_
+    mode` is part of the evidence fingerprint whenever it is populated.
+    Appended ONLY when not None -- the same additive, conditioned
+    discipline as `_exit_fp()`'s STOP_MANAGED_INVALIDATION branch -- so
+    every pre-Stage-6 record (which never carried the field) keeps its
+    historical hypothesis_id byte-for-byte."""
+    base = (
         f"{ep.evaluation_run_id}::{ep.evaluation_engine_version}::{ep.evaluation_config_version}::"
         f"{ep.signature_id}::{ep.signature_set_id}::{ep.discovery_engine_version}::"
         f"{ep.discovery_config_version}::{ep.timeframe}"
     )
+    if ep.evaluation_mode is not None:
+        base += f"::MODE:{ep.evaluation_mode}"
+    return base
 
 
 def hypothesis_fingerprint(
@@ -131,6 +140,30 @@ def _exit_fp(ex: ExitHypothesis) -> str:
 
 def variant_fingerprint(parent_definition_hash: str, exit_hypothesis: ExitHypothesis) -> str:
     return f"{parent_definition_hash}::{_exit_fp(exit_hypothesis)}"
+
+
+def proposal_content_fingerprint(proposal: HypothesisProposal) -> str:
+    """Stage 6 -- joint remediation design 003+004 section 10, Finding 14
+    part 2. The canonical fingerprint of the proposal content a human
+    actually approved, frozen onto `HumanDecision.content_fingerprint` at
+    approval time and recomputed from the LIVE proposal at the gate.
+    Built from the SAME component functions as `hypothesis_fingerprint()`
+    / `variant_fingerprint()` -- `direction`, `_entry_fp(entry_
+    definition)`, `entry_execution_policy`, `_horizon_fp(horizon_
+    candidates)`, `_evidence_fp(source_evidence)` -- PLUS every exit via
+    `_exit_fp()` (sorted, so listing order is not content; duplicates are
+    kept). Deliberately excludes, exactly like the economic fingerprints
+    it mirrors: narrative fields (`facts_from_evidence`/`interpretation`
+    -- covered instead by the gate's live `validate_proposal()` re-run,
+    decision registry D1), `direction_basis`/`selection_basis`, and
+    `designated_baseline_bars` (methodology -- checked separately via
+    `HumanDecision.approved_designated_baseline_bars`)."""
+    exits = "&".join(sorted(_exit_fp(ex) for ex in proposal.exit_hypotheses))
+    canonical = (
+        f"{proposal.direction}::{_entry_fp(proposal.entry_definition)}::{proposal.entry_execution_policy}::"
+        f"{_horizon_fp(proposal.horizon_candidates)}::{_evidence_fp(proposal.source_evidence)}::EXITS[{exits}]"
+    )
+    return f"pcf_{hashlib.sha256(canonical.encode()).hexdigest()}"
 
 
 def build_variant_id(fingerprint: str) -> tuple[str, str]:
@@ -239,34 +272,143 @@ class HypothesisRegistry:
         self._rejected_proposal_ids: set[str] = set()
 
     def register(self, hyp: StrategyHypothesis) -> StrategyHypothesis:
+        """Stage 6 -- Finding 17 (GPT-G4), joint remediation design
+        003+004 section 10, design option (a): the guard now refuses EVERY
+        transition into PREREGISTERED through this public API, not only
+        the from-nothing insert -- previously a caller could `register()`
+        a HANDOFF_TO_BACKTEST (or DRAFT/REVIEWED/REJECTED) record and then
+        `register()` the SAME id again as PREREGISTERED, since the old
+        guard only fired when `existing is None`. The one legitimate use
+        kept: idempotently re-registering an ALREADY-PREREGISTERED record
+        (identical content -- `_force_register()`'s own immutability check
+        still rejects any difference), e.g. audit-log replay."""
         existing = self._hypotheses.get(hyp.hypothesis_id)
-        if existing is None and hyp.status == HypothesisStatus.PREREGISTERED.value:
+        if hyp.status == HypothesisStatus.PREREGISTERED.value and (
+            existing is None or existing.status != HypothesisStatus.PREREGISTERED.value
+        ):
+            prior = "nothing" if existing is None else f"status={existing.status!r}"
             raise ImmutableHypothesisError(
-                f"hypothesis_id={hyp.hypothesis_id!r} cannot be inserted directly as PREREGISTERED via "
-                f"register() -- use registry.preregistration.preregister_hypothesis(), the only atomic "
-                f"gate allowed to introduce a new PREREGISTERED record (PATCH #004-A finding #1)"
+                f"hypothesis_id={hyp.hypothesis_id!r} cannot transition into PREREGISTERED (from {prior}) "
+                f"via register() -- use registry.preregistration.preregister_hypothesis(), the only "
+                f"atomic gate allowed to produce a PREREGISTERED record (PATCH #004-A finding #1; "
+                f"Stage 6, Finding 17)"
             )
         return self._force_register(hyp)
+
+    @staticmethod
+    def _force_register_conflict(
+        hyp: StrategyHypothesis, hypotheses: "dict[str, StrategyHypothesis]",
+    ) -> Optional[str]:
+        """Stage 6 -- Finding 16/GPT-G3, decision registry E1: the ONE
+        shared precondition of `_force_register()`, evaluated against an
+        explicit `hypotheses` state. Used by BOTH the real write below
+        (against `self._hypotheses`) and `dry_run_preregistration()`
+        (against a virtual copy), so the two can never independently
+        drift. Returns the error message, or None if the write would
+        succeed. Covers exactly two of E1's three named conditions:
+        content mismatch (same id, different definition_hash) and
+        PREREGISTERED-content mismatch."""
+        existing = hypotheses.get(hyp.hypothesis_id)
+        if existing is not None:
+            if existing.definition_hash != hyp.definition_hash:
+                return (
+                    f"hypothesis_id={hyp.hypothesis_id!r} already registered with a DIFFERENT "
+                    f"definition_hash -- ids are content-addressed and must never be reused for "
+                    f"different content"
+                )
+            if existing.status == HypothesisStatus.PREREGISTERED.value and existing != hyp:
+                return (
+                    f"hypothesis_id={hyp.hypothesis_id!r} is PREREGISTERED and immutable -- "
+                    f"use create_new_version() instead of re-registering with changed fields"
+                )
+        return None
+
+    @staticmethod
+    def _register_variant_conflict(
+        variant: StrategyVariant, variants: "dict[str, StrategyVariant]",
+    ) -> Optional[str]:
+        """Stage 6 -- decision registry E1: the ONE shared precondition of
+        `register_variant()` (E1's third named condition, variant content
+        mismatch), evaluated against an explicit `variants` state -- same
+        sharing discipline as `_force_register_conflict()` above."""
+        existing = variants.get(variant.strategy_variant_id)
+        if existing is not None and existing != variant:
+            return (
+                f"strategy_variant_id={variant.strategy_variant_id!r} already registered with "
+                f"DIFFERENT content -- a StrategyVariant is immutable in full once registered, "
+                f"including variant_tag, not only variant_definition_hash (PATCH #004-B finding #3)"
+            )
+        return None
+
+    def dry_run_preregistration(
+        self, hyp: StrategyHypothesis, variants: tuple[StrategyVariant, ...],
+    ) -> tuple[str, ...]:
+        """Stage 6 -- Finding 16/GPT-G3, joint remediation design 003+004
+        section 10; decision registry E1. A batch-internal SIMULATED-
+        SEQUENTIAL dry run of exactly the writes `preregister_
+        hypothesis()` performs, in the identical order: the hypothesis
+        first (checked against the actual current state), then variant 1
+        (checked against current state + the virtually-inserted
+        hypothesis), then variant 2 (+ virtual variant 1), ... through
+        variant N. Nothing is ever committed here -- the virtual state is
+        a copy of the two dicts, updated as each item passes. Returns
+        every conflict found (empty tuple = the real writes, performed in
+        the same order, cannot raise from these preconditions). Because
+        each item is checked against the virtual state INCLUDING the
+        earlier items of the SAME batch, a conflict BETWEEN two items of
+        one batch is caught too, not only a conflict against the
+        pre-batch state.
+
+        Guarantee scope, stated EXACTLY as decided (decision registry E1,
+        quoted, never paraphrased into a broader claim):
+
+        "The batch-internal simulated-sequential dry run guarantees no
+        partial write under exactly THREE named conditions (content
+        mismatch; PREREGISTERED-content mismatch; variant content
+        mismatch), ONLY under synchronous execution with no write from
+        another caller interleaved between the dry run and the real
+        writes."
+
+        Known limitation, a PRESENT fact, not a future one (decision
+        registry E1, quoted):
+
+        "An exception or failure OUTSIDE the three named conditions (e.g.
+        an unexpected error from a bug elsewhere in the call path) is NOT
+        guaranteed to leave the registry in an all-or-nothing state RIGHT
+        NOW, under the CURRENT plain in-memory dict -- this is a gap in
+        today's implementation, not a risk that first appears after some
+        future storage-layer migration."
+
+        No locking, concurrency control, rollback, or transaction is
+        provided -- this is a single-call-sequence correctness check, not
+        a general all-or-nothing atomicity mechanism."""
+        virtual_hypotheses = dict(self._hypotheses)
+        virtual_variants = dict(self._variants)
+        conflicts: list[str] = []
+        conflict = self._force_register_conflict(hyp, virtual_hypotheses)
+        if conflict is not None:
+            conflicts.append(conflict)
+        else:
+            virtual_hypotheses[hyp.hypothesis_id] = hyp
+        for v in variants:
+            conflict = self._register_variant_conflict(v, virtual_variants)
+            if conflict is not None:
+                conflicts.append(conflict)
+            else:
+                virtual_variants[v.strategy_variant_id] = v
+        return tuple(conflicts)
 
     def _force_register(self, hyp: StrategyHypothesis) -> StrategyHypothesis:
         """Internal bypass of the PREREGISTERED-insertion guard above --
         called ONLY by `registry.preregistration.preregister_hypothesis()`
         after it has already performed every required check, and by
         `registry.persistence` when replaying an audit log (whose entries
-        were themselves written only after passing that same gate)."""
-        existing = self._hypotheses.get(hyp.hypothesis_id)
-        if existing is not None:
-            if existing.definition_hash != hyp.definition_hash:
-                raise ImmutableHypothesisError(
-                    f"hypothesis_id={hyp.hypothesis_id!r} already registered with a DIFFERENT "
-                    f"definition_hash -- ids are content-addressed and must never be reused for "
-                    f"different content"
-                )
-            if existing.status == HypothesisStatus.PREREGISTERED.value and existing != hyp:
-                raise ImmutableHypothesisError(
-                    f"hypothesis_id={hyp.hypothesis_id!r} is PREREGISTERED and immutable -- "
-                    f"use create_new_version() instead of re-registering with changed fields"
-                )
+        were themselves written only after passing that same gate).
+        Precondition: `_force_register_conflict()` (Stage 6, E1 -- shared
+        with `dry_run_preregistration()`)."""
+        conflict = self._force_register_conflict(hyp, self._hypotheses)
+        if conflict is not None:
+            raise ImmutableHypothesisError(conflict)
         self._hypotheses[hyp.hypothesis_id] = hyp
         return hyp
 
@@ -283,14 +425,12 @@ class HypothesisRegistry:
         BASELINE_VARIANT after seeing backtest results) and the old check
         would silently accept the overwrite -- exactly the kind of
         after-the-fact methodological rewrite Spec #004 exists to
-        prevent. Now any field difference at all is rejected (TEST 64)."""
-        existing = self._variants.get(variant.strategy_variant_id)
-        if existing is not None and existing != variant:
-            raise ImmutableHypothesisError(
-                f"strategy_variant_id={variant.strategy_variant_id!r} already registered with "
-                f"DIFFERENT content -- a StrategyVariant is immutable in full once registered, "
-                f"including variant_tag, not only variant_definition_hash (PATCH #004-B finding #3)"
-            )
+        prevent. Now any field difference at all is rejected (TEST 64).
+        Precondition: `_register_variant_conflict()` (Stage 6, E1 --
+        shared with `dry_run_preregistration()`)."""
+        conflict = self._register_variant_conflict(variant, self._variants)
+        if conflict is not None:
+            raise ImmutableHypothesisError(conflict)
         self._variants[variant.strategy_variant_id] = variant
         return variant
 

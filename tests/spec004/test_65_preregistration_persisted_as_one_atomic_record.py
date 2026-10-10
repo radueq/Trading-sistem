@@ -41,11 +41,12 @@ def _commit(tmp_path, entry_definition, horizon_candidates, evidence_provenance,
         constraints=HypothesisComplexitySnapshot(3, 1, hypothesis_config.config_version),
         created_at="t", created_by="radu", strategy_config_version=hypothesis_config.config_version,
     )
-    variants = materialize_variants(draft, created_at="t")
+    # Stage 6 (Finding 14): the proposal's own replay, its SIGNAL_INVALIDATION exit included.
+    variants = materialize_variants(draft, signal_invalidation_exits=proposal.exit_hypotheses, created_at="t")
     draft = dataclasses.replace(draft, variant_ids=tuple(v.strategy_variant_id for v in variants))
     frozen = persistent.preregister(
         draft, variants, proposal=proposal, proposal_validation=ProposalValidationResult(True, "OK", (), proposal.proposal_id),
-        consensus=compute_consensus(proposal.proposal_id, (), human_decision=approved_human_decision(at="t")),
+        consensus=compute_consensus(proposal.proposal_id, (), human_decision=approved_human_decision(at="t", proposal=proposal)),
         run_registry=run_registry, hypothesis_config=hypothesis_config, config_registry=hypothesis_config_registry,
     )
     return log_path, frozen, variants

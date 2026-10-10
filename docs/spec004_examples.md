@@ -14,14 +14,14 @@ path every other caller must use.**
 EvidencePacket: signature=VOL_COMPRESSION_RS_HIGH, primary_horizon_bars=3 (from config evidence_reference.reference_horizon_bars, never a free per-call parameter), primary_relative_mean=0.0100, primary_adjusted_p=0.0100 (DIAGNOSTIC ONLY in V1 -- exchangeability_status='UNVERIFIED', never drives Research Queue ranking: p_key=inf unconditionally)
 
 Proposal valid: True (complexity_status=OK)
-StrategyHypothesis: hypothesis_id=hyp_a5c27a3bb3be36b7, direction=LONG, status=PREREGISTERED
-Materialized variants (4): var_3545368feb..=TIME_EXIT:1, var_08778e5565..=TIME_EXIT:2, var_cfafdc27ff..=TIME_EXIT:3, var_35411b1ed0..=SIGNAL_INVALIDATION:5
+StrategyHypothesis: hypothesis_id=hyp_6f630f4e89cdfb2a, direction=LONG, status=PREREGISTERED
+Materialized variants (4): var_09a129a226..=TIME_EXIT:1, var_17d7fa1f46..=TIME_EXIT:2, var_2809cada3f..=TIME_EXIT:3, var_62ae6ec7f9..=SIGNAL_INVALIDATION:5
 Preregistered through the ONE atomic gate (registry.preregistration.preregister_hypothesis()) -- never a hand-built PREREGISTERED object handed to register() (PATCH #004-A finding #1).
 
 ### Example B -- Negative effect must NOT auto-flip to SHORT
 
-LONG proposal (built from negative-effect evidence) stays LONG: valid=True, hypothesis_id=hyp_2c4974fc8f557138
-SHORT proposal is a SEPARATE, explicit hypothesis: valid=True, hypothesis_id=hyp_88daab62838b46f7
+LONG proposal (built from negative-effect evidence) stays LONG: valid=True, hypothesis_id=hyp_ac492ed399f95495
+SHORT proposal is a SEPARATE, explicit hypothesis: valid=True, hypothesis_id=hyp_f4dab11069d75780
 Two distinct hypothesis_ids: True (never the same record silently flipped)
 Registry now holds both: 2 PREREGISTERED hypotheses on the same signature
 
@@ -38,7 +38,6 @@ No field named selected_horizon/optimal_horizon exists anywhere on StrategyHypot
 Proposal: 5 entry core_conditions + 4 SIGNAL_INVALIDATION exit variants
 validate_proposal(): valid=False, complexity_status=HYPOTHESIS_COMPLEXITY_EXCEEDED
   - entry.core_conditions has 5, exceeds max_entry_conditions=3 (SS12/TEST 8)
-  - proposal has 4 SIGNAL_INVALIDATION exit variant(s), which combined with the mandatory TIME_EXIT family exceeds max_exit_families_per_hypothesis=2
   - total variant count 7 exceeds max_variants_per_family=6 (SS106-107)
 hyp registered as PREREGISTERED: False (must be False)
 Proposal record retained in registry (never silently deleted): True

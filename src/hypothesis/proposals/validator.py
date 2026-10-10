@@ -121,6 +121,13 @@ def _check_horizon_candidates(hs: HorizonCandidateSet, cfg: dict, errors: list[s
         errors.append(f"horizon_candidates.values {sorted(extra)} not in allowed_values={sorted(allowed)} (TEST 11)")
     if not hs.selection_basis or not hs.selection_basis.strip():
         errors.append("horizon_candidates.selection_basis is required (SS20 -- provenance for WHY this range)")
+    if hs.designated_baseline_bars is not None and hs.designated_baseline_bars not in hs.values:
+        # Stage 6 (Finding 14, baseline designation): the designated
+        # baseline must be one of the candidate values it designates from.
+        errors.append(
+            f"horizon_candidates.designated_baseline_bars={hs.designated_baseline_bars!r} is not one of "
+            f"horizon_candidates.values={sorted(hs.values)!r}"
+        )
     valid_parameter_sources = {p.value for p in ParameterSource}
     if hs.parameter_source not in valid_parameter_sources:
         errors.append(
@@ -253,12 +260,20 @@ def validate_proposal(
     for ex in proposal.exit_hypotheses:
         _check_exit_hypothesis(ex, cfg, lane_vocab, reason_vocab, errors)
 
-    if len(proposal.exit_hypotheses) > cfg["hypothesis_budget"]["max_exit_families_per_hypothesis"] - 1:
-        # -1: TIME_EXIT (always present) already occupies one exit-family slot.
+    # Stage 6 -- Finding 10, decision registry H1 (via Finding 15's
+    # contract: any number of SIGNAL_INVALIDATION/STOP_MANAGED_INVALIDATION
+    # variants, each unique by full content): count distinct exit-family
+    # TYPES, including the mandatory TIME_EXIT, never raw entries. The
+    # pre-Stage-6 code counted `len(proposal.exit_hypotheses)` -- two
+    # SIGNAL_INVALIDATION variants (ONE family type) were wrongly refused
+    # as exceeding the family limit. The total variant count stays bounded
+    # by `max_variants_per_family` below.
+    exit_family_types = {ExitFamily.TIME_EXIT.value} | {ex.exit_family for ex in proposal.exit_hypotheses}
+    if len(exit_family_types) > cfg["hypothesis_budget"]["max_exit_families_per_hypothesis"]:
         errors.append(
-            f"proposal has {len(proposal.exit_hypotheses)} SIGNAL_INVALIDATION exit variant(s), which combined "
-            f"with the mandatory TIME_EXIT family exceeds max_exit_families_per_hypothesis="
-            f"{cfg['hypothesis_budget']['max_exit_families_per_hypothesis']}"
+            f"proposal declares {len(exit_family_types)} distinct exit-family types "
+            f"{sorted(exit_family_types)!r} (the mandatory TIME_EXIT included), exceeds "
+            f"max_exit_families_per_hypothesis={cfg['hypothesis_budget']['max_exit_families_per_hypothesis']}"
         )
 
     total_variants = len(proposal.horizon_candidates.values) + len(proposal.exit_hypotheses)

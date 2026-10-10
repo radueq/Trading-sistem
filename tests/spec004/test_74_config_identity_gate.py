@@ -38,7 +38,7 @@ from hypothesis.proposals.normalize import normalize_proposal
 from hypothesis.proposals.validator import ProposalValidationResult
 from hypothesis.consensus.consensus import compute_consensus
 
-from spec004.conftest import approved_human_decision, make_proposal_raw
+from spec004.conftest import approved_human_decision, make_proposal_raw, register_discovery_domain
 
 
 def _proposal(proposal_id="prop_1"):
@@ -75,11 +75,12 @@ def _gate(
     exercise the round-4 requirement that the gate never establishes
     its own reference)."""
     draft_config = draft_config if draft_config is not None else hypothesis_config
-    draft = _draft(entry_definition, horizon_candidates, evidence_provenance, draft_config)
-    variants = materialize_variants(draft, created_at="2026-09-25T00:00:00Z")
-    draft = dataclasses.replace(draft, variant_ids=tuple(v.strategy_variant_id for v in variants))
     proposal = _proposal()
-    consensus = compute_consensus(proposal.proposal_id, (), human_decision=approved_human_decision())
+    draft = _draft(entry_definition, horizon_candidates, evidence_provenance, draft_config)
+    # Stage 6 (Finding 14): the proposal's own replay + a content-bound approval.
+    variants = materialize_variants(draft, signal_invalidation_exits=proposal.exit_hypotheses, created_at="2026-09-25T00:00:00Z")
+    draft = dataclasses.replace(draft, variant_ids=tuple(v.strategy_variant_id for v in variants))
+    consensus = compute_consensus(proposal.proposal_id, (), human_decision=approved_human_decision(proposal=proposal))
     registry = registry if registry is not None else HypothesisRegistry()
     return preregister_hypothesis(
         draft, variants, proposal=proposal, proposal_validation=ProposalValidationResult(True, "OK", (), proposal.proposal_id),
@@ -187,6 +188,7 @@ def test_config_registry_passes_when_the_fresh_re_read_still_matches_the_earlier
     config_registry = ConfigRegistry()
     real = load_hypothesis_config()
     config_registry.register_or_verify("hypothesis", real.config_version, real.data, real.raw_texts)  # earlier registration, same content
+    register_discovery_domain(config_registry)  # Stage 6, D1
 
     frozen = _gate(entry_definition, horizon_candidates, evidence_provenance, hypothesis_config, run_registry, config_registry=config_registry)
     assert frozen.status == HypothesisStatus.PREREGISTERED.value
@@ -235,11 +237,11 @@ def test_unchanged_config_succeeds_through_the_persistent_wrapper_too(
     preregister()` specifically -- `config_registry` must thread through
     the persistence wrapper with no fallback to a new one, and a
     genuinely unchanged config must still succeed through it."""
-    draft = _draft(entry_definition, horizon_candidates, evidence_provenance, hypothesis_config)
-    variants = materialize_variants(draft, created_at="2026-09-25T00:00:00Z")
-    draft = dataclasses.replace(draft, variant_ids=tuple(v.strategy_variant_id for v in variants))
     proposal = _proposal()
-    consensus = compute_consensus(proposal.proposal_id, (), human_decision=approved_human_decision())
+    draft = _draft(entry_definition, horizon_candidates, evidence_provenance, hypothesis_config)
+    variants = materialize_variants(draft, signal_invalidation_exits=proposal.exit_hypotheses, created_at="2026-09-25T00:00:00Z")
+    draft = dataclasses.replace(draft, variant_ids=tuple(v.strategy_variant_id for v in variants))
+    consensus = compute_consensus(proposal.proposal_id, (), human_decision=approved_human_decision(proposal=proposal))
 
     persistent = PersistentHypothesisRegistry.open(tmp_path / "audit.jsonl")
     frozen = persistent.preregister(
