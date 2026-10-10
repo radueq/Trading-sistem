@@ -1,4 +1,4 @@
-# Implementation Plan -- Spec #003 + Spec #004 remediation (2026-10-05/06/07/10, revision 14)
+# Implementation Plan -- Spec #003 + Spec #004 remediation (2026-10-05/06/07/10, revision 15)
 
 **Status: Stage 1 IMPLEMENTED and ACCEPTED. Stage 2 (corrected
 admission/registry mechanism, calendar tested with fixtures) ACCEPTED
@@ -8,19 +8,21 @@ FOUR ROUNDS OF CORRECTIONS APPLIED (commit `8650f17`, round-2 fix at
 `955f482`, round-3 fix at `565c306`, round-4 fix at `6fc1e0b`) --
 ACCEPTED, GPT's verdict on `014e212`, no further correction
 requested. Stage 4 (common weighted baseline distribution and its
-statistics -- A1-A4, F2a/F2b/F6) IMPLEMENTED at commit `74dc218` --
-CHANGES REQUIRED on GPT's review (two linked bootstrap/CI defects:
-iteration-identity loss across bins, and common support not applied
-to the signature side within a replica), CORRECTED this revision,
-delivered for GPT's next review -- NOT yet itself reviewed. One open
-item carried forward honestly, not resolved: a `run_evaluation()`-level
-A1 partial-support case through a real test SQLite DB (GPT's own
-completion request; the existing direct-engine-call test for A1 was
-separately accepted as useful). Stop condition unchanged ("oprește-te
-după Stage 4"). Stage 5 onward: NOT AUTHORIZED.** Built from
+statistics -- A1-A4, F2a/F2b/F6) IMPLEMENTED at commit `74dc218`;
+two linked bootstrap/CI defects (iteration-identity loss across bins,
+common support not applied to the signature side within a replica)
+CORRECTED at commit `abc74f1` -- ACCEPTED, GPT's verdict, no further
+correction requested on either. A1's integration coverage completed
+this revision per GPT's own exact fixture specification (`compute_
+discovery_observations()` mocked at the Discovery->Evaluation
+boundary, declared explicitly; everything from there on real,
+unmodified code) -- `tests/spec003/test_59_a1_run_evaluation_level_
+integration.py`. Stage 4 delivered for GPT's next review in full --
+NOT yet itself reviewed. Stop condition unchanged ("oprește-te după
+Stage 4"). Stage 5 onward: NOT AUTHORIZED.** Built from
 `docs/joint_remediation_design_003_004_2026-10-04.md` (revision 11,
 closed calendar contract included, section 7 config identity) and
-`docs/decision_sheet_003_004_2026-10-05.md` (revision 17, the
+`docs/decision_sheet_003_004_2026-10-05.md` (revision 18, the
 Technical Decision Registry). **Precedence: the registry's own
 decisions replace revision 11's open alternatives; this plan only
 sequences already-made decisions, it does
@@ -920,11 +922,11 @@ unchanged); Stage 4 onward (not authorized).
 ## Stage 4 -- #003 statistics AND its #004 consumers, delivered as one bundle
 
 **STATUS: IMPLEMENTED, commit `74dc218`; bootstrap/CI mechanics
-CORRECTED this revision (round 2) on GPT's CHANGES REQUIRED verdict --
-see decision registry A4, revision 17 -- delivered for GPT's next
-review, not yet itself reviewed. One open item carried forward
-honestly: a `run_evaluation()`-level A1 partial-support case through a
-real test SQLite DB remains undelivered (see A1, revision 17).** The
+CORRECTED at commit `abc74f1` on GPT's CHANGES REQUIRED verdict --
+ACCEPTED, no further correction on either defect. A1's integration
+coverage completed this revision (decision registry A1/A4, revision
+18) -- delivered for GPT's next review in full, not yet itself
+reviewed.** The
 scope/acceptance-criteria text below is UNCHANGED from the authorized
 design -- it describes what was built, not a plan still pending.
 
