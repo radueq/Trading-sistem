@@ -1,4 +1,4 @@
-# Implementation Plan -- Spec #003 + Spec #004 remediation (2026-10-05/06/07/10, revision 18)
+# Implementation Plan -- Spec #003 + Spec #004 remediation (2026-10-05/06/07/10, revision 19)
 
 **Status: Stage 1 IMPLEMENTED and ACCEPTED. Stage 2 (corrected
 admission/registry mechanism, calendar tested with fixtures) ACCEPTED
@@ -21,18 +21,33 @@ guard) ACCEPTED by GPT for implementation `2120727` and documentation
 `0ccbe09`, in the verified scope (decision sheet section K1; GPT did
 not re-run the full suite -- 935 passed, 1 skipped is the delivered
 log's result). Stage 6 (`#004` preregistration gate hardening -- D1,
-Finding 14, E1, Finding 15/17, G1 + Finding 2, H1) is AUTHORIZED, per
-Radu's own explicit instruction (2026-10-10), and IMPLEMENTED at commit
-`a369799` -- delivered for GPT's review, not yet itself reviewed. Stop
-condition: **"oprește-te după Stage 6"** -- Stage 7-8, and
-`#005`/Batch 3, remain NOT AUTHORIZED.** Built from
+Finding 14, E1, Finding 15/17, G1 + Finding 2, H1) IMPLEMENTED at
+commit `a369799` -- ACCEPTED by GPT in the authorized scope for
+delivery `28987a8` (E1's guarantee strictly the agreed three named
+conflicts under synchronous execution). Stage 7 (`#004` TEST 49 AST
+guard + F1) is AUTHORIZED, per Radu's own explicit instruction
+(2026-10-10), and IMPLEMENTED at commit `1aa0b60` -- delivered for
+GPT's review, not yet itself reviewed. Stop condition: **"oprire după
+Stage 7"** -- Stage 8, and `#005`/Batch 3, remain NOT AUTHORIZED.**
+Built from
 `docs/joint_remediation_design_003_004_2026-10-04.md` (revision 11,
 closed calendar contract included, section 7 config identity) and
-`docs/decision_sheet_003_004_2026-10-05.md` (revision 21, the
+`docs/decision_sheet_003_004_2026-10-05.md` (revision 22, the
 Technical Decision Registry). **Precedence: the registry's own
 decisions replace revision 11's open alternatives; this plan only
 sequences already-made decisions, it does
 not re-decide anything.**
+
+**Revision 19 -- doua lucruri, pe autorizarea explicita a lui Radu
+(2026-10-10). (1) Consemneaza verdictul GPT asupra Stage 6: ACCEPTED
+in scopul autorizat pentru `28987a8` (implementare `a369799`) -- suita
+completa si cele 69 de teste rerulate independent, probe proprii prin
+poarta reala, protectiile dezactivate separat; E1 ramane strict la cele
+trei conflicte numite, executie sincrona. (2) Implementeaza Stage 7,
+commit `1aa0b60`: TEST 49 pe scanner-ul acceptat la Stage 5 (ambele
+contexte, avertizare explicita), nota F1 in `requirements.txt` cu test
+de declansare. Suita: 1017 passed, 1 skipped (1004 + 13). Stage 7
+livrat pentru review GPT. Stage 8 si #005/Batch 3 raman neautorizate.**
 
 **Revision 18 -- doua lucruri, pe autorizarea explicita a lui Radu
 (2026-10-10), in aceeasi livrare. (1) Consemneaza verdictul GPT asupra
@@ -1113,8 +1128,9 @@ did NOT itself authorize Stage 6; Radu authorized it separately.**
 
 **IMPLEMENTED -- Radu's explicit authorization, 2026-10-10, Stage 6
 only ("oprește-te după Stage 6"). Commit `a369799` on
-`claude/spec004-audit`. Delivered for GPT's review, not yet itself
-reviewed.** New tests: `tests/spec004/test_77_gate_live_revalidation.py`
+`claude/spec004-audit`. ACCEPTED by GPT in the authorized scope for
+delivery `28987a8` (recorded revision 19); this acceptance did NOT
+itself authorize Stage 7 -- Radu authorized it separately.** New tests: `tests/spec004/test_77_gate_live_revalidation.py`
 (D1), `test_78_draft_proposal_approval_binding.py` (Finding 14),
 `test_79_baseline_designation_bound_to_approval.py` (Finding 14,
 baseline), `test_80_variant_completeness_uniqueness_semantics.py`
@@ -1168,6 +1184,16 @@ cross-checked against the real run registry.
 ---
 
 ## Stage 7 -- #004 TEST 49 AST guard
+
+**IMPLEMENTED -- Radu's explicit authorization, 2026-10-10, Stage 7
+only (stop after Stage 7). Commit `1aa0b60` on `claude/spec004-audit`.
+Delivered for GPT's review, not yet itself reviewed.** TEST 49 reuses
+TEST 26's accepted scanner (dual-context relative resolution, explicit
+`unresolvable` warning on the real scan path), forbidden namespace
+`hypothesis`; F1 note at `requirements.txt` with a trigger test. TEST
+49: 2 -> 15 tests; full suite 1017 passed, 1 skipped (1004 + 13). See
+decision sheet revision 22 and section F1, including the note that
+section 8's level-3 prose is superseded by the K1 dual-context rule.
 
 **Shares its algorithm with Stage 5; the naming convention is
 #004-specific.**
