@@ -39,7 +39,9 @@ from hypothesis.models.entities import (
     HypothesisProvenance,
     InvalidationCondition,
     LaneStateCondition,
+    PartialProfitRule,
     ReasonCodeCondition,
+    StopLossRule,
     StrategyHypothesis,
     StrategyVariant,
 )
@@ -52,6 +54,11 @@ _TYPE_REGISTRY = {
         StrategyHypothesis, StrategyVariant, HypothesisProposal, EntryDefinition,
         LaneStateCondition, ReasonCodeCondition, HorizonCandidateSet, EvidenceProvenance,
         HypothesisProvenance, HypothesisComplexitySnapshot, ExitHypothesis, InvalidationCondition,
+        # Stage 8 -- Finding 20 (P004C): PATCH #004-C's nested exit types.
+        # Without them, to_jsonable() wrote a STOP_MANAGED_INVALIDATION
+        # family out fine, but from_jsonable() raised KeyError on replay --
+        # a committed preregistration that could never be read back.
+        StopLossRule, PartialProfitRule,
     )
 }
 _TUPLE_KEY = "__tuple__"

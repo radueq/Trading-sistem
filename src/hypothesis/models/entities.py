@@ -657,6 +657,38 @@ class DecayPoint:
 
 
 @dataclass(frozen=True)
+class StabilityBinSummary:
+    """Stage 8 -- Finding 18 (GPT-G5), joint remediation design 003+004
+    section 10, design option (a): one PRIMARY-horizon stability bin,
+    carried into the EvidencePacket with its VALUES, not only a presence
+    flag (SS39 names "stability bins" as its own minimum-content item,
+    distinct from SS57's "stability availability" queue criterion).
+
+    AMENDMENT to the design's original field list, recorded explicitly
+    (decision sheet revision 23): option (a) sketched `(bin_label, mean,
+    median, positive_rate, valid_n)`, but Spec #003's own
+    `StabilityBinResult` has NO `valid_n`, and carries TWO means -- `mean`
+    (absolute returns) and `mean_relative` (relative returns) -- so the
+    sketch could not be implemented without guessing. Raised by Claude
+    before implementation; GPT's technical clarification (relayed by
+    Radu, 2026-10-10) fixed the list to exactly the seven fields below,
+    in this order; Radu authorized Stage 8 with that clarification.
+    `valid_n` is NOT silently replaced by `episode_n` -- `episode_n` is
+    carried under its own name.
+
+    Copied FAITHFULLY from the source `StabilityBinResult`: no
+    recomputation, no renaming, `None` never converted to zero, source
+    bin order and empty bins preserved (`evidence/packet.py`)."""
+    bin_label: str
+    episode_n: int
+    unique_securities: int
+    mean: Optional[float]
+    median: Optional[float]
+    mean_relative: Optional[float]
+    positive_rate: Optional[float]
+
+
+@dataclass(frozen=True)
 class EvidencePacket:
     """Spec #004 SS39-40 -- built from exactly three #003 artifacts
     (EvaluationSignatureDefinition + EvidenceProfile(s) + Evaluation
@@ -709,6 +741,12 @@ class EvidencePacket:
     # ever hold changes ranking. Defaults so every pre-Stage-4
     # construction site is unaffected.
     primary_exchangeability_status: str = "UNVERIFIED"
+    # Stage 8 -- Finding 18: the PRIMARY horizon's stability bins, values
+    # included, in source order (see StabilityBinSummary). Defaults to
+    # empty so every pre-Stage-8 construction site is unaffected.
+    # `primary_has_stability_bins` above is kept unchanged -- it is the
+    # Research Queue's own SS57 availability criterion.
+    primary_stability_summary: tuple[StabilityBinSummary, ...] = field(default_factory=tuple)
 
 
 # --------------------------------------------------------------------------

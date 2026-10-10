@@ -31,7 +31,7 @@ from __future__ import annotations
 from evaluation.models.entities import EvaluationRunRegistry, EvaluationSignatureDefinition, EvidenceProfile
 
 from hypothesis.config.loader import HypothesisConfig
-from hypothesis.models.entities import DecayPoint, EvidencePacket, EvidenceProvenance
+from hypothesis.models.entities import DecayPoint, EvidencePacket, EvidenceProvenance, StabilityBinSummary
 
 
 def _entry_conditions_summary(sig: EvaluationSignatureDefinition) -> tuple[str, ...]:
@@ -171,4 +171,14 @@ def build_evidence_packet(
         primary_has_stability_bins=len(primary.stability) > 0,
         warnings=primary.warnings,
         primary_exchangeability_status=primary.baseline_comparison.exchangeability_status,
+        # Stage 8 -- Finding 18: faithful copy of the primary horizon's
+        # stability bins -- no recomputation, no renaming, None kept as
+        # None, source order and empty bins preserved.
+        primary_stability_summary=tuple(
+            StabilityBinSummary(
+                bin_label=b.bin_label, episode_n=b.episode_n, unique_securities=b.unique_securities,
+                mean=b.mean, median=b.median, mean_relative=b.mean_relative, positive_rate=b.positive_rate,
+            )
+            for b in primary.stability
+        ),
     )
