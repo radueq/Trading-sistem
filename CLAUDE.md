@@ -105,10 +105,19 @@ Build in the scratchpad directory and send as files: a
 `VERIFICATION_SUMMARY.md` (what changed, why, verification discipline
 applied with concrete before/after evidence, exact test counts), the
 diff (`git diff <prev-commit>..<new-commit>`), the targeted test log,
-the full-suite tail. Run the FULL project suite every round -- state
-the exact passed/skipped count and confirm it matches the expected
-delta precisely (e.g. "925 + 8 = 933," not "roughly the same"). GPT
-does not have direct repository access; Radu relays the bundle and
+the full-suite tail, AND a full repo archive at the delivered commit
+(`git archive --format=tar.gz -o trading-sistem_<short-sha>.tar.gz
+<commit>`) -- a diff alone forces GPT to reconstruct the current full
+state of files like `decision_sheet`/`implementation_plan` by hand
+from a patch; the archive is what lets them review those files (and
+anything else) in their actual current form without that
+reconstruction. Confirmed missing once already (Stage 5's two rounds
+shipped patch+logs only, no archive -- GPT had to ask for it
+separately); don't repeat that omission. Run the FULL project suite
+every round -- state the exact passed/skipped count and confirm it
+matches the expected delta precisely (e.g. "925 + 8 = 933," not
+"roughly the same"). GPT does not have direct repository access; Radu
+relays the bundle and
 GPT's verdict both ways, so the bundle must be self-contained.
 
 ## Tone
