@@ -1,4 +1,4 @@
-# Implementation Plan -- Spec #003 + Spec #004 remediation (2026-10-05/06/07/10, revision 15)
+# Implementation Plan -- Spec #003 + Spec #004 remediation (2026-10-05/06/07/10, revision 16)
 
 **Status: Stage 1 IMPLEMENTED and ACCEPTED. Stage 2 (corrected
 admission/registry mechanism, calendar tested with fixtures) ACCEPTED
@@ -9,24 +9,47 @@ FOUR ROUNDS OF CORRECTIONS APPLIED (commit `8650f17`, round-2 fix at
 ACCEPTED, GPT's verdict on `014e212`, no further correction
 requested. Stage 4 (common weighted baseline distribution and its
 statistics -- A1-A4, F2a/F2b/F6) IMPLEMENTED at commit `74dc218`;
-two linked bootstrap/CI defects (iteration-identity loss across bins,
-common support not applied to the signature side within a replica)
-CORRECTED at commit `abc74f1` -- ACCEPTED, GPT's verdict, no further
-correction requested on either. A1's integration coverage completed
-this revision per GPT's own exact fixture specification (`compute_
-discovery_observations()` mocked at the Discovery->Evaluation
-boundary, declared explicitly; everything from there on real,
-unmodified code) -- `tests/spec003/test_59_a1_run_evaluation_level_
-integration.py`. Stage 4 delivered for GPT's next review in full --
-NOT yet itself reviewed. Stop condition unchanged ("oprește-te după
-Stage 4"). Stage 5 onward: NOT AUTHORIZED.** Built from
+two linked bootstrap/CI defects CORRECTED at commit `abc74f1`; A1's
+integration coverage completed at commit `a0cd059`
+(`tests/spec003/test_59_a1_run_evaluation_level_integration.py`,
+GPT's own exact fixture specification). **Stage 4 is now ACCEPTED IN
+FULL** -- GPT independently executed the new test, including the
+`EvidencePacket` checks, and confirmed the A1 gate's disabled-state
+failure mode; no further correction requested; this acceptance does
+NOT itself authorize any later stage. Stage 5 (`#003` TEST 26 AST
+guard) is now AUTHORIZED and DELIVERED this revision, per Radu's own
+explicit instruction -- the corrected candidate-construction algorithm
+(joint design section 8/9) applied with `"evaluation"` as the
+forbidden namespace; delivered for GPT's next review, not yet itself
+reviewed. Stop condition: **"oprește-te după Stage 5"** -- Stage 6
+onward, and `#005`/Batch 3, remain NOT AUTHORIZED.** Built from
 `docs/joint_remediation_design_003_004_2026-10-04.md` (revision 11,
 closed calendar contract included, section 7 config identity) and
-`docs/decision_sheet_003_004_2026-10-05.md` (revision 18, the
+`docs/decision_sheet_003_004_2026-10-05.md` (revision 19, the
 Technical Decision Registry). **Precedence: the registry's own
 decisions replace revision 11's open alternatives; this plan only
 sequences already-made decisions, it does
 not re-decide anything.**
+
+**Revision 16 -- doua lucruri, pe autorizarea explicita a lui Radu,
+in aceeasi livrare. (1) Consemneaza verdictul final GPT asupra Stage
+4: ACCEPTED in intregime (A1-A4, F2a/F2b/F6, ambele corectii
+bootstrap/CI, completarea integrarii A1) -- vezi decision_sheet
+revizia 19 pentru verdictul complet. Nu se redeschide nimic din Stage
+4. Aceasta acceptare NU autorizeaza etapa urmatoare. (2) Implementeaza
+Stage 5 -- `tests/spec003/test_26_discovery_cannot_import_evaluation.py`
+rescris cu algoritmul corectat (sectiunea 8/9 a design-ului comun):
+candidate baza+alias per instructiune de import, imports relative
+rezolvate fata de tuplul de pachet al fisierului analizat (niciodata
+fata de existenta pe disc), `"src"` eliminat inainte de verificarea
+primei componente. Regresia exacta ceruta (`from src import
+evaluation as ev`) confirmata prinsa printr-un fisier scratch real.
+Disciplina de verificare: candidatele baza+alias revenite temporar la
+baza-singura, exact regresia tintita a picat (`hits == []`), restaurat.
+Suita completa: 933 passed, 1 skipped (925+8, nicio alta regresie).
+Stage 5 livrat pentru review GPT, nu inca el insusi acceptat. Stage
+1-4 (intreg) raman acceptate. Stage 6+ si #005/Batch 3 raman
+neautorizate.**
 
 **Revision 13 -- two things, in the same delivery, per Radu's own
 explicit instruction. (1) Records GPT's ACCEPTED verdict on Stage 3
@@ -924,9 +947,12 @@ unchanged); Stage 4 onward (not authorized).
 **STATUS: IMPLEMENTED, commit `74dc218`; bootstrap/CI mechanics
 CORRECTED at commit `abc74f1` on GPT's CHANGES REQUIRED verdict --
 ACCEPTED, no further correction on either defect. A1's integration
-coverage completed this revision (decision registry A1/A4, revision
-18) -- delivered for GPT's next review in full, not yet itself
-reviewed.** The
+coverage completed at commit `a0cd059` (decision registry A1/A4).
+**ACCEPTED IN FULL, revision 16** -- GPT independently executed the
+integration test, including the `EvidencePacket` checks, and confirmed
+the A1 gate's disabled-state failure mode; no further correction
+requested. This acceptance does not itself authorize any later
+stage.** The
 scope/acceptance-criteria text below is UNCHANGED from the authorized
 design -- it describes what was built, not a plan still pending.
 
@@ -1023,6 +1049,14 @@ replace()`) ALL leave `p_key = inf` and rank NO HIGHER than `adjusted_p
 ---
 
 ## Stage 5 -- #003 AST guard (TEST 26) and architectural direction
+
+**DELIVERED, revision 16, per Radu's own explicit authorization --
+`tests/spec003/test_26_discovery_cannot_import_evaluation.py`
+rewritten in full, 9 tests (1 production check against the real
+`src/discovery/` tree, 8 regression-matrix cases). Not yet itself
+reviewed by GPT -- see `docs/decision_sheet_003_004_2026-10-05.md`
+section K1 for the full verdict record and the exact prose/algorithm
+reconciliation verified by direct execution before writing the test.**
 
 **No dependency on Stages 1-4.**
 
