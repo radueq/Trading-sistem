@@ -1,4 +1,4 @@
-# Implementation Plan -- Spec #003 + Spec #004 remediation (2026-10-05/06/07/10, revision 17)
+# Implementation Plan -- Spec #003 + Spec #004 remediation (2026-10-05/06/07/10, revision 18)
 
 **Status: Stage 1 IMPLEMENTED and ACCEPTED. Stage 2 (corrected
 admission/registry mechanism, calendar tested with fixtures) ACCEPTED
@@ -17,23 +17,39 @@ FULL** -- GPT independently executed the new test, including the
 `EvidencePacket` checks, and confirmed the A1 gate's disabled-state
 failure mode; no further correction requested; this acceptance does
 NOT itself authorize any later stage. Stage 5 (`#003` TEST 26 AST
-guard) is AUTHORIZED, per Radu's own explicit instruction. Round 1
-(`c2bc4f7`) got GPT's CHANGES REQUIRED verdict: two precise defects in
-the relative-import handling (the `unresolvable` diagnostic silently
-discarded on the real test path; a single-context resolution missing
-the `src`-prefixed rescue case). **Round 2 (this revision) fixes
-both** -- see `docs/decision_sheet_003_004_2026-10-05.md` section K1
-for the full corrected algorithm and the execution-verified boundary
-math. Delivered for GPT's re-review, not yet itself reviewed. Stop
-condition: **"oprește-te după Stage 5"** -- Stage 6 onward, and
+guard) ACCEPTED by GPT for implementation `2120727` and documentation
+`0ccbe09`, in the verified scope (decision sheet section K1; GPT did
+not re-run the full suite -- 935 passed, 1 skipped is the delivered
+log's result). Stage 6 (`#004` preregistration gate hardening -- D1,
+Finding 14, E1, Finding 15/17, G1 + Finding 2, H1) is AUTHORIZED, per
+Radu's own explicit instruction (2026-10-10), and IMPLEMENTED at commit
+`a369799` -- delivered for GPT's review, not yet itself reviewed. Stop
+condition: **"oprește-te după Stage 6"** -- Stage 7-8, and
 `#005`/Batch 3, remain NOT AUTHORIZED.** Built from
 `docs/joint_remediation_design_003_004_2026-10-04.md` (revision 11,
 closed calendar contract included, section 7 config identity) and
-`docs/decision_sheet_003_004_2026-10-05.md` (revision 20, the
+`docs/decision_sheet_003_004_2026-10-05.md` (revision 21, the
 Technical Decision Registry). **Precedence: the registry's own
 decisions replace revision 11's open alternatives; this plan only
 sequences already-made decisions, it does
 not re-decide anything.**
+
+**Revision 18 -- doua lucruri, pe autorizarea explicita a lui Radu
+(2026-10-10), in aceeasi livrare. (1) Consemneaza verdictul GPT asupra
+Stage 5: ACCEPTED pentru `2120727` + `0ccbe09`, in scopul verificat (9
+regresii ale matricei + verificari prin `_scan_directory()`, executate
+independent de GPT; suita completa nererulata de GPT). (2) Implementeaza
+Stage 6, commit `a369799`: D1 (re-validare live la gate, pe snapshot-
+urile inregistrate), Finding 14 (legare draft/propunere/aprobare +
+baseline desemnat), E1 (dry run secvential simulat, exact 3 conditii,
+doar sincron -- textul E1 citat literal in docstring), Finding 15/17,
+G1 + Finding 2, H1. 69 teste noi (TEST 77-83); suita completa: 1004
+passed, 1 skipped (935 + 69). Textul H1 din acest plan ("no code change
+beyond what Finding 15 already requires" citit ca "fara schimbare de
+cod") era inselator: codul numara intrari brute, verificat prin
+executie; schimbarea ceruta de Finding 15 (ii) este facuta -- vezi
+decision_sheet revizia 21. Stage 6 livrat pentru review GPT. Stage 7-8
+si #005/Batch 3 raman neautorizate.**
 
 **Revision 17 -- corecteaza Stage 5 (commit `c2bc4f7`), pe baza
 verdictului GPT "CHANGES REQUIRED": (1) diagnosticul "unresolvable"
@@ -1074,13 +1090,13 @@ replace()`) ALL leave `p_key = inf` and rank NO HIGHER than `adjusted_p
 
 **Round 1 (revision 16, commit `c2bc4f7`) got GPT's CHANGES REQUIRED
 verdict -- two precise defects in the relative-import handling. Round
-2 (revision 17) fixes both: `tests/spec003/test_26_discovery_cannot_
-import_evaluation.py` now 11 tests (1 production check against the
-real `src/discovery/` tree, 10 regression-matrix/diagnostic cases).
-Delivered for GPT's re-review, not yet itself reviewed -- see
-`docs/decision_sheet_003_004_2026-10-05.md` section K1 for the full
-verdict record and the corrected dual-package-tuple-context algorithm,
-verified by direct execution before the fix.**
+2 (revision 17, commit `2120727`, docs `0ccbe09`) fixes both:
+`tests/spec003/test_26_discovery_cannot_import_evaluation.py` now 11
+tests (1 production check against the real `src/discovery/` tree, 10
+regression-matrix/diagnostic cases). ACCEPTED by GPT (recorded revision
+18), in the verified scope -- see `docs/decision_sheet_003_004_
+2026-10-05.md` section K1 for the full verdict record. This acceptance
+did NOT itself authorize Stage 6; Radu authorized it separately.**
 
 **No dependency on Stages 1-4.**
 
@@ -1094,6 +1110,25 @@ verified by direct execution before the fix.**
 ---
 
 ## Stage 6 -- #004 preregistration gate hardening
+
+**IMPLEMENTED -- Radu's explicit authorization, 2026-10-10, Stage 6
+only ("oprește-te după Stage 6"). Commit `a369799` on
+`claude/spec004-audit`. Delivered for GPT's review, not yet itself
+reviewed.** New tests: `tests/spec004/test_77_gate_live_revalidation.py`
+(D1), `test_78_draft_proposal_approval_binding.py` (Finding 14),
+`test_79_baseline_designation_bound_to_approval.py` (Finding 14,
+baseline), `test_80_variant_completeness_uniqueness_semantics.py`
+(Finding 15 + H1), `test_81_gate_dry_run_three_condition_scope.py`
+(E1), `test_82_register_guard_any_status_to_preregistered.py` (Finding
+17), `test_83_evidentiary_admission_formal_development_only.py` (G1 +
+Finding 2) -- 69 tests; shared builder `tests/spec004/gate_inputs.py`.
+Existing gate-success tests (TEST 53/61/62/65/74) and
+`generate_report_artifacts.py` now supply the inputs the gate newly
+requires (content-bound approval, "discovery" domain registered, the
+proposal's own variant replay); `docs/spec004_examples.md` regenerated.
+Full suite 1004 passed, 1 skipped (935 + 69). Per-decision status and
+the implementation choices flagged for review: decision sheet revision
+21 and sections D1, E1, G1, H1.
 
 **Depends on Stage 3 (consumes `RegisteredConfigVersion`/C1's snapshot
 directly). No dependency on Stage 4.**
@@ -1109,8 +1144,10 @@ directly). No dependency on Stage 4.**
   (`register()` guard widened).
 - **G1 (Finding 1):** hard-reject `source_evidence.evaluation_mode !=
   "FORMAL_DEVELOPMENT"`; Finding 2 (`research_mode` reject) alongside it.
-- **H1 (Finding 10):** exit-family count by TYPE -- confirmed, no code
-  change beyond what Finding 15 already requires.
+- **H1 (Finding 10):** exit-family count by TYPE (mandatory TIME_EXIT
+  included) -- corrected this revision: the pre-Stage-6 code counted
+  raw entries, so the change Finding 15 (ii) requires IS a code change
+  in `proposals/validator.py`; covered by Finding 15's matrix.
 
 **Acceptance criteria.** D1: live re-validation confirmed on the gate
 path; a stale/altered `facts_from_evidence`/`interpretation` caught by
